@@ -52,6 +52,7 @@ async function evaluatePlatform(button) {
     const migration = !item.is_migration && item.migration_candidate ? ` Expo ${item.migration_candidate} is available only as an explicit SDK migration.` : '';
     const mode = item.is_migration ? 'Explicit SDK migration' : 'Current SDK line';
     $('#parent-results').innerHTML = `<div class="fix-item ${item.status === 'safe_candidate' ? '' : 'blocked'}"><strong>Expo SDK set → ${escapeHtml(item.candidate_version || '—')}</strong><span>${escapeHtml(mode)} · ${escapeHtml(labels[item.status] || item.status)}</span><span class="mono">${escapeHtml(outcome + migration)} · ${escapeHtml((item.changed_files || []).join(' · '))}</span></div>`;
+    $('#platform-downloads').classList.remove('hidden');
     $('#parent-dialog').showModal();
   } catch(error) { $('#scan-message').textContent = error.message; }
   finally { button.disabled = false; button.textContent = original; }
@@ -65,6 +66,7 @@ async function evaluateParents(button) {
     const body = await postJson('/api/parents/evaluate', {repository:button.dataset.repository});
     const labels = {safe_candidate:'Safe candidate',verification_skipped:'Security pass · checks not configured',verification_failed:'Project checks failed',partial_improvement:'Partial improvement',still_vulnerable:'Still vulnerable',install_failed:'Dependency conflict or migration required',worktree_failed:'Worktree failed',no_candidate:'No compatible candidate'};
     $('#parent-results').innerHTML = body.evaluation.results.map(item => { const outcome = item.resolved?.length ? ` · clears ${item.resolved.length} of ${item.advisories.length}` : ''; return `<div class="fix-item ${item.status === 'safe_candidate' ? '' : 'blocked'}"><strong>${escapeHtml(item.package)} ${escapeHtml(item.specification)} → ${escapeHtml(item.candidate_version || '—')}</strong><span>${escapeHtml(labels[item.status] || item.status)}${escapeHtml(outcome)}</span><span class="mono">Affects ${escapeHtml(item.vulnerable_packages.join(', '))} · ${escapeHtml(item.advisories.join(', '))}</span></div>`; }).join('') || '<p class="muted">No direct parent candidates were found.</p>';
+    $('#platform-downloads').classList.add('hidden');
     $('#parent-dialog').showModal();
   } catch(error) { $('#scan-message').textContent = error.message; }
   finally { button.disabled = false; button.textContent = original; }

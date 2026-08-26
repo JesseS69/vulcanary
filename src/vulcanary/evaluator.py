@@ -169,11 +169,16 @@ def evaluate_expo_platform(findings: list[dict], repository: str, test_migration
             verification = run_verification(str(project), config.verify_commands, config.verify_timeout_seconds)
             status = "safe_candidate" if not remaining and verification["passed"] and not verification.get("skipped") else "verification_skipped" if not remaining else "partial_improvement" if resolved else "still_vulnerable"
             changed = _run(["git", "diff", "--name-only"], worktree, 30).stdout.splitlines()
+            updated = _declared_direct_packages(project)
+            package_changes = [
+                {"package": name, "from": declared.get(name), "to": updated.get(name)}
+                for name in sorted(set(declared) | set(updated)) if declared.get(name) != updated.get(name)
+            ]
             return {
                 "repository": str(root), "status": status, "candidate_version": current,
                 "migration_candidate": migration_candidate, "is_migration": is_migration, "remaining": remaining, "resolved": resolved,
                 "advisories": target_advisories, "expo_check_passed": checked.returncode == 0,
-                "verification": verification, "changed_files": sorted(changed), "warning": warning,
+                "verification": verification, "changed_files": sorted(changed), "package_changes": package_changes, "warning": warning,
             }
         finally:
             _run(["git", "worktree", "remove", "--force", str(worktree)], git_root, 60)

@@ -115,7 +115,7 @@ class FixWorkflowTests(unittest.TestCase):
             passed = run_verification(directory, [[sys.executable, "-c", "print('ok')"]], 10)
             failed = run_verification(
                 directory,
-                [[sys.executable, "-c", "import sys; print('secret-value'); sys.exit(7)"]],
+                [[sys.executable, "-c", "import sys; print('src/app.ts(12,4): error TS2322: secret-value'); sys.exit(7)"]],
                 10,
             )
 
@@ -123,6 +123,7 @@ class FixWorkflowTests(unittest.TestCase):
         self.assertEqual(passed["results"][0]["returncode"], 0)
         self.assertFalse(failed["passed"])
         self.assertEqual(failed["results"][0]["returncode"], 7)
+        self.assertEqual(failed["diagnostics"], [{"path": "src/app.ts", "line": 12, "column": 4, "code": "TS2322"}])
         self.assertNotIn("secret-value", json.dumps(failed))
 
 

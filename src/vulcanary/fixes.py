@@ -84,9 +84,17 @@ def run_verification(repository: str, commands: list[list[str]], timeout_seconds
             return {"passed": False, "failed_command": label, "reason": "timed out", "results": results}
         except OSError:
             return {"passed": False, "failed_command": label, "reason": "could not start", "results": results}
-        results.append({"command": label, "returncode": completed.returncode})
+        diagnostics = []
+        for match in re.finditer(r"(?m)^(.+?)\((\d+),(\d+)\):\s+error\s+(TS\d+):", f"{completed.stdout}\n{completed.stderr}"):
+            path = Path(match.group(1).strip())
+            try:
+                rendered_path = path.resolve().relative_to(root).as_posix() if path.is_absolute() else path.as_posix()
+            except ValueError:
+                rendered_path = path.name
+            diagnostics.append({"path": rendered_path, "line": int(match.group(2)), "column": int(match.group(3)), "code": match.group(4)})
+        results.append({"command": label, "returncode": completed.returncode, "diagnostics": diagnostics[:100]})
         if completed.returncode:
-            return {"passed": False, "failed_command": label, "reason": "returned a non-zero status", "results": results}
+            return {"passed": False, "failed_command": label, "reason": "returned a non-zero status", "results": results, "diagnostics": diagnostics[:100]}
     return {"passed": True, "skipped": not commands, "results": results}
 
 

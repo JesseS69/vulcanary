@@ -37,6 +37,7 @@ class DashboardState:
         self.history_path = history_path
         self.history: list[dict] = []
         self.pending_fix: dict | None = None
+        self.last_platform_evaluation: dict | None = None
         if history_path and history_path.exists():
             try:
                 payload = json.loads(history_path.read_text(encoding="utf-8"))
@@ -116,10 +117,32 @@ def make_handler(state: DashboardState):
             self.end_headers()
             self.wfile.write(body)
 
+        def _download_json(self, payload: dict, filename: str) -> None:
+            body = json.dumps(payload, indent=2).encode()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_GET(self) -> None:
             path = urlparse(self.path).path
             if path == "/api/state":
                 self._json(state.snapshot())
+                return
+            if path in {"/api/platform/report.json", "/api/platform/report.sarif"}:
+                if not state.last_platform_evaluation:
+                    self.send_error(HTTPStatus.NOT_FOUND, "No platform evaluation is available")
+                    return
+                if path.endswith(".json"):
+                    self._download_json(state.last_platform_evaluation, "vulcanary-platform-report.json")
+                else:
+                    report = state.last_platform_evaluation
+                    diagnostics = report.get("verification", {}).get("diagnostics", [])
+                    sarif = {"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "runs": [{"tool": {"driver": {"name": "Vulcanary Platform Evaluator", "rules": [{"id": item["code"]} for item in {entry["code"]: entry for entry in diagnostics}.values()]}}, "results": [{"ruleId": item["code"], "message": {"text": "TypeScript migration compatibility error"}, "locations": [{"physicalLocation": {"artifactLocation": {"uri": item["path"]}, "region": {"startLine": item["line"], "startColumn": item["column"]}}}]} for item in diagnostics]}]}
+                    self._download_json(sarif, "vulcanary-platform-report.sarif")
                 return
             assets = {
                 "/": ("index.html", "text/html"),
@@ -196,7 +219,9 @@ def make_handler(state: DashboardState):
                     repository = str(Path(payload["repository"]).resolve())
                     if repository not in state.repositories:
                         raise ValueError("Scan the repository before evaluating its platform set")
-                    self._json({"evaluation": evaluate_expo_platform(state.snapshot()["findings"], repository, test_migration=payload.get("migration") is True)})
+                    evaluation = evaluate_expo_platform(state.snapshot()["findings"], repository, test_migration=payload.get("migration") is True)
+                    state.last_platform_evaluation = dict(evaluation, repository=Path(repository).name)
+                    self._json({"evaluation": evaluation})
                 else:
                     if not state.pending_fix:
                         raise ValueError("No applied fix batch is waiting to be committed")
