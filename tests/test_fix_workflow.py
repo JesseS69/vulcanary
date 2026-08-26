@@ -18,46 +18,52 @@ class FixWorkflowTests(unittest.TestCase):
         )
         return completed.stdout.strip()
 
+    def _initialize_repository(self, root: Path) -> dict:
+        package = {
+            "name": "vulcanary-disposable-target",
+            "private": True,
+            "dependencies": {"demo-package": "^1.0.0"},
+        }
+        lock = {
+            "name": package["name"],
+            "lockfileVersion": 3,
+            "packages": {
+                "": {"name": package["name"], "dependencies": {"demo-package": "^1.0.0"}},
+                "node_modules/demo-package": {"version": "1.0.0"},
+            },
+        }
+        (root / "package.json").write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
+        (root / "package-lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+        self._git(root, "init", "-b", "main")
+        self._git(root, "config", "user.name", "Vulcanary Test")
+        self._git(root, "config", "user.email", "vulcanary-test@example.invalid")
+        self._git(root, "add", "package.json", "package-lock.json")
+        self._git(root, "commit", "-m", "fixture: vulnerable dependency")
+        return package
+
+    def _plan(self, root: Path) -> dict:
+        finding = {
+            "fingerprint": "safe-demo-fix",
+            "title": "Disposable dependency advisory",
+            "repository": root.name,
+            "repository_path": str(root),
+            "metadata": {
+                "fix_eligible": True,
+                "fix_strategy": "dependency",
+                "package": "demo-package",
+                "current_version": "1.0.0",
+                "fixed_version": "1.1.0",
+                "advisory": "GHSA-disposable-test",
+            },
+        }
+        return preview([finding], [finding["fingerprint"]])
+
     def test_safe_fix_runs_on_an_isolated_branch_and_commits(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            package = {
-                "name": "vulcanary-disposable-target",
-                "private": True,
-                "dependencies": {"demo-package": "^1.0.0"},
-            }
-            lock = {
-                "name": package["name"],
-                "lockfileVersion": 3,
-                "packages": {
-                    "": {"name": package["name"], "dependencies": {"demo-package": "^1.0.0"}},
-                    "node_modules/demo-package": {"version": "1.0.0"},
-                },
-            }
-            (root / "package.json").write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
-            (root / "package-lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
-            self._git(root, "init", "-b", "main")
-            self._git(root, "config", "user.name", "Vulcanary Test")
-            self._git(root, "config", "user.email", "vulcanary-test@example.invalid")
-            self._git(root, "add", "package.json", "package-lock.json")
-            self._git(root, "commit", "-m", "fixture: vulnerable dependency")
+            self._initialize_repository(root)
             original_commit = self._git(root, "rev-parse", "HEAD")
-
-            finding = {
-                "fingerprint": "safe-demo-fix",
-                "title": "Disposable dependency advisory",
-                "repository": root.name,
-                "repository_path": str(root),
-                "metadata": {
-                    "fix_eligible": True,
-                    "fix_strategy": "dependency",
-                    "package": "demo-package",
-                    "current_version": "1.0.0",
-                    "fixed_version": "1.1.0",
-                    "advisory": "GHSA-disposable-test",
-                },
-            }
-            plan = preview([finding], [finding["fingerprint"]])
+            plan = self._plan(root)
             real_run = subprocess.run
 
             def run_without_network(command, **kwargs):
@@ -80,6 +86,28 @@ class FixWorkflowTests(unittest.TestCase):
             self.assertNotEqual(committed["commit"], original_commit)
             self.assertEqual(self._git(root, "status", "--porcelain"), "")
             self.assertEqual(self._git(root, "show", "--format=%s", "--no-patch", "HEAD"), "fix: apply verified Vulcanary dependency upgrades")
+
+    def test_npm_failure_restores_original_branch_and_redacts_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original_package = self._initialize_repository(root)
+            plan = self._plan(root)
+            real_run = subprocess.run
+
+            def fail_npm(command, **kwargs):
+                if command[0] != "npm":
+                    return real_run(command, **kwargs)
+                return subprocess.CompletedProcess(command, 1, stdout="", stderr="registry token: secret-value")
+
+            with patch("vulcanary.fixes.subprocess.run", side_effect=fail_npm):
+                with self.assertRaisesRegex(ValueError, "all changes were rolled back") as raised:
+                    apply_changes(plan)
+
+            self.assertNotIn("secret-value", str(raised.exception))
+            self.assertEqual(self._git(root, "branch", "--show-current"), "main")
+            self.assertNotIn("vulcanary/fixes-", self._git(root, "branch", "--list"))
+            self.assertEqual(json.loads((root / "package.json").read_text()), original_package)
+            self.assertEqual(self._git(root, "status", "--porcelain"), "")
 
 
 if __name__ == "__main__":

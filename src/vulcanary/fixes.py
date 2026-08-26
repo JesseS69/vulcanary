@@ -43,6 +43,28 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["git", "-C", str(root), *args], text=True, capture_output=True, timeout=30)
 
 
+def rollback_changes(repository: str, branch: str, original_branch: str) -> dict:
+    root = Path(repository).resolve()
+    current = _git(root, "branch", "--show-current").stdout.strip()
+    if current != branch or not branch.startswith("vulcanary/fixes-"):
+        raise ValueError("Rollback refused: repository is not on the expected Vulcanary fix branch")
+    restored = _git(root, "restore", "--source=HEAD", "--", "package.json", "package-lock.json")
+    if restored.returncode:
+        raise ValueError(restored.stderr.strip() or "Rollback could not restore npm files")
+    switched = _git(root, "switch", original_branch)
+    if switched.returncode:
+        raise ValueError(switched.stderr.strip() or "Rollback could not restore the original branch")
+    removed = _git(root, "branch", "-D", branch)
+    if removed.returncode:
+        raise ValueError(removed.stderr.strip() or "Rollback could not remove the failed fix branch")
+    return {
+        "completed": True,
+        "original_branch": original_branch,
+        "removed_branch": branch,
+        "restored_files": ["package.json", "package-lock.json"],
+    }
+
+
 def apply_changes(plan: dict) -> dict:
     if not plan.get("changes"):
         raise ValueError("No safe automatic fixes were selected")
@@ -52,6 +74,9 @@ def apply_changes(plan: dict) -> dict:
     root = Path(roots.pop()).resolve()
     if _git(root, "status", "--porcelain").stdout.strip():
         raise ValueError("Repository has uncommitted changes; commit or stash them before applying fixes")
+    original_branch = _git(root, "branch", "--show-current").stdout.strip()
+    if not original_branch:
+        raise ValueError("Repository must be on a named branch before applying fixes")
     branch = f"vulcanary/fixes-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
     switched = _git(root, "switch", "-c", branch)
     if switched.returncode:
@@ -72,16 +97,12 @@ def apply_changes(plan: dict) -> dict:
     try:
         completed = subprocess.run(command, cwd=root, text=True, capture_output=True, timeout=180)
     except (subprocess.TimeoutExpired, OSError) as error:
-        _git(root, "restore", "package.json", "package-lock.json")
-        _git(root, "switch", "-")
-        _git(root, "branch", "-D", branch)
-        raise ValueError(f"npm could not refresh the lockfile: {error}") from error
+        rollback_changes(str(root), branch, original_branch)
+        raise ValueError(f"npm could not refresh the lockfile; all changes were rolled back ({type(error).__name__})") from error
     if completed.returncode:
-        _git(root, "restore", "package.json", "package-lock.json")
-        _git(root, "switch", "-")
-        _git(root, "branch", "-D", branch)
-        raise ValueError(completed.stderr.strip() or "npm could not refresh the lockfile")
-    return {"repository": str(root), "branch": branch, "files": ["package.json", "package-lock.json"]}
+        rollback_changes(str(root), branch, original_branch)
+        raise ValueError("npm could not refresh the lockfile; all changes were rolled back")
+    return {"repository": str(root), "branch": branch, "original_branch": original_branch, "files": ["package.json", "package-lock.json"]}
 
 
 def commit_changes(repository: str, branch: str) -> dict:

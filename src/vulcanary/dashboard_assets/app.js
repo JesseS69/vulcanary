@@ -141,7 +141,7 @@ $('#apply-fixes').addEventListener('click', async () => {
   const button = $('#apply-fixes'); button.disabled = true; button.textContent = 'Applying and rescanning…'; $('#fix-message').textContent = '';
   try {
     const body = await postJson('/api/fixes/apply', {fingerprints:[...selectedFixes]}); appliedBatch = body.applied;
-    if (!appliedBatch.validation.passed) throw new Error(`Applied, but ${appliedBatch.validation.remaining.length} advisories remain. Review manually before committing.`);
+    if (!appliedBatch.validation.passed) throw new Error(appliedBatch.diagnostic || `Validation failed and the fix was rolled back.`);
     $('#fix-message').textContent = `Applied on ${appliedBatch.branch}. Rescan passed with ${appliedBatch.validation.finding_count} remaining findings.`;
     $('#commit-fixes').classList.remove('hidden'); await refresh();
   } catch(error) { $('#fix-message').textContent = error.message; }

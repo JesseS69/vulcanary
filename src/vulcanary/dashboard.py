@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from .config import Config
 from .scanners import scan
 from .dependencies import scan_dependencies
-from .fixes import apply_changes, commit_changes, preview as preview_fixes
+from .fixes import apply_changes, commit_changes, preview as preview_fixes, rollback_changes
 
 
 @dataclass
@@ -167,7 +167,14 @@ def make_handler(state: DashboardState):
                     expected = {f"SCA-{advisory}" for item in plan["changes"] for advisory in item.get("advisories", [item["advisory"]])}
                     remaining = sorted(expected & {item["rule_id"] for item in result.findings})
                     applied["validation"] = {"passed": not remaining, "remaining": remaining, "finding_count": len(result.findings)}
-                    state.pending_fix = applied if not remaining else None
+                    if remaining:
+                        applied["rollback"] = rollback_changes(applied["repository"], applied["branch"], applied["original_branch"])
+                        restored = state.scan_repository(Path(applied["repository"]))
+                        applied["validation"]["finding_count"] = len(restored.findings)
+                        applied["diagnostic"] = f"Validation found {len(remaining)} selected advisories still present; npm files and branch were restored."
+                        state.pending_fix = None
+                    else:
+                        state.pending_fix = applied
                     self._json({"applied": applied})
                 else:
                     if not state.pending_fix:
