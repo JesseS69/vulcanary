@@ -71,6 +71,8 @@ Repositories with vulnerable transitive dependencies expose an **Evaluate upgrad
 
 Results distinguish safe candidates, partial improvements, still-vulnerable releases, dependency conflicts or platform migrations, failed project checks, and missing compatible releases. Pre-1.0 dependencies are constrained to their current minor line because minor releases may contain breaking changes.
 
+Expo repositories also expose coordinated platform evaluation. Vulcanary first tests the latest release on the current SDK line, lets Expo align its supported React Native, Router, and module versions together, runs `expo install --check`, and then applies the same advisory and project-verification gates. A separate action can test the next Expo SDK line as an explicit migration experiment; major SDK migrations are never converted into automatic-fix checkboxes.
+
 Prefer fingerprint-scoped suppressions over blanket rule ignores. A single source finding can also be suppressed on its own line or the preceding line with `// vulcanary:ignore RULE-ID`.
 
 ## What the MVP covers

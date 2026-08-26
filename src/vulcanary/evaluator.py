@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -13,9 +14,9 @@ from .dependencies import scan_dependencies
 from .fixes import run_verification
 
 
-def _run(command: list[str], cwd: Path, timeout: int = 180) -> subprocess.CompletedProcess[str]:
+def _run(command: list[str], cwd: Path, timeout: int = 180, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     executable = shutil.which(command[0]) or shutil.which(f"{command[0]}.cmd") or command[0]
-    return subprocess.run([executable, *command[1:]], cwd=cwd, text=True, capture_output=True, timeout=timeout, shell=False)
+    return subprocess.run([executable, *command[1:]], cwd=cwd, text=True, capture_output=True, timeout=timeout, shell=False, env=environment)
 
 
 def _version_key(value: str) -> tuple[int, ...]:
@@ -118,3 +119,61 @@ def evaluate_parent_upgrades(
             finally:
                 _run(["git", "worktree", "remove", "--force", str(worktree)], git_root, 60)
     return {"repository": str(root), "results": results}
+
+
+def evaluate_expo_platform(findings: list[dict], repository: str, test_migration: bool = False) -> dict:
+    root = Path(repository).resolve()
+    declared = _declared_direct_packages(root)
+    if "expo" not in declared:
+        raise ValueError("Expo is not a direct dependency of this repository")
+    git_root_result = _run(["git", "rev-parse", "--show-toplevel"], root, 30)
+    if git_root_result.returncode:
+        raise ValueError("Platform evaluation requires a Git repository")
+    git_root = Path(git_root_result.stdout.strip()).resolve()
+    relative_root = root.relative_to(git_root)
+    if _run(["git", "status", "--porcelain"], git_root, 30).stdout.strip():
+        raise ValueError("Repository has uncommitted changes; platform evaluation requires a clean checkpoint")
+    current_line = _compatibility_line(declared["expo"])
+    next_line = str((current_line or (0,))[0] + 1)
+    migration_candidate = latest_same_major(root, "expo", next_line)
+    current = migration_candidate if test_migration else latest_same_major(root, "expo", declared["expo"])
+    is_migration = test_migration
+    if not current:
+        return {"repository": str(root), "status": "no_candidate", "migration_candidate": migration_candidate, "is_migration": is_migration}
+    target_advisories = sorted({
+        finding.get("metadata", {}).get("advisory")
+        for finding in findings
+        if finding.get("repository_path") == str(root) and "expo" in finding.get("metadata", {}).get("parent_packages", [])
+    } - {None})
+    with tempfile.TemporaryDirectory(prefix="vulcanary-platform-") as directory:
+        worktree = Path(directory)
+        added = _run(["git", "worktree", "add", "--detach", str(worktree), "HEAD"], git_root, 60)
+        if added.returncode:
+            return {"repository": str(root), "status": "worktree_failed", "candidate_version": current, "migration_candidate": migration_candidate, "is_migration": is_migration}
+        project = worktree / relative_root
+        safe_environment = dict(os.environ, npm_config_ignore_scripts="true", npm_config_audit="false", npm_config_fund="false")
+        try:
+            installed = _run(["npm", "install", f"expo@{current}", "--ignore-scripts", "--no-audit", "--no-fund"], project, 600, safe_environment)
+            if installed.returncode:
+                return {"repository": str(root), "status": "install_failed", "candidate_version": current, "migration_candidate": migration_candidate, "is_migration": is_migration}
+            expo_binary = project / "node_modules" / ".bin" / ("expo.cmd" if os.name == "nt" else "expo")
+            aligned = _run([str(expo_binary), "install", "--fix", "--npm", "--", "--ignore-scripts", "--no-audit", "--no-fund"], project, 900, safe_environment)
+            if aligned.returncode:
+                return {"repository": str(root), "status": "alignment_failed", "candidate_version": current, "migration_candidate": migration_candidate, "is_migration": is_migration}
+            checked = _run([str(expo_binary), "install", "--check", "--json"], project, 180, safe_environment)
+            rescanned, warning = scan_dependencies(project)
+            remaining_rules = {finding.rule_id for finding in rescanned}
+            remaining = sorted(advisory for advisory in target_advisories if f"SCA-{advisory}" in remaining_rules)
+            resolved = sorted(set(target_advisories) - set(remaining))
+            config = Config.load(root)
+            verification = run_verification(str(project), config.verify_commands, config.verify_timeout_seconds)
+            status = "safe_candidate" if not remaining and verification["passed"] and not verification.get("skipped") else "verification_skipped" if not remaining else "partial_improvement" if resolved else "still_vulnerable"
+            changed = _run(["git", "diff", "--name-only"], worktree, 30).stdout.splitlines()
+            return {
+                "repository": str(root), "status": status, "candidate_version": current,
+                "migration_candidate": migration_candidate, "is_migration": is_migration, "remaining": remaining, "resolved": resolved,
+                "advisories": target_advisories, "expo_check_passed": checked.returncode == 0,
+                "verification": verification, "changed_files": sorted(changed), "warning": warning,
+            }
+        finally:
+            _run(["git", "worktree", "remove", "--force", str(worktree)], git_root, 60)

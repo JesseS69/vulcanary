@@ -15,7 +15,7 @@ from .config import Config
 from .scanners import scan
 from .dependencies import scan_dependencies
 from .fixes import apply_changes, commit_changes, preview as preview_fixes, rollback_changes, run_verification
-from .evaluator import evaluate_parent_upgrades
+from .evaluator import evaluate_expo_platform, evaluate_parent_upgrades
 
 
 @dataclass
@@ -147,7 +147,7 @@ def make_handler(state: DashboardState):
 
         def do_POST(self) -> None:
             route = urlparse(self.path).path
-            if route not in {"/api/scan", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/parents/evaluate"}:
+            if route not in {"/api/scan", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/parents/evaluate", "/api/platform/evaluate"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             try:
@@ -192,6 +192,11 @@ def make_handler(state: DashboardState):
                     requested = payload.get("packages")
                     packages = set(requested) if isinstance(requested, list) and all(isinstance(item, str) for item in requested) else None
                     self._json({"evaluation": evaluate_parent_upgrades(state.snapshot()["findings"], repository, packages=packages)})
+                elif route == "/api/platform/evaluate":
+                    repository = str(Path(payload["repository"]).resolve())
+                    if repository not in state.repositories:
+                        raise ValueError("Scan the repository before evaluating its platform set")
+                    self._json({"evaluation": evaluate_expo_platform(state.snapshot()["findings"], repository, test_migration=payload.get("migration") is True)})
                 else:
                     if not state.pending_fix:
                         raise ValueError("No applied fix batch is waiting to be committed")

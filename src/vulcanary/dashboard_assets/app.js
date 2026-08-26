@@ -32,9 +32,29 @@ function renderRepositories() {
     const severe = repo.findings.filter(f => ['critical','high'].includes(f.severity)).length;
     const parentCount = repo.findings.filter(f => f.metadata?.parent_packages?.length).length;
     const evaluate = parentCount ? `<button class="parent-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Evaluate ${parentCount} upgrade path${parentCount === 1 ? '' : 's'}</button>` : '';
-    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">${repo.duration_ms} ms · ${severe} high priority</span>${evaluate}</div>`;
+    const platform = repo.findings.some(f => f.metadata?.parent_packages?.includes('expo')) ? `<button class="platform-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Evaluate Expo platform set</button><button class="platform-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" data-migration="true" type="button">Evaluate next Expo SDK migration</button>` : '';
+    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">${repo.duration_ms} ms · ${severe} high priority</span><div class="repo-actions">${evaluate}${platform}</div></div>`;
   }).join('');
   document.querySelectorAll('.parent-evaluate').forEach(button => button.addEventListener('click', () => evaluateParents(button)));
+  document.querySelectorAll('.platform-evaluate').forEach(button => button.addEventListener('click', () => evaluatePlatform(button)));
+}
+
+async function evaluatePlatform(button) {
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = 'Testing platform…';
+  try {
+    const body = await postJson('/api/platform/evaluate', {repository:button.dataset.repository, migration:button.dataset.migration === 'true'});
+    const item = body.evaluation;
+    const labels = {safe_candidate:'Safe platform candidate',verification_skipped:'Security pass · checks not configured',partial_improvement:'Partial improvement',still_vulnerable:'Still vulnerable',install_failed:'Dependency conflict',alignment_failed:'Expo alignment failed',worktree_failed:'Worktree failed',no_candidate:'No compatible candidate'};
+    const checks = item.verification?.skipped ? ' Project checks not configured.' : item.verification?.passed ? ' Project checks passed.' : ' Project checks failed.';
+    const outcome = item.resolved?.length ? `Clears ${item.resolved.length} of ${item.advisories.length} targeted advisories.${checks}` : checks;
+    const migration = !item.is_migration && item.migration_candidate ? ` Expo ${item.migration_candidate} is available only as an explicit SDK migration.` : '';
+    const mode = item.is_migration ? 'Explicit SDK migration' : 'Current SDK line';
+    $('#parent-results').innerHTML = `<div class="fix-item ${item.status === 'safe_candidate' ? '' : 'blocked'}"><strong>Expo SDK set → ${escapeHtml(item.candidate_version || '—')}</strong><span>${escapeHtml(mode)} · ${escapeHtml(labels[item.status] || item.status)}</span><span class="mono">${escapeHtml(outcome + migration)} · ${escapeHtml((item.changed_files || []).join(' · '))}</span></div>`;
+    $('#parent-dialog').showModal();
+  } catch(error) { $('#scan-message').textContent = error.message; }
+  finally { button.disabled = false; button.textContent = original; }
 }
 
 async function evaluateParents(button) {
