@@ -16,6 +16,7 @@ class Package:
     version: str
     ecosystem: str
     path: str
+    direct: bool = False
 
 
 def discover_packages(root: Path) -> list[Package]:
@@ -27,13 +28,15 @@ def discover_packages(root: Path) -> list[Package]:
             data = json.loads(lock.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        root_package = data.get("packages", {}).get("", {})
+        direct_names = set(root_package.get("dependencies", {})) | set(root_package.get("devDependencies", {}))
         for key, value in data.get("packages", {}).items():
             if not key.startswith("node_modules/") or not isinstance(value, dict):
                 continue
             name = key.rsplit("node_modules/", 1)[-1]
             version = value.get("version")
             if name and isinstance(version, str):
-                package = Package(name, version, "npm", relative_path(lock, root))
+                package = Package(name, version, "npm", relative_path(lock, root), name in direct_names)
                 packages[(package.ecosystem, name, version)] = package
     requirement = re.compile(r"^\s*([A-Za-z0-9_.-]+)==([^\s;]+)")
     for lock in root.rglob("requirements*.txt"):
@@ -82,6 +85,14 @@ def _fixed_version(record: dict, package: Package) -> str | None:
     return None
 
 
+def _same_major(current: str, fixed: str | None) -> bool:
+    if not fixed:
+        return False
+    current_major = re.match(r"\D*(\d+)", current)
+    fixed_major = re.match(r"\D*(\d+)", fixed)
+    return bool(current_major and fixed_major and current_major.group(1) == fixed_major.group(1))
+
+
 def scan_dependencies(root: Path, timeout: float = 10) -> tuple[list[Finding], str | None]:
     packages = discover_packages(root)
     if not packages:
@@ -102,6 +113,15 @@ def scan_dependencies(root: Path, timeout: float = 10) -> tuple[list[Finding], s
             findings.append(Finding(
                 f"SCA-{summary['id']}", record.get("summary") or f"Vulnerable dependency: {package.name}",
                 f"{package.name} {package.version} is affected by {summary['id']}.", _severity(record), "dependency",
-                package.path, 1, f"{package.name}@{package.version}", remediation, "osv",
+                package.path, 1, f"{package.name}@{package.version}", remediation, "osv", {
+                    "package": package.name,
+                    "current_version": package.version,
+                    "fixed_version": fixed,
+                    "ecosystem": package.ecosystem,
+                    "direct": package.direct,
+                    "fix_eligible": bool(package.ecosystem == "npm" and _same_major(package.version, fixed)),
+                    "fix_strategy": "dependency" if package.direct else "override",
+                    "advisory": summary["id"],
+                },
             ))
     return findings, None

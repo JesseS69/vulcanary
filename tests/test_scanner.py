@@ -8,6 +8,7 @@ from vulcanary.cli import main
 from vulcanary.config import Config
 from vulcanary.dashboard import DashboardState
 from vulcanary.dependencies import discover_packages, scan_dependencies
+from vulcanary.fixes import preview
 from vulcanary.models import Severity
 from vulcanary.scanners import scan
 
@@ -98,6 +99,15 @@ class ScannerTests(unittest.TestCase):
             self.assertIsNone(warning)
             self.assertEqual(findings[0].severity, Severity.CRITICAL)
             self.assertIn("1.1.0", findings[0].remediation)
+
+    def test_fix_preview_separates_safe_and_manual_findings(self) -> None:
+        findings = [
+            {"fingerprint": "safe", "title": "Safe", "repository": "app", "repository_path": "C:/app", "metadata": {"fix_eligible": True, "package": "demo", "current_version": "1.0.0", "fixed_version": "1.1.0", "advisory": "GHSA-safe"}},
+            {"fingerprint": "manual", "title": "Manual", "repository": "app", "repository_path": "C:/app", "metadata": {"fix_eligible": False}},
+        ]
+        plan = preview(findings, ["safe", "manual"])
+        self.assertEqual(len(plan["changes"]), 1)
+        self.assertEqual(len(plan["blocked"]), 1)
 
 
 if __name__ == "__main__":

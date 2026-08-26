@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from .config import Config
 from .scanners import scan
 from .dependencies import scan_dependencies
+from .fixes import apply_changes, commit_changes, preview as preview_fixes
 
 
 @dataclass
@@ -34,6 +35,7 @@ class DashboardState:
         self.repositories: dict[str, RepositoryScan] = {}
         self.history_path = history_path
         self.history: list[dict] = []
+        self.pending_fix: dict | None = None
         if history_path and history_path.exists():
             try:
                 payload = json.loads(history_path.read_text(encoding="utf-8"))
@@ -124,6 +126,7 @@ def make_handler(state: DashboardState):
                 "/styles.css": ("styles.css", "text/css"),
                 "/brand.css": ("brand.css", "text/css"),
                 "/forge.css": ("forge.css", "text/css"),
+                "/fixes.css": ("fixes.css", "text/css"),
                 "/vulcanary-logo.png": ("vulcanary-logo.png", "image/png"),
                 "/vulcanary-favicon.png": ("vulcanary-favicon.png", "image/png"),
             }
@@ -142,7 +145,8 @@ def make_handler(state: DashboardState):
             self.wfile.write(body)
 
         def do_POST(self) -> None:
-            if urlparse(self.path).path != "/api/scan":
+            route = urlparse(self.path).path
+            if route not in {"/api/scan", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             try:
@@ -150,9 +154,27 @@ def make_handler(state: DashboardState):
                 if length > 16_384:
                     raise ValueError("Request is too large")
                 payload = json.loads(self.rfile.read(length))
-                repository = Path(payload["repository"])
-                result = state.scan_repository(repository)
-                self._json({"scan": result.to_dict(), "state": state.snapshot()})
+                if route == "/api/scan":
+                    repository = Path(payload["repository"])
+                    result = state.scan_repository(repository)
+                    self._json({"scan": result.to_dict(), "state": state.snapshot()})
+                elif route == "/api/fixes/preview":
+                    self._json({"plan": preview_fixes(state.snapshot()["findings"], payload.get("fingerprints", []))})
+                elif route == "/api/fixes/apply":
+                    plan = preview_fixes(state.snapshot()["findings"], payload.get("fingerprints", []))
+                    applied = apply_changes(plan)
+                    result = state.scan_repository(Path(applied["repository"]))
+                    expected = {f"SCA-{advisory}" for item in plan["changes"] for advisory in item.get("advisories", [item["advisory"]])}
+                    remaining = sorted(expected & {item["rule_id"] for item in result.findings})
+                    applied["validation"] = {"passed": not remaining, "remaining": remaining, "finding_count": len(result.findings)}
+                    state.pending_fix = applied if not remaining else None
+                    self._json({"applied": applied})
+                else:
+                    if not state.pending_fix:
+                        raise ValueError("No applied fix batch is waiting to be committed")
+                    committed = commit_changes(state.pending_fix["repository"], state.pending_fix["branch"])
+                    state.pending_fix = None
+                    self._json({"committed": committed})
             except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
                 self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
 

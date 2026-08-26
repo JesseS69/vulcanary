@@ -43,6 +43,10 @@ vulcanary dashboard `
 
 The dashboard runs only on `127.0.0.1` by default. It provides repository summaries, severity distribution, searchable findings, and remediation details. Scanned source and findings remain on the local machine.
 
+### Guarded fixes
+
+Eligible dependency findings have checkboxes in the remediation queue. Select findings and choose **Preview fixes** to review exact versions and files before changing anything. Vulcanary auto-applies direct npm upgrades or explicit npm overrides only when OSV provides a same-major fixed version. It requires a clean Git worktree, creates a dedicated `vulcanary/fixes-*` branch, refreshes the lockfile with lifecycle scripts disabled, rescans the repository, and enables **Commit verified fixes** only when the selected advisories are resolved. Major upgrades, advisories without fixed versions, and source findings remain manual-review items.
+
 ## Configuration
 
 Copy `.vulcanary.example.json` to `.vulcanary.json` in the repository being scanned:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from enum import IntEnum
 from hashlib import sha256
 from pathlib import Path
@@ -30,6 +30,7 @@ class Finding:
     evidence: str = ""
     remediation: str = ""
     scanner: str = "builtin"
+    metadata: dict = field(default_factory=dict)
 
     @property
     def fingerprint(self) -> str:
@@ -45,4 +46,3 @@ class Finding:
 
 def relative_path(path: Path, root: Path) -> str:
     return path.resolve().relative_to(root.resolve()).as_posix()
-

@@ -1,5 +1,7 @@
 const $ = (selector) => document.querySelector(selector);
 let state = {repositories: [], findings: [], summary: {total: 0, counts: {}, categories: {}}};
+const selectedFixes = new Set();
+let appliedBatch = null;
 
 const colors = {critical: '#ff4d6d', high: '#ff8359', medium: '#f8c15c', low: '#73b7ff', info: '#929aa5'};
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
@@ -41,8 +43,35 @@ function filteredFindings() {
 function renderFindings() {
   const findings = filteredFindings();
   $('#findings-empty').classList.toggle('hidden', findings.length > 0);
-  $('#finding-rows').innerHTML = findings.map(f => `<tr data-fingerprint="${escapeHtml(f.fingerprint)}"><td><span class="severity ${f.severity}">${f.severity}</span></td><td><strong>${escapeHtml(f.title)}</strong><div class="muted">${escapeHtml(f.rule_id)}</div></td><td>${escapeHtml(f.repository)}</td><td class="location">${escapeHtml(f.path)}:${f.line}</td><td>${escapeHtml(f.category)}</td></tr>`).join('');
-  document.querySelectorAll('#finding-rows tr').forEach(row => row.addEventListener('click', () => openFinding(row.dataset.fingerprint)));
+  $('#finding-rows').innerHTML = findings.map(f => {
+    const eligible = Boolean(f.metadata?.fix_eligible);
+    const checked = selectedFixes.has(f.fingerprint) ? 'checked' : '';
+    const reason = eligible ? `Select ${f.metadata.package} upgrade` : 'Automatic fix unavailable';
+    return `<tr data-fingerprint="${escapeHtml(f.fingerprint)}"><td class="check-cell"><input class="fix-check" type="checkbox" aria-label="${escapeHtml(reason)}" ${eligible ? '' : 'disabled'} ${checked}></td><td><span class="severity ${f.severity}">${f.severity}</span></td><td><strong>${escapeHtml(f.title)}</strong><div class="muted">${escapeHtml(f.rule_id)}</div></td><td>${escapeHtml(f.repository)}</td><td class="location">${escapeHtml(f.path)}:${f.line}</td><td>${escapeHtml(f.category)}</td></tr>`;
+  }).join('');
+  document.querySelectorAll('#finding-rows tr').forEach(row => {
+    row.addEventListener('click', event => { if (!event.target.classList.contains('fix-check')) openFinding(row.dataset.fingerprint); });
+    const checkbox = row.querySelector('.fix-check');
+    checkbox.addEventListener('change', () => { checkbox.checked ? selectedFixes.add(row.dataset.fingerprint) : selectedFixes.delete(row.dataset.fingerprint); updateFixBar(); });
+  });
+}
+
+function updateFixBar() {
+  $('#fix-bar').classList.toggle('hidden', selectedFixes.size === 0);
+  $('#selected-count').textContent = `${selectedFixes.size} selected`;
+}
+
+async function postJson(url, payload = {}) {
+  const response = await fetch(url, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || 'Request failed');
+  return body;
+}
+
+function renderFixPlan(plan) {
+  $('#fix-summary').textContent = `${plan.changes.length} safe upgrade${plan.changes.length === 1 ? '' : 's'} · ${plan.blocked.length} manual review`;
+  $('#fix-plan').innerHTML = [...plan.changes.map(item => `<div class="fix-item"><strong>${escapeHtml(item.package)} ${escapeHtml(item.from)} → ${escapeHtml(item.to)}</strong><span>${escapeHtml(item.strategy === 'override' ? 'TRANSITIVE OVERRIDE' : 'DIRECT UPGRADE')}</span><span class="mono">${escapeHtml(item.advisories.join(', '))} · ${escapeHtml(item.files.join(' · '))}</span></div>`), ...plan.blocked.map(item => `<div class="fix-item blocked"><strong>${escapeHtml(item.title)}</strong><span>Manual</span><span class="mono">${escapeHtml(item.reason)}</span></div>`)].join('');
+  $('#apply-fixes').disabled = plan.changes.length === 0;
 }
 
 function openFinding(fingerprint) {
@@ -81,4 +110,27 @@ $('#scan-form').addEventListener('submit', async event => {
 $('#search').addEventListener('input', renderFindings);
 $('#severity-filter').addEventListener('change', renderFindings);
 $('#dialog-close').addEventListener('click', () => $('#finding-dialog').close());
+$('#clear-fixes').addEventListener('click', () => { selectedFixes.clear(); updateFixBar(); renderFindings(); });
+$('#select-safe').addEventListener('click', () => { state.findings.filter(f => f.metadata?.fix_eligible).forEach(f => selectedFixes.add(f.fingerprint)); updateFixBar(); renderFindings(); });
+$('#preview-fixes').addEventListener('click', async () => {
+  $('#fix-message').textContent = '';
+  try { const body = await postJson('/api/fixes/preview', {fingerprints:[...selectedFixes]}); renderFixPlan(body.plan); $('#fix-dialog').showModal(); }
+  catch(error) { $('#fix-message').textContent = error.message; }
+});
+$('#fix-close').addEventListener('click', () => $('#fix-dialog').close());
+$('#apply-fixes').addEventListener('click', async () => {
+  const button = $('#apply-fixes'); button.disabled = true; button.textContent = 'Applying and rescanning…'; $('#fix-message').textContent = '';
+  try {
+    const body = await postJson('/api/fixes/apply', {fingerprints:[...selectedFixes]}); appliedBatch = body.applied;
+    if (!appliedBatch.validation.passed) throw new Error(`Applied, but ${appliedBatch.validation.remaining.length} advisories remain. Review manually before committing.`);
+    $('#fix-message').textContent = `Applied on ${appliedBatch.branch}. Rescan passed with ${appliedBatch.validation.finding_count} remaining findings.`;
+    $('#commit-fixes').classList.remove('hidden'); await refresh();
+  } catch(error) { $('#fix-message').textContent = error.message; }
+  finally { button.disabled = false; button.textContent = 'Apply to working tree'; }
+});
+$('#commit-fixes').addEventListener('click', async () => {
+  const button = $('#commit-fixes'); button.disabled = true; button.textContent = 'Committing…';
+  try { const body = await postJson('/api/fixes/commit'); $('#fix-message').textContent = `Committed ${body.committed.commit.slice(0, 8)} on ${body.committed.branch}.`; button.classList.add('hidden'); selectedFixes.clear(); updateFixBar(); }
+  catch(error) { $('#fix-message').textContent = error.message; button.disabled = false; button.textContent = 'Commit verified fixes'; }
+});
 refresh().catch(error => { $('#updated').textContent = `Dashboard error: ${error.message}`; });
