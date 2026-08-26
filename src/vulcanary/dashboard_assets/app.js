@@ -9,8 +9,8 @@ function render() {
   ['critical','high','medium','low'].forEach(level => $(`#${level}`).textContent = counts[level] || 0);
   $('#total').textContent = state.summary.total || 0;
   $('#nav-count').textContent = state.summary.total || 0;
-  $('#repo-count').textContent = `${state.repositories.length} scanned`;
-  $('#risk-label').textContent = counts.critical ? 'Critical exposure' : counts.high ? 'High risk detected' : state.summary.total ? 'Review recommended' : 'No active risk';
+  $('#repo-count').textContent = `${state.repositories.length} watched`;
+  $('#risk-label').textContent = counts.critical ? 'Forge at critical heat' : counts.high ? 'High heat detected' : state.summary.total ? 'Work the remediation queue' : 'Forge clear';
   $('#updated').textContent = state.repositories.length ? `Updated ${new Date(state.generated_at).toLocaleString()}` : 'Scan a repository to begin';
   renderChart(counts);
   renderRepositories();
@@ -24,7 +24,7 @@ function renderChart(counts) {
 
 function renderRepositories() {
   const target = $('#repo-list');
-  if (!state.repositories.length) { target.className = 'repo-list empty-state'; target.textContent = 'No repositories scanned yet.'; return; }
+  if (!state.repositories.length) { target.className = 'repo-list empty-state'; target.textContent = 'No repositories under watch.'; return; }
   target.className = 'repo-list';
   target.innerHTML = state.repositories.map(repo => {
     const severe = repo.findings.filter(f => ['critical','high'].includes(f.severity)).length;

@@ -8,23 +8,25 @@
   <link rel="icon" type="image/png" href="/vulcanary-favicon.png">
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/brand.css">
+  <link rel="stylesheet" href="/forge.css">
 </head>
 <body>
   <aside class="sidebar">
     <div class="brand"><img class="brand-logo" src="/vulcanary-logo.png" alt=""><span>Vulcanary</span></div>
     <nav aria-label="Primary">
-      <a class="active" href="#overview">Overview</a>
-      <a href="#findings">Findings <span id="nav-count" class="nav-count">0</span></a>
-      <a href="#repositories">Repositories</a>
+      <a class="active" href="#overview">The Forge</a>
+      <a href="#findings">Remediation <span id="nav-count" class="nav-count">0</span></a>
+      <a href="#repositories">Repository Watch</a>
     </nav>
-    <div class="sidebar-foot"><span class="status-dot"></span>Local scanner online</div>
+    <div class="sidebar-foot"><span class="status-dot"></span>Watch active · local</div>
   </aside>
 
   <main>
     <header>
-      <div><p class="eyebrow">APPLICATION SECURITY</p><h1>Risk overview</h1><p id="updated" class="muted">Waiting for scan data</p></div>
-      <button id="scan-toggle" class="primary">+ Scan repository</button>
+      <div><p class="eyebrow">CONTINUOUS CODE DEFENSE</p><h1>Forge intelligence</h1><p class="forge-line">Catch weakness before it hardens.</p><p id="updated" class="muted">Waiting for scan data</p></div>
+      <button id="scan-toggle" class="primary">+ Run a scan</button>
     </header>
+    <div class="heat-rule" aria-hidden="true"><span></span></div>
 
     <form id="scan-form" class="scan-form hidden">
       <label for="repository">Local repository path</label>
@@ -33,7 +35,7 @@
     </form>
 
     <section id="overview" class="metric-grid" aria-label="Security summary">
-      <article class="metric hero-metric"><p>Total findings</p><strong id="total">0</strong><span id="risk-label">No active risk</span></article>
+      <article class="metric hero-metric"><p>Open exposure</p><strong id="total">0</strong><span id="risk-label">Forge clear</span></article>
       <article class="metric critical"><p>Critical</p><strong id="critical">0</strong><span>Immediate action</span></article>
       <article class="metric high"><p>High</p><strong id="high">0</strong><span>Fix before release</span></article>
       <article class="metric medium"><p>Medium</p><strong id="medium">0</strong><span>Review soon</span></article>
@@ -41,12 +43,12 @@
     </section>
 
     <section class="split-grid">
-      <article class="panel"><div class="panel-head"><div><p class="eyebrow">EXPOSURE</p><h2>Findings by severity</h2></div></div><div id="severity-chart" class="bars"></div></article>
-      <article class="panel"><div class="panel-head"><div><p class="eyebrow">COVERAGE</p><h2>Repositories</h2></div><span id="repo-count" class="pill">0 scanned</span></div><div id="repo-list" class="repo-list empty-state">No repositories scanned yet.</div></article>
+      <article class="panel"><div class="panel-head"><div><p class="eyebrow">THREAT TEMPERATURE</p><h2>Exposure by severity</h2></div></div><div id="severity-chart" class="bars"></div></article>
+      <article id="repositories" class="panel"><div class="panel-head"><div><p class="eyebrow">WATCH COVERAGE</p><h2>Repository watch</h2></div><span id="repo-count" class="pill">0 watched</span></div><div id="repo-list" class="repo-list empty-state">No repositories under watch.</div></article>
     </section>
 
     <section id="findings" class="panel findings-panel">
-      <div class="panel-head"><div><p class="eyebrow">TRIAGE QUEUE</p><h2>Active findings</h2></div><div class="filters"><input id="search" type="search" placeholder="Search findings"><select id="severity-filter" aria-label="Filter severity"><option value="all">All severities</option><option>critical</option><option>high</option><option>medium</option><option>low</option><option>info</option></select></div></div>
+      <div class="panel-head"><div><p class="eyebrow">REMEDIATION QUEUE</p><h2>Findings on the anvil</h2></div><div class="filters"><input id="search" type="search" placeholder="Search rules, paths, repositories"><select id="severity-filter" aria-label="Filter severity"><option value="all">All severities</option><option>critical</option><option>high</option><option>medium</option><option>low</option><option>info</option></select></div></div>
       <div class="table-wrap"><table><thead><tr><th>Severity</th><th>Finding</th><th>Repository</th><th>Location</th><th>Category</th></tr></thead><tbody id="finding-rows"></tbody></table><div id="findings-empty" class="empty-state">No findings to display.</div></div>
     </section>
   </main>

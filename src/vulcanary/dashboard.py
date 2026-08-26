@@ -118,6 +118,7 @@ def make_handler(state: DashboardState):
                 "/app.js": ("app.js", "text/javascript"),
                 "/styles.css": ("styles.css", "text/css"),
                 "/brand.css": ("brand.css", "text/css"),
+                "/forge.css": ("forge.css", "text/css"),
                 "/vulcanary-logo.png": ("vulcanary-logo.png", "image/png"),
                 "/vulcanary-favicon.png": ("vulcanary-favicon.png", "image/png"),
             }
