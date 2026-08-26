@@ -42,6 +42,17 @@ class ScannerTests(unittest.TestCase):
             (dependencies / "bad.js").write_text("eval(input)", encoding="utf-8")
             self.assertEqual(scan(root, Config()), [])
 
+    def test_loads_argument_array_verification_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".vulcanary.json").write_text(json.dumps({
+                "verify_commands": [["python", "-m", "pytest"], ["python", "-m", "build"]],
+                "verify_timeout_seconds": 45,
+            }), encoding="utf-8")
+            config = Config.load(root)
+            self.assertEqual(config.verify_commands[0], ["python", "-m", "pytest"])
+            self.assertEqual(config.verify_timeout_seconds, 45)
+
     def test_inline_rule_suppression(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

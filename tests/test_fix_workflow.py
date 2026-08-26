@@ -1,11 +1,12 @@
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from vulcanary.fixes import apply_changes, commit_changes, preview
+from vulcanary.fixes import apply_changes, commit_changes, preview, run_verification
 
 
 class FixWorkflowTests(unittest.TestCase):
@@ -108,6 +109,21 @@ class FixWorkflowTests(unittest.TestCase):
             self.assertNotIn("vulcanary/fixes-", self._git(root, "branch", "--list"))
             self.assertEqual(json.loads((root / "package.json").read_text()), original_package)
             self.assertEqual(self._git(root, "status", "--porcelain"), "")
+
+    def test_project_verification_is_argument_safe_and_redacts_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            passed = run_verification(directory, [[sys.executable, "-c", "print('ok')"]], 10)
+            failed = run_verification(
+                directory,
+                [[sys.executable, "-c", "import sys; print('secret-value'); sys.exit(7)"]],
+                10,
+            )
+
+        self.assertTrue(passed["passed"])
+        self.assertEqual(passed["results"][0]["returncode"], 0)
+        self.assertFalse(failed["passed"])
+        self.assertEqual(failed["results"][0]["returncode"], 7)
+        self.assertNotIn("secret-value", json.dumps(failed))
 
 
 if __name__ == "__main__":

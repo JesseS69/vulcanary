@@ -45,7 +45,7 @@ The dashboard runs only on `127.0.0.1` by default. It provides repository summar
 
 ### Guarded fixes
 
-Eligible dependency findings have checkboxes in the remediation queue. Select findings and choose **Preview fixes** to review exact versions and files before changing anything. Vulcanary auto-applies direct npm upgrades or explicit npm overrides only when OSV provides a same-major fixed version. It requires a clean Git worktree, creates a dedicated `vulcanary/fixes-*` branch, refreshes the lockfile with lifecycle scripts disabled, rescans the repository, and enables **Commit verified fixes** only when the selected advisories are resolved. Major upgrades, advisories without fixed versions, and source findings remain manual-review items.
+Eligible dependency findings have checkboxes in the remediation queue. Select findings and choose **Preview fixes** to review exact versions and files before changing anything. Vulcanary auto-applies direct npm upgrades or explicit npm overrides only when OSV provides a same-major fixed version. It requires a clean Git worktree, creates a dedicated `vulcanary/fixes-*` branch, refreshes the lockfile with lifecycle scripts disabled, rescans the repository, runs explicitly configured project checks, and enables **Commit verified fixes** only when every check passes. A failed advisory rescan or project check automatically restores the npm files, original branch, and clean worktree. Major upgrades, advisories without fixed versions, and source findings remain manual-review items.
 
 ## Configuration
 
@@ -57,9 +57,13 @@ Copy `.vulcanary.example.json` to `.vulcanary.json` in the repository being scan
   "exclude": ["fixtures/**"],
   "ignored_rules": ["CODE-JS-INNERHTML"],
   "ignored_fingerprints": [],
-  "max_file_bytes": 1000000
+  "max_file_bytes": 1000000,
+  "verify_commands": [["npm", "test", "--", "--runInBand"], ["npm", "run", "build"]],
+  "verify_timeout_seconds": 300
 }
 ```
+
+Verification commands are opt-in and executed directly without a shell after a proposed dependency fix passes its security rescan. Only configure commands you trust; scanned repositories are otherwise treated as hostile input. Command output is not returned to the dashboard, preventing accidental leakage of tokens or other build-log secrets.
 
 Prefer fingerprint-scoped suppressions over blanket rule ignores. A single source finding can also be suppressed on its own line or the preceding line with `// vulcanary:ignore RULE-ID`.
 

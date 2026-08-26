@@ -65,6 +65,25 @@ def rollback_changes(repository: str, branch: str, original_branch: str) -> dict
     }
 
 
+def run_verification(repository: str, commands: list[list[str]], timeout_seconds: int = 300) -> dict:
+    root = Path(repository).resolve()
+    results = []
+    for index, command in enumerate(commands, start=1):
+        label = f"check {index} ({Path(command[0]).name})"
+        try:
+            completed = subprocess.run(
+                command, cwd=root, text=True, capture_output=True, timeout=timeout_seconds, shell=False,
+            )
+        except subprocess.TimeoutExpired:
+            return {"passed": False, "failed_command": label, "reason": "timed out", "results": results}
+        except OSError:
+            return {"passed": False, "failed_command": label, "reason": "could not start", "results": results}
+        results.append({"command": label, "returncode": completed.returncode})
+        if completed.returncode:
+            return {"passed": False, "failed_command": label, "reason": "returned a non-zero status", "results": results}
+    return {"passed": True, "skipped": not commands, "results": results}
+
+
 def apply_changes(plan: dict) -> dict:
     if not plan.get("changes"):
         raise ValueError("No safe automatic fixes were selected")
