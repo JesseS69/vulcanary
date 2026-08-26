@@ -99,6 +99,34 @@ class ScannerTests(unittest.TestCase):
             packages = discover_packages(root)
             self.assertEqual([(item.name, item.version, item.ecosystem) for item in packages], [("lodash", "4.17.20", "npm")])
 
+    def test_discovers_yarn_classic_and_berry_locks_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "package.json").write_text(json.dumps({"dependencies": {"lodash": "^4.17.20"}}), encoding="utf-8")
+            (root / "yarn.lock").write_text(
+                'lodash@^4.17.20:\n  version "4.17.20"\n\n"@scope/demo@npm:^2.0.0":\n  version: 2.1.0\n',
+                encoding="utf-8",
+            )
+            packages = sorted(discover_packages(root), key=lambda item: item.name)
+            self.assertEqual([(item.name, item.version, item.manager) for item in packages], [
+                ("@scope/demo", "2.1.0", "yarn"), ("lodash", "4.17.20", "yarn"),
+            ])
+            self.assertTrue(next(item for item in packages if item.name == "lodash").direct)
+
+    def test_discovers_pnpm_locks_and_strips_peer_suffixes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "package.json").write_text(json.dumps({"devDependencies": {"vite": "5.4.0"}}), encoding="utf-8")
+            (root / "pnpm-lock.yaml").write_text(
+                "lockfileVersion: '9.0'\npackages:\n  '@scope/demo@2.1.0':\n    resolution: {}\n  vite@5.4.0(@types/node@22.0.0):\n    resolution: {}\n",
+                encoding="utf-8",
+            )
+            packages = sorted(discover_packages(root), key=lambda item: item.name)
+            self.assertEqual([(item.name, item.version, item.manager) for item in packages], [
+                ("@scope/demo", "2.1.0", "pnpm"), ("vite", "5.4.0", "pnpm"),
+            ])
+            self.assertTrue(next(item for item in packages if item.name == "vite").direct)
+
     def test_normalizes_osv_advisories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -106,10 +134,27 @@ class ScannerTests(unittest.TestCase):
             batch = {"results": [{"vulns": [{"id": "GHSA-test"}]}]}
             record = {"summary": "Demo advisory", "database_specific": {"severity": "CRITICAL"}, "affected": [{"package": {"name": "demo"}, "ranges": [{"events": [{"fixed": "1.1.0"}]}]}]}
             with patch("vulcanary.dependencies._json_request", side_effect=[batch, record]):
-                findings, warning = scan_dependencies(root)
+                findings, warning = scan_dependencies(root, cache_dir=False)
             self.assertIsNone(warning)
             self.assertEqual(findings[0].severity, Severity.CRITICAL)
             self.assertIn("1.1.0", findings[0].remediation)
+
+    def test_reuses_sanitized_osv_cache_without_network(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as cache_directory:
+            root = Path(directory)
+            cache = Path(cache_directory)
+            (root / "requirements.txt").write_text("cached-demo==1.0.0\n", encoding="utf-8")
+            batch = {"results": [{"vulns": [{"id": "GHSA-cached"}]}]}
+            record = {"summary": "Cached advisory", "affected": [{"package": {"name": "cached-demo"}, "ranges": [{"events": [{"fixed": "1.0.1"}]}]}]}
+            with patch("vulcanary.dependencies._json_request", side_effect=[batch, record]):
+                first, warning = scan_dependencies(root, cache_dir=cache)
+            self.assertIsNone(warning)
+            with patch("vulcanary.dependencies._json_request", side_effect=AssertionError("network should not be used")):
+                second, warning = scan_dependencies(root, cache_dir=cache)
+            self.assertIsNone(warning)
+            self.assertEqual([item.fingerprint for item in first], [item.fingerprint for item in second])
+            cache_text = "".join(path.read_text(encoding="utf-8") for path in cache.rglob("*.json"))
+            self.assertNotIn(str(root), cache_text)
 
     def test_only_direct_same_major_npm_dependencies_are_auto_fixable(self) -> None:
         record = {
@@ -124,7 +169,7 @@ class ScannerTests(unittest.TestCase):
             }}
             (root / "package-lock.json").write_text(json.dumps(direct_lock), encoding="utf-8")
             with patch("vulcanary.dependencies._json_request", side_effect=[{"results": [{"vulns": [{"id": "GHSA-demo"}]}]}, record]):
-                direct_findings, _ = scan_dependencies(root)
+                direct_findings, _ = scan_dependencies(root, cache_dir=False)
             self.assertTrue(direct_findings[0].metadata["fix_eligible"])
 
             transitive_lock = {"packages": {
@@ -135,7 +180,7 @@ class ScannerTests(unittest.TestCase):
             (root / "package-lock.json").write_text(json.dumps(transitive_lock), encoding="utf-8")
             batch = {"results": [{}, {"vulns": [{"id": "GHSA-demo"}]}]}
             with patch("vulcanary.dependencies._json_request", side_effect=[batch, record]):
-                transitive_findings, _ = scan_dependencies(root)
+                transitive_findings, _ = scan_dependencies(root, cache_dir=False)
             self.assertFalse(transitive_findings[0].metadata["fix_eligible"])
             self.assertIn("Upgrade parent", transitive_findings[0].metadata["fix_block_reason"])
             self.assertEqual(transitive_findings[0].metadata["parent_packages"], ["parent"])

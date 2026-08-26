@@ -84,13 +84,13 @@ Prefer fingerprint-scoped suppressions over blanket rule ignores. A single sourc
 - Secret patterns: AWS access keys, GitHub tokens, and private keys
 - SAST patterns: selected Python and JavaScript execution/XSS sinks
 - IaC patterns: root containers and public Terraform ingress
-- Dependency advisories: pinned npm and Python dependencies queried against OSV
+- Dependency advisories: pinned npm, Yarn Classic/Berry, pnpm, and Python dependencies queried against OSV
 - Stable fingerprints and deduplication
 - Configurable exclusions and severity gates
 - Console, normalized JSON, and SARIF 2.1 output
 - A GitHub Actions workflow that uploads results to code scanning
 
-Dependency scanning sends only package names, ecosystems, and pinned versions to OSV.dev; source code is never uploaded. Use `--offline` to disable advisory queries.
+Dependency scanning sends only package names, ecosystems, and pinned versions to OSV.dev; source code is never uploaded. Successful query and public advisory responses are cached for six hours in the operating system's temporary directory using hashed package identities. The cache never contains repository paths or source, and `VULCANARY_CACHE_DIR` can select a different location. Use `--offline` to disable advisory queries.
 
 ## Production roadmap
 
@@ -101,7 +101,7 @@ Dependency scanning sends only package names, ecosystems, and pinned versions to
 5. **Platform:** authenticated API, job queue, isolated ephemeral scan workers, Postgres, object storage, RBAC, audit log, and tenant isolation.
 6. **Supply-chain controls:** generate CycloneDX/SPDX SBOMs, scan lockfiles and container images, sign attestations, and enforce policies at merge/deploy time.
 
-The next dependency milestone is broader lockfile coverage and advisory caching. Vulcanary consumes OSV rather than maintaining a private vulnerability database, preserving advisory identifiers and fixed versions in its normalized findings.
+Vulcanary consumes OSV rather than maintaining a private vulnerability database, preserving advisory identifiers and fixed versions in its normalized findings. Yarn and pnpm findings are currently read-only; automatic lockfile rewriting remains limited to npm until equivalent rollback and verification coverage is available.
 
 ## Security boundaries
 

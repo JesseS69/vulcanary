@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 import re
+import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from .models import Finding, Severity, relative_path
+
+
+_CACHE_TTL_SECONDS = 6 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -17,12 +24,73 @@ class Package:
     ecosystem: str
     path: str
     direct: bool = False
+    manager: str = "npm"
+
+
+_SKIPPED_PARTS = {"node_modules", ".git", ".expo", ".pnpm-store", "dist", "build"}
+
+
+def _is_generated(path: Path) -> bool:
+    return bool(_SKIPPED_PARTS & set(path.parts))
+
+
+def _declared_names(directory: Path) -> set[str]:
+    try:
+        package = json.loads((directory / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    return set(package.get("dependencies", {})) | set(package.get("devDependencies", {}))
+
+
+def _yarn_packages(lock: Path, root: Path) -> list[Package]:
+    direct = _declared_names(lock.parent)
+    found = []
+    header: str | None = None
+    for raw in lock.read_text(encoding="utf-8").splitlines():
+        if raw and not raw[0].isspace() and raw.rstrip().endswith(":"):
+            header = raw.strip().rstrip(":").strip('"')
+            continue
+        version = re.match(r'^\s+version\s*:?[ ]*["\']?([^"\'\s]+)', raw)
+        if not header or not version:
+            continue
+        selector = header.split(",", 1)[0].strip().strip('"')
+        match = re.match(r"(?P<name>@[^/]+/[^@]+|[^@]+)@(?:npm:)?", selector)
+        if match:
+            name = match.group("name")
+            found.append(Package(name, version.group(1), "npm", relative_path(lock, root), name in direct, "yarn"))
+        header = None
+    return found
+
+
+def _pnpm_packages(lock: Path, root: Path) -> list[Package]:
+    direct = _declared_names(lock.parent)
+    found = []
+    in_packages = False
+    for raw in lock.read_text(encoding="utf-8").splitlines():
+        if raw == "packages:":
+            in_packages = True
+            continue
+        if in_packages and raw and not raw[0].isspace():
+            break
+        if not in_packages:
+            continue
+        match = re.match(r"^\s{2}['\"]?(.+?)['\"]?:\s*$", raw)
+        if not match:
+            continue
+        key = match.group(1).lstrip("/").split("(", 1)[0]
+        split = key.rfind("@")
+        if split <= 0:
+            continue
+        name, version = key[:split], key[split + 1:]
+        if name and re.match(r"^\d+\.\d+\.\d+", version):
+            found.append(Package(name, version, "npm", relative_path(lock, root), name in direct, "pnpm"))
+    return found
 
 
 def discover_packages(root: Path) -> list[Package]:
-    packages: dict[tuple[str, str, str], Package] = {}
+    packages: dict[tuple[str, str, str, str], Package] = {}
     for lock in root.rglob("package-lock.json"):
-        if {"node_modules", ".git", ".expo", ".pnpm-store", "dist", "build"} & set(lock.parts):
+        if _is_generated(lock):
             continue
         try:
             data = json.loads(lock.read_text(encoding="utf-8"))
@@ -37,7 +105,17 @@ def discover_packages(root: Path) -> list[Package]:
             version = value.get("version")
             if name and isinstance(version, str):
                 package = Package(name, version, "npm", relative_path(lock, root), name in direct_names)
-                packages[(package.ecosystem, name, version)] = package
+                packages[(package.ecosystem, name, version, package.path)] = package
+    for pattern, reader in (("yarn.lock", _yarn_packages), ("pnpm-lock.yaml", _pnpm_packages)):
+        for lock in root.rglob(pattern):
+            if _is_generated(lock):
+                continue
+            try:
+                discovered = reader(lock, root)
+            except OSError:
+                continue
+            for package in discovered:
+                packages[(package.ecosystem, package.name, package.version, package.path)] = package
     requirement = re.compile(r"^\s*([A-Za-z0-9_.-]+)==([^\s;]+)")
     for lock in root.rglob("requirements*.txt"):
         if {".git", ".venv", "venv", "build", "dist"} & set(lock.parts):
@@ -50,7 +128,7 @@ def discover_packages(root: Path) -> list[Package]:
             match = requirement.match(line)
             if match:
                 package = Package(match.group(1), match.group(2), "PyPI", relative_path(lock, root))
-                packages[(package.ecosystem, package.name.lower(), package.version)] = package
+                packages[(package.ecosystem, package.name.lower(), package.version, package.path)] = package
     return list(packages.values())
 
 
@@ -59,6 +137,45 @@ def _json_request(url: str, payload: dict | None = None, timeout: float = 10) ->
     request = Request(url, data=body, headers={"Content-Type": "application/json", "User-Agent": "Vulcanary/0.3"})
     with urlopen(request, timeout=timeout) as response:
         return json.loads(response.read())
+
+
+def _cache_directory(configured: Path | bool | None) -> Path | None:
+    if configured is False:
+        return None
+    if isinstance(configured, Path):
+        return configured
+    override = os.environ.get("VULCANARY_CACHE_DIR")
+    return Path(override) if override else Path(tempfile.gettempdir()) / "vulcanary-osv-cache"
+
+
+def _cache_key(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _cache_read(directory: Path | None, namespace: str, key: str) -> dict | None:
+    if directory is None:
+        return None
+    path = directory / namespace / f"{_cache_key(key)}.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if time.time() - float(payload["stored_at"]) <= _CACHE_TTL_SECONDS and isinstance(payload["value"], dict):
+            return payload["value"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return None
+
+
+def _cache_write(directory: Path | None, namespace: str, key: str, value: dict) -> None:
+    if directory is None:
+        return
+    target = directory / namespace / f"{_cache_key(key)}.json"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_suffix(f".{os.getpid()}.tmp")
+        temporary.write_text(json.dumps({"stored_at": time.time(), "value": value}), encoding="utf-8")
+        temporary.replace(target)
+    except OSError:
+        pass
 
 
 def _severity(record: dict) -> Severity:
@@ -149,27 +266,51 @@ def direct_parent_packages(root: Path, package: Package) -> list[str]:
     return parents
 
 
-def scan_dependencies(root: Path, timeout: float = 10) -> tuple[list[Finding], str | None]:
+def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | None = None) -> tuple[list[Finding], str | None]:
     packages = discover_packages(root)
     if not packages:
         return [], None
-    queries = [{"package": {"name": package.name, "ecosystem": package.ecosystem}, "version": package.version} for package in packages]
+    cache = _cache_directory(cache_dir)
+    results: list[dict | None] = []
+    missing: list[tuple[int, Package, str]] = []
+    for index, package in enumerate(packages):
+        identity = f"{package.ecosystem}\0{package.name}\0{package.version}"
+        cached = _cache_read(cache, "queries", identity)
+        results.append(cached)
+        if cached is None:
+            missing.append((index, package, identity))
     try:
-        batch = _json_request("https://api.osv.dev/v1/querybatch", {"queries": queries}, timeout)
-        advisory_ids = {item["id"] for result in batch.get("results", []) for item in result.get("vulns", [])}
-        records = {advisory_id: _json_request(f"https://api.osv.dev/v1/vulns/{advisory_id}", timeout=timeout) for advisory_id in advisory_ids}
+        if missing:
+            queries = [{"package": {"name": package.name, "ecosystem": package.ecosystem}, "version": package.version} for _, package, _ in missing]
+            batch = _json_request("https://api.osv.dev/v1/querybatch", {"queries": queries}, timeout)
+            fetched = batch.get("results", [])
+            for offset, (index, _, identity) in enumerate(missing):
+                result = fetched[offset] if offset < len(fetched) and isinstance(fetched[offset], dict) else {}
+                results[index] = result
+                _cache_write(cache, "queries", identity, result)
+        normalized_results = [result or {} for result in results]
+        advisory_ids = {item["id"] for result in normalized_results for item in result.get("vulns", [])}
+        records = {}
+        for advisory_id in advisory_ids:
+            record = _cache_read(cache, "advisories", advisory_id)
+            if record is None:
+                record = _json_request(f"https://api.osv.dev/v1/vulns/{advisory_id}", timeout=timeout)
+                _cache_write(cache, "advisories", advisory_id, record)
+            records[advisory_id] = record
     except (OSError, URLError, ValueError, json.JSONDecodeError) as error:
         return [], f"OSV dependency scan unavailable: {error}"
     findings = []
-    for package, result in zip(packages, batch.get("results", [])):
+    for package, result in zip(packages, normalized_results):
         for summary in result.get("vulns", []):
             record = records.get(summary["id"], {})
             fixed = _fixed_version(record, package)
             same_major = _same_major(package.version, fixed)
-            parent_packages = direct_parent_packages(root, package) if package.ecosystem == "npm" and not package.direct else []
-            fix_eligible = bool(package.ecosystem == "npm" and package.direct and same_major)
+            parent_packages = direct_parent_packages(root, package) if package.manager == "npm" and not package.direct else []
+            fix_eligible = bool(package.manager == "npm" and package.direct and same_major)
             if package.ecosystem != "npm":
                 fix_block_reason = f"Automatic upgrades do not yet support {package.ecosystem}"
+            elif package.manager != "npm":
+                fix_block_reason = f"Vulcanary scans {package.manager} locks read-only; automatic upgrades are not enabled yet"
             elif not fixed:
                 fix_block_reason = "The advisory does not identify a patched release yet"
             elif not same_major:
