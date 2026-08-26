@@ -9,6 +9,9 @@
 .fix-bar span { color: var(--muted); font-size: 11px; }
 .secondary { border: 1px solid #44463a; background: #151610; color: var(--text); padding: 9px 13px; cursor: pointer; font: inherit; text-transform: uppercase; }
 .secondary:hover { border-color: var(--accent); }
+.finding-tools { display: flex; flex-direction: column; align-items: flex-end; gap: 9px; }
+.selection-actions { display: flex; gap: 8px; }
+.selection-actions .secondary { padding: 7px 10px; font-size: 10px; }
 .fix-dialog { max-height: 82vh; overflow: auto; }
 .fix-dialog h2 { margin-bottom: 5px; }
 .fix-plan { display: grid; gap: 8px; margin: 22px 0; }
@@ -18,4 +21,4 @@
 .fix-item.blocked { opacity: .6; border-left: 2px solid var(--medium); }
 .fix-message { min-height: 22px; color: var(--medium); }
 .fix-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
-@media(max-width:1000px){.fix-bar{left:20px;right:20px}.fix-bar .secondary{display:none}}
+@media(max-width:1000px){.fix-bar{left:20px;right:20px}.findings-head{align-items:flex-start}.finding-tools{align-items:stretch;width:100%}.selection-actions{flex-wrap:wrap}}

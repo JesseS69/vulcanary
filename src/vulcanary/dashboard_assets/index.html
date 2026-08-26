@@ -49,13 +49,13 @@
     </section>
 
     <section id="findings" class="panel findings-panel">
-      <div class="panel-head"><div><p class="eyebrow">REMEDIATION QUEUE</p><h2>Findings on the anvil</h2></div><div class="filters"><input id="search" type="search" placeholder="Search rules, paths, repositories"><select id="severity-filter" aria-label="Filter severity"><option value="all">All severities</option><option>critical</option><option>high</option><option>medium</option><option>low</option><option>info</option></select></div></div>
+      <div class="panel-head findings-head"><div><p class="eyebrow">REMEDIATION QUEUE</p><h2>Findings on the anvil</h2></div><div class="finding-tools"><div class="filters"><input id="search" type="search" placeholder="Search rules, paths, repositories"><select id="severity-filter" aria-label="Filter severity"><option value="all">All severities</option><option>critical</option><option>high</option><option>medium</option><option>low</option><option>info</option></select></div><div class="selection-actions"><button id="select-safe" class="secondary" type="button">Select all safe fixes</button><button id="clear-fixes" class="secondary" type="button">Clear selection</button></div></div></div>
       <div class="table-wrap"><table><thead><tr><th class="check-cell"><span class="sr-only">Select</span></th><th>Severity</th><th>Finding</th><th>Repository</th><th>Location</th><th>Category</th></tr></thead><tbody id="finding-rows"></tbody></table><div id="findings-empty" class="empty-state">No findings to display.</div></div>
     </section>
   </main>
 
   <dialog id="finding-dialog"><button id="dialog-close" class="icon-button" aria-label="Close">×</button><p id="dialog-rule" class="eyebrow"></p><h2 id="dialog-title"></h2><span id="dialog-severity" class="severity"></span><dl><dt>Location</dt><dd id="dialog-location"></dd><dt>Description</dt><dd id="dialog-description"></dd><dt>Remediation</dt><dd id="dialog-remediation"></dd><dt>Fingerprint</dt><dd id="dialog-fingerprint" class="mono"></dd></dl></dialog>
-  <div id="fix-bar" class="fix-bar hidden"><div><strong id="selected-count">0 selected</strong><span>Safe dependency upgrades only</span></div><button id="clear-fixes" class="secondary">Clear</button><button id="select-safe" class="secondary">Select safe fixes</button><button id="preview-fixes" class="primary">Preview fixes</button></div>
+  <div id="fix-bar" class="fix-bar hidden"><div><strong id="selected-count">0 selected</strong><span>Safe dependency upgrades only</span></div><button id="preview-fixes" class="primary">Preview fixes</button></div>
   <dialog id="fix-dialog" class="fix-dialog"><button id="fix-close" class="icon-button" aria-label="Close">×</button><p class="eyebrow">VERIFIED FIX BATCH</p><h2>Review changes before striking</h2><p id="fix-summary" class="muted"></p><div id="fix-plan" class="fix-plan"></div><p id="fix-message" class="fix-message"></p><div class="fix-actions"><button id="apply-fixes" class="primary">Apply to working tree</button><button id="commit-fixes" class="primary hidden">Commit verified fixes</button></div></dialog>
   <script src="/app.js" defer></script>
 </body>
