@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from vulcanary import evaluator
 from vulcanary.evaluator import create_expo_migration_branch, latest_same_major, parent_candidates
 
 
@@ -50,6 +51,65 @@ class ParentEvaluatorTests(unittest.TestCase):
             with patch("vulcanary.evaluator.latest_same_major", return_value="55.0.30"):
                 with self.assertRaisesRegex(ValueError, "not the evaluated"):
                     create_expo_migration_branch(str(root), "55.0.29")
+
+    def test_migration_branch_leaves_reviewable_changes_uncommitted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "package.json"
+            package.write_text(json.dumps({"dependencies": {"expo": "~54.0.36"}}) + "\n", encoding="utf-8")
+            self._initialize_repository(root)
+            real_run = evaluator._run
+
+            def run(command, cwd, timeout, environment=None):
+                if command[0] == "npm":
+                    package.write_text(json.dumps({"dependencies": {"expo": "~55.0.30"}}) + "\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                if Path(command[0]).name in {"expo", "expo.cmd"}:
+                    (root / "app.json").write_text('{"expo": {}}\n', encoding="utf-8")
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                return real_run(command, cwd, timeout, environment)
+
+            with patch("vulcanary.evaluator.latest_same_major", return_value="55.0.30"), patch("vulcanary.evaluator._run", side_effect=run):
+                created = create_expo_migration_branch(str(root), "55.0.30")
+
+            self.assertTrue(created["branch"].startswith("vulcanary/migrate-expo-55.0.30-"))
+            self.assertEqual(created["original_branch"], "main")
+            self.assertIn("package.json", created["changed_files"])
+            self.assertEqual(real_run(["git", "branch", "--show-current"], root, 30).stdout.strip(), created["branch"])
+            self.assertTrue(real_run(["git", "status", "--porcelain"], root, 30).stdout.strip())
+
+    def test_failed_migration_restores_original_branch_and_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "package.json"
+            original = json.dumps({"dependencies": {"expo": "~54.0.36"}}) + "\n"
+            package.write_text(original, encoding="utf-8")
+            self._initialize_repository(root)
+            real_run = evaluator._run
+
+            def run(command, cwd, timeout, environment=None):
+                if command[0] == "npm":
+                    package.write_text('{"dependencies": {"expo": "broken"}}\n', encoding="utf-8")
+                    (root / "generated.tmp").write_text("temporary\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(command, 1, "", "failed")
+                return real_run(command, cwd, timeout, environment)
+
+            with patch("vulcanary.evaluator.latest_same_major", return_value="55.0.30"), patch("vulcanary.evaluator._run", side_effect=run):
+                with self.assertRaisesRegex(ValueError, "original branch was restored"):
+                    create_expo_migration_branch(str(root), "55.0.30")
+
+            self.assertEqual(real_run(["git", "branch", "--show-current"], root, 30).stdout.strip(), "main")
+            self.assertEqual(package.read_text(encoding="utf-8"), original)
+            self.assertFalse((root / "generated.tmp").exists())
+            self.assertFalse(real_run(["git", "branch", "--list", "vulcanary/migrate-expo-*"], root, 30).stdout.strip())
+
+    @staticmethod
+    def _initialize_repository(root: Path) -> None:
+        subprocess.run(["git", "init", "-b", "main"], cwd=root, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "tests@vulcanary.local"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.name", "Vulcanary Tests"], cwd=root, check=True)
+        subprocess.run(["git", "add", "package.json"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-m", "fixture"], cwd=root, check=True, capture_output=True)
 
 
 if __name__ == "__main__":

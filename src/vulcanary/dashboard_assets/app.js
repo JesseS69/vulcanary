@@ -188,7 +188,10 @@ $('#create-migration-branch').addEventListener('click', async () => {
   button.disabled = true; button.textContent = 'Creating draft branch…'; $('#platform-message').textContent = '';
   try {
     const body = await postJson('/api/platform/create-branch', {});
-    $('#platform-message').textContent = `Created ${body.created.branch}. Changes are uncommitted for manual remediation.`;
+    const created = body.created;
+    const files = created.changed_files?.length ? created.changed_files.join(' · ') : 'No tracked files changed';
+    $('#parent-results').innerHTML = `<div class="fix-item"><strong>${escapeHtml(created.branch)}</strong><span>Draft created from ${escapeHtml(created.original_branch)} · Expo ${escapeHtml(created.candidate_version)}</span><span class="mono">Review with git diff · ${escapeHtml(files)}</span></div>`;
+    $('#platform-message').textContent = 'Changes are uncommitted and have not been pushed. Review and repair project checks before committing.';
     button.classList.add('hidden');
   } catch(error) { $('#platform-message').textContent = error.message; button.disabled = false; button.textContent = 'Create draft migration branch'; }
 });
