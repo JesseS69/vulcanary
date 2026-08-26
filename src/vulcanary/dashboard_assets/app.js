@@ -49,7 +49,8 @@ function automaticFixStatus(finding) {
     return {label: 'Manual code fix', detail: 'This finding requires a contextual source-code change'};
   }
   if (metadata.fix_block_reason) {
-    return {label: metadata.direct ? 'Manual dependency fix' : 'Parent upgrade required', detail: metadata.fix_block_reason};
+    const parents = metadata.parent_packages?.length ? ` Suggested parent${metadata.parent_packages.length === 1 ? '' : 's'}: ${metadata.parent_packages.join(', ')}.` : '';
+    return {label: metadata.direct ? 'Manual dependency fix' : 'Parent upgrade required', detail: `${metadata.fix_block_reason}.${parents}`.replace('..', '.')};
   }
   if (metadata.ecosystem && metadata.ecosystem !== 'npm') {
     return {label: 'Manual dependency fix', detail: `Automatic upgrades do not yet support ${metadata.ecosystem}`};

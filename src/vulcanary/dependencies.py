@@ -93,6 +93,62 @@ def _same_major(current: str, fixed: str | None) -> bool:
     return bool(current_major and fixed_major and current_major.group(1) == fixed_major.group(1))
 
 
+def _resolve_lock_dependency(packages: dict, parent_key: str, dependency: str) -> str | None:
+    current = parent_key
+    while True:
+        candidate = f"{current}/node_modules/{dependency}" if current else f"node_modules/{dependency}"
+        if candidate in packages:
+            return candidate
+        if "/node_modules/" in current:
+            current = current.rsplit("/node_modules/", 1)[0]
+        elif current:
+            current = ""
+        else:
+            break
+    return None
+
+
+def direct_parent_packages(root: Path, package: Package) -> list[str]:
+    lock = root / package.path
+    try:
+        data = json.loads(lock.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    packages = data.get("packages", {})
+    if not isinstance(packages, dict):
+        return []
+    root_package = packages.get("", {})
+    direct_names = sorted(set(root_package.get("dependencies", {})) | set(root_package.get("devDependencies", {})))
+    graph: dict[str, list[str]] = {}
+    for key, value in packages.items():
+        if not isinstance(value, dict):
+            continue
+        dependencies = set(value.get("dependencies", {})) | set(value.get("optionalDependencies", {}))
+        graph[key] = [resolved for name in dependencies if (resolved := _resolve_lock_dependency(packages, key, name))]
+
+    def contains_target(start: str) -> bool:
+        pending = [start]
+        visited = set()
+        while pending:
+            key = pending.pop()
+            if key in visited:
+                continue
+            visited.add(key)
+            value = packages.get(key, {})
+            name = key.rsplit("node_modules/", 1)[-1]
+            if name.lower() == package.name.lower() and value.get("version") == package.version:
+                return True
+            pending.extend(graph.get(key, []))
+        return False
+
+    parents = []
+    for name in direct_names:
+        key = _resolve_lock_dependency(packages, "", name)
+        if key and contains_target(key):
+            parents.append(name)
+    return parents
+
+
 def scan_dependencies(root: Path, timeout: float = 10) -> tuple[list[Finding], str | None]:
     packages = discover_packages(root)
     if not packages:
@@ -110,6 +166,7 @@ def scan_dependencies(root: Path, timeout: float = 10) -> tuple[list[Finding], s
             record = records.get(summary["id"], {})
             fixed = _fixed_version(record, package)
             same_major = _same_major(package.version, fixed)
+            parent_packages = direct_parent_packages(root, package) if package.ecosystem == "npm" and not package.direct else []
             fix_eligible = bool(package.ecosystem == "npm" and package.direct and same_major)
             if package.ecosystem != "npm":
                 fix_block_reason = f"Automatic upgrades do not yet support {package.ecosystem}"
@@ -118,7 +175,8 @@ def scan_dependencies(root: Path, timeout: float = 10) -> tuple[list[Finding], s
             elif not same_major:
                 fix_block_reason = f"The fix requires a major upgrade to {fixed}"
             elif not package.direct:
-                fix_block_reason = "Upgrade the direct parent dependency; unscoped transitive overrides can break other dependency paths"
+                candidates = ", ".join(parent_packages) if parent_packages else "the introducing direct dependency"
+                fix_block_reason = f"Upgrade {candidates}; unscoped transitive overrides can break other dependency paths"
             else:
                 fix_block_reason = None
             remediation = f"Upgrade {package.name} to {fixed} or later." if fixed else f"Review {summary['id']} and upgrade {package.name} to a non-affected release."
@@ -133,6 +191,7 @@ def scan_dependencies(root: Path, timeout: float = 10) -> tuple[list[Finding], s
                     "direct": package.direct,
                     "fix_eligible": fix_eligible,
                     "fix_block_reason": fix_block_reason,
+                    "parent_packages": parent_packages,
                     "fix_strategy": "dependency" if package.direct else "override",
                     "advisory": summary["id"],
                 },

@@ -129,7 +129,7 @@ class ScannerTests(unittest.TestCase):
 
             transitive_lock = {"packages": {
                 "": {"dependencies": {"parent": "1.0.0"}},
-                "node_modules/parent": {"version": "1.0.0"},
+                "node_modules/parent": {"version": "1.0.0", "dependencies": {"demo": "1.0.0"}},
                 "node_modules/demo": {"version": "1.0.0"},
             }}
             (root / "package-lock.json").write_text(json.dumps(transitive_lock), encoding="utf-8")
@@ -137,7 +137,8 @@ class ScannerTests(unittest.TestCase):
             with patch("vulcanary.dependencies._json_request", side_effect=[batch, record]):
                 transitive_findings, _ = scan_dependencies(root)
             self.assertFalse(transitive_findings[0].metadata["fix_eligible"])
-            self.assertIn("parent dependency", transitive_findings[0].metadata["fix_block_reason"])
+            self.assertIn("Upgrade parent", transitive_findings[0].metadata["fix_block_reason"])
+            self.assertEqual(transitive_findings[0].metadata["parent_packages"], ["parent"])
 
     def test_fix_preview_separates_safe_and_manual_findings(self) -> None:
         findings = [
