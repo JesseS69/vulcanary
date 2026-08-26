@@ -53,6 +53,8 @@ async function evaluatePlatform(button) {
     const mode = item.is_migration ? 'Explicit SDK migration' : 'Current SDK line';
     $('#parent-results').innerHTML = `<div class="fix-item ${item.status === 'safe_candidate' ? '' : 'blocked'}"><strong>Expo SDK set → ${escapeHtml(item.candidate_version || '—')}</strong><span>${escapeHtml(mode)} · ${escapeHtml(labels[item.status] || item.status)}</span><span class="mono">${escapeHtml(outcome + migration)} · ${escapeHtml((item.changed_files || []).join(' · '))}</span></div>`;
     $('#platform-downloads').classList.remove('hidden');
+    $('#create-migration-branch').classList.toggle('hidden', !item.is_migration);
+    $('#platform-message').textContent = '';
     $('#parent-dialog').showModal();
   } catch(error) { $('#scan-message').textContent = error.message; }
   finally { button.disabled = false; button.textContent = original; }
@@ -67,6 +69,7 @@ async function evaluateParents(button) {
     const labels = {safe_candidate:'Safe candidate',verification_skipped:'Security pass · checks not configured',verification_failed:'Project checks failed',partial_improvement:'Partial improvement',still_vulnerable:'Still vulnerable',install_failed:'Dependency conflict or migration required',worktree_failed:'Worktree failed',no_candidate:'No compatible candidate'};
     $('#parent-results').innerHTML = body.evaluation.results.map(item => { const outcome = item.resolved?.length ? ` · clears ${item.resolved.length} of ${item.advisories.length}` : ''; return `<div class="fix-item ${item.status === 'safe_candidate' ? '' : 'blocked'}"><strong>${escapeHtml(item.package)} ${escapeHtml(item.specification)} → ${escapeHtml(item.candidate_version || '—')}</strong><span>${escapeHtml(labels[item.status] || item.status)}${escapeHtml(outcome)}</span><span class="mono">Affects ${escapeHtml(item.vulnerable_packages.join(', '))} · ${escapeHtml(item.advisories.join(', '))}</span></div>`; }).join('') || '<p class="muted">No direct parent candidates were found.</p>';
     $('#platform-downloads').classList.add('hidden');
+    $('#create-migration-branch').classList.add('hidden');
     $('#parent-dialog').showModal();
   } catch(error) { $('#scan-message').textContent = error.message; }
   finally { button.disabled = false; button.textContent = original; }
@@ -180,6 +183,15 @@ $('#preview-fixes').addEventListener('click', async () => {
 });
 $('#fix-close').addEventListener('click', () => $('#fix-dialog').close());
 $('#parent-close').addEventListener('click', () => $('#parent-dialog').close());
+$('#create-migration-branch').addEventListener('click', async () => {
+  const button = $('#create-migration-branch');
+  button.disabled = true; button.textContent = 'Creating draft branch…'; $('#platform-message').textContent = '';
+  try {
+    const body = await postJson('/api/platform/create-branch', {});
+    $('#platform-message').textContent = `Created ${body.created.branch}. Changes are uncommitted for manual remediation.`;
+    button.classList.add('hidden');
+  } catch(error) { $('#platform-message').textContent = error.message; button.disabled = false; button.textContent = 'Create draft migration branch'; }
+});
 $('#apply-fixes').addEventListener('click', async () => {
   const button = $('#apply-fixes'); button.disabled = true; button.textContent = 'Applying and rescanning…'; $('#fix-message').textContent = '';
   try {

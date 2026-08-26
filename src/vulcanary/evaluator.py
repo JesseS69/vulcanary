@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -182,3 +183,46 @@ def evaluate_expo_platform(findings: list[dict], repository: str, test_migration
             }
         finally:
             _run(["git", "worktree", "remove", "--force", str(worktree)], git_root, 60)
+
+
+def create_expo_migration_branch(repository: str, candidate_version: str) -> dict:
+    root = Path(repository).resolve()
+    declared = _declared_direct_packages(root)
+    current_line = _compatibility_line(declared.get("expo", ""))
+    if not current_line:
+        raise ValueError("Expo is not a declared direct dependency")
+    expected = latest_same_major(root, "expo", str(current_line[0] + 1))
+    if not expected or candidate_version != expected:
+        raise ValueError("Migration branch refused: candidate is not the evaluated next Expo SDK release")
+    git_root_result = _run(["git", "rev-parse", "--show-toplevel"], root, 30)
+    if git_root_result.returncode:
+        raise ValueError("Migration branch requires a Git repository")
+    git_root = Path(git_root_result.stdout.strip()).resolve()
+    if _run(["git", "status", "--porcelain"], git_root, 30).stdout.strip():
+        raise ValueError("Repository has uncommitted changes; create the migration branch from a clean checkpoint")
+    original_branch = _run(["git", "branch", "--show-current"], git_root, 30).stdout.strip()
+    if not original_branch:
+        raise ValueError("Repository must be on a named branch")
+    branch = f"vulcanary/migrate-expo-{candidate_version}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+    switched = _run(["git", "switch", "-c", branch], git_root, 30)
+    if switched.returncode:
+        raise ValueError("Could not create the Expo migration branch")
+    safe_environment = dict(os.environ, npm_config_ignore_scripts="true", npm_config_audit="false", npm_config_fund="false")
+
+    def rollback() -> None:
+        _run(["git", "restore", "--source=HEAD", "--staged", "--worktree", "--", "."], git_root, 60)
+        _run(["git", "clean", "-fd"], git_root, 60)
+        _run(["git", "switch", original_branch], git_root, 30)
+        _run(["git", "branch", "-D", branch], git_root, 30)
+
+    installed = _run(["npm", "install", f"expo@{candidate_version}", "--ignore-scripts", "--no-audit", "--no-fund"], root, 600, safe_environment)
+    if installed.returncode:
+        rollback()
+        raise ValueError("Expo migration install failed; the original branch was restored")
+    expo_binary = root / "node_modules" / ".bin" / ("expo.cmd" if os.name == "nt" else "expo")
+    aligned = _run([str(expo_binary), "install", "--fix", "--npm", "--", "--ignore-scripts", "--no-audit", "--no-fund"], root, 900, safe_environment)
+    if aligned.returncode:
+        rollback()
+        raise ValueError("Expo package alignment failed; the original branch was restored")
+    changed = _run(["git", "diff", "--name-only"], git_root, 30).stdout.splitlines()
+    return {"repository": root.name, "branch": branch, "original_branch": original_branch, "candidate_version": candidate_version, "changed_files": sorted(changed)}

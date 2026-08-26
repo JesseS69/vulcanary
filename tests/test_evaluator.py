@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from vulcanary.evaluator import latest_same_major, parent_candidates
+from vulcanary.evaluator import create_expo_migration_branch, latest_same_major, parent_candidates
 
 
 class ParentEvaluatorTests(unittest.TestCase):
@@ -42,6 +42,14 @@ class ParentEvaluatorTests(unittest.TestCase):
         with patch("vulcanary.evaluator._run", return_value=completed):
             version = latest_same_major(Path("."), "react-native", "0.81.5")
         self.assertEqual(version, "0.81.7")
+
+    def test_migration_branch_rejects_an_unevaluated_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "package.json").write_text(json.dumps({"dependencies": {"expo": "~54.0.36"}}), encoding="utf-8")
+            with patch("vulcanary.evaluator.latest_same_major", return_value="55.0.30"):
+                with self.assertRaisesRegex(ValueError, "not the evaluated"):
+                    create_expo_migration_branch(str(root), "55.0.29")
 
 
 if __name__ == "__main__":

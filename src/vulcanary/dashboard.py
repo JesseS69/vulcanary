@@ -15,7 +15,7 @@ from .config import Config
 from .scanners import scan
 from .dependencies import scan_dependencies
 from .fixes import apply_changes, commit_changes, preview as preview_fixes, rollback_changes, run_verification
-from .evaluator import evaluate_expo_platform, evaluate_parent_upgrades
+from .evaluator import create_expo_migration_branch, evaluate_expo_platform, evaluate_parent_upgrades
 
 
 @dataclass
@@ -38,6 +38,7 @@ class DashboardState:
         self.history: list[dict] = []
         self.pending_fix: dict | None = None
         self.last_platform_evaluation: dict | None = None
+        self.last_platform_repository: str | None = None
         if history_path and history_path.exists():
             try:
                 payload = json.loads(history_path.read_text(encoding="utf-8"))
@@ -170,7 +171,7 @@ def make_handler(state: DashboardState):
 
         def do_POST(self) -> None:
             route = urlparse(self.path).path
-            if route not in {"/api/scan", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/parents/evaluate", "/api/platform/evaluate"}:
+            if route not in {"/api/scan", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/parents/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             try:
@@ -221,7 +222,15 @@ def make_handler(state: DashboardState):
                         raise ValueError("Scan the repository before evaluating its platform set")
                     evaluation = evaluate_expo_platform(state.snapshot()["findings"], repository, test_migration=payload.get("migration") is True)
                     state.last_platform_evaluation = dict(evaluation, repository=Path(repository).name)
+                    state.last_platform_repository = repository
                     self._json({"evaluation": evaluation})
+                elif route == "/api/platform/create-branch":
+                    report = state.last_platform_evaluation
+                    repository = state.last_platform_repository
+                    if not report or not report.get("is_migration") or not repository:
+                        raise ValueError("Evaluate an explicit SDK migration before creating its branch")
+                    created = create_expo_migration_branch(repository, report["candidate_version"])
+                    self._json({"created": created})
                 else:
                     if not state.pending_fix:
                         raise ValueError("No applied fix batch is waiting to be committed")
