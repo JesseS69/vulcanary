@@ -8,6 +8,7 @@ from .config import Config
 from .reporters import render_console, write_json, write_sarif
 from .scanners import scan
 from .dependencies import scan_dependencies
+from .reachability import analyze_reachability
 
 
 def scan_parser() -> argparse.ArgumentParser:
@@ -45,6 +46,7 @@ def main(argv: list[str] | None = None) -> int:
     findings = scan(root, config)
     if not args.offline:
         dependency_findings, warning = scan_dependencies(root)
+        dependency_findings = analyze_reachability(root, dependency_findings, config)
         dependency_findings = [finding for finding in dependency_findings if finding.fingerprint not in config.ignored_fingerprints]
         findings = sorted(findings + dependency_findings, key=lambda f: (-int(f.severity), f.path, f.line))
         if warning:

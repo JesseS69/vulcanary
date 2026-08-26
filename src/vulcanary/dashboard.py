@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from .config import Config
 from .scanners import scan
 from .dependencies import scan_dependencies
+from .reachability import analyze_reachability
 from .fixes import apply_changes, commit_changes, preview as preview_fixes, rollback_changes, run_verification
 from .evaluator import create_expo_migration_branch, evaluate_expo_platform, evaluate_parent_upgrades
 
@@ -55,6 +56,7 @@ class DashboardState:
         config = Config.load(root)
         findings = scan(root, config)
         dependency_findings, dependency_warning = scan_dependencies(root)
+        dependency_findings = analyze_reachability(root, dependency_findings, config)
         dependency_findings = [finding for finding in dependency_findings if finding.fingerprint not in config.ignored_fingerprints]
         findings = sorted(findings + dependency_findings, key=lambda f: (-int(f.severity), f.path, f.line))
         result = RepositoryScan(

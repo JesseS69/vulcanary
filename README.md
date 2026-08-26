@@ -85,12 +85,15 @@ Prefer fingerprint-scoped suppressions over blanket rule ignores. A single sourc
 - SAST patterns: selected Python and JavaScript execution/XSS sinks
 - IaC patterns: root containers and public Terraform ingress
 - Dependency advisories: pinned npm, Yarn Classic/Berry, pnpm, and Python dependencies queried against OSV
+- Conservative reachability context: observed JavaScript/TypeScript and Python imports, including imported direct parents of vulnerable transitive npm packages
 - Stable fingerprints and deduplication
 - Configurable exclusions and severity gates
 - Console, normalized JSON, and SARIF 2.1 output
 - A GitHub Actions workflow that uploads results to code scanning
 
 Dependency scanning sends only package names, ecosystems, and pinned versions to OSV.dev; source code is never uploaded. Successful query and public advisory responses are cached for six hours in the operating system's temporary directory using hashed package identities. The cache never contains repository paths or source, and `VULCANARY_CACHE_DIR` can select a different location. Use `--offline` to disable advisory queries.
+
+Reachability is local static context, not proof of safety. **Import observed** means Vulcanary found an application import of the vulnerable package or an introducing direct parent. **Import not observed** never suppresses or lowers a finding because dynamic imports, build tooling, plugins, and runtime entry points may still execute it.
 
 ## Production roadmap
 

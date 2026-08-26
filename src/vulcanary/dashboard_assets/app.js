@@ -30,10 +30,11 @@ function renderRepositories() {
   target.className = 'repo-list';
   target.innerHTML = state.repositories.map(repo => {
     const severe = repo.findings.filter(f => ['critical','high'].includes(f.severity)).length;
+    const reachable = repo.findings.filter(f => ['direct_import_observed','parent_import_observed'].includes(f.metadata?.reachability?.status)).length;
     const parentCount = repo.findings.filter(f => f.metadata?.parent_packages?.length).length;
     const evaluate = parentCount ? `<button class="parent-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Evaluate ${parentCount} upgrade path${parentCount === 1 ? '' : 's'}</button>` : '';
     const platform = repo.findings.some(f => f.metadata?.parent_packages?.includes('expo')) ? `<button class="platform-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Evaluate Expo platform set</button><button class="platform-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" data-migration="true" type="button">Evaluate next Expo SDK migration</button>` : '';
-    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">${repo.duration_ms} ms · ${severe} high priority</span><div class="repo-actions">${evaluate}${platform}</div></div>`;
+    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">${repo.duration_ms} ms · ${severe} high priority · ${reachable} import-observed</span><div class="repo-actions">${evaluate}${platform}</div></div>`;
   }).join('');
   document.querySelectorAll('.parent-evaluate').forEach(button => button.addEventListener('click', () => evaluateParents(button)));
   document.querySelectorAll('.platform-evaluate').forEach(button => button.addEventListener('click', () => evaluatePlatform(button)));
@@ -102,6 +103,15 @@ function automaticFixStatus(finding) {
   return {label: 'Major upgrade review', detail: `The fix requires upgrading to ${metadata.fixed_version} and may contain breaking changes`};
 }
 
+function reachabilityStatus(finding) {
+  const reachability = finding.metadata?.reachability;
+  if (!reachability) return '';
+  const observed = ['direct_import_observed','parent_import_observed'].includes(reachability.status);
+  const label = observed ? 'IMPORT OBSERVED' : 'IMPORT NOT OBSERVED';
+  const paths = reachability.evidence_paths?.length ? ` ${reachability.evidence_paths.join(', ')}` : '';
+  return `<div class="fix-unavailable" title="${escapeHtml(reachability.reason)}"><span>${label}</span>${escapeHtml(paths)}</div>`;
+}
+
 function renderFindings() {
   const findings = filteredFindings();
   $('#findings-empty').classList.toggle('hidden', findings.length > 0);
@@ -111,7 +121,7 @@ function renderFindings() {
     const fixStatus = automaticFixStatus(f);
     const reason = eligible ? `Select ${fixStatus.detail}` : `${fixStatus.label}: ${fixStatus.detail}`;
     const manualStatus = eligible ? '' : `<div class="fix-unavailable" title="${escapeHtml(fixStatus.detail)}"><span>${escapeHtml(fixStatus.label)}</span> · ${escapeHtml(fixStatus.detail)}</div>`;
-    return `<tr data-fingerprint="${escapeHtml(f.fingerprint)}"><td class="check-cell"><input class="fix-check" type="checkbox" aria-label="${escapeHtml(reason)}" title="${escapeHtml(reason)}" ${eligible ? '' : 'disabled'} ${checked}></td><td><span class="severity ${f.severity}">${f.severity}</span></td><td><strong>${escapeHtml(f.title)}</strong><div class="muted">${escapeHtml(f.rule_id)}</div>${manualStatus}</td><td>${escapeHtml(f.repository)}</td><td class="location">${escapeHtml(f.path)}:${f.line}</td><td>${escapeHtml(f.category)}</td></tr>`;
+    return `<tr data-fingerprint="${escapeHtml(f.fingerprint)}"><td class="check-cell"><input class="fix-check" type="checkbox" aria-label="${escapeHtml(reason)}" title="${escapeHtml(reason)}" ${eligible ? '' : 'disabled'} ${checked}></td><td><span class="severity ${f.severity}">${f.severity}</span></td><td><strong>${escapeHtml(f.title)}</strong><div class="muted">${escapeHtml(f.rule_id)}</div>${reachabilityStatus(f)}${manualStatus}</td><td>${escapeHtml(f.repository)}</td><td class="location">${escapeHtml(f.path)}:${f.line}</td><td>${escapeHtml(f.category)}</td></tr>`;
   }).join('');
   document.querySelectorAll('#finding-rows tr').forEach(row => {
     row.addEventListener('click', event => { if (!event.target.classList.contains('fix-check')) openFinding(row.dataset.fingerprint); });
@@ -148,6 +158,8 @@ function openFinding(fingerprint) {
   $('#dialog-location').textContent = `${f.repository} · ${f.path}:${f.line}`;
   $('#dialog-description').textContent = f.description;
   $('#dialog-remediation').textContent = f.remediation || 'Review the affected code and remove the unsafe pattern.';
+  const reachability = f.metadata?.reachability;
+  $('#dialog-reachability').textContent = reachability ? `${reachability.status.replaceAll('_', ' ')}. ${reachability.reason}${reachability.evidence_paths?.length ? ` Evidence: ${reachability.evidence_paths.join(', ')}` : ''}` : 'Not applicable to this finding.';
   $('#dialog-fingerprint').textContent = f.fingerprint;
   $('#finding-dialog').showModal();
 }
