@@ -9,7 +9,7 @@ from .reporters import render_console, write_json, write_sarif
 from .scanners import scan
 
 
-def parser() -> argparse.ArgumentParser:
+def scan_parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="vulcanary", description="Scan a repository for security risks.")
     result.add_argument("path", nargs="?", default=".", help="Repository to scan")
     result.add_argument("--config", type=Path, help="Configuration JSON path")
@@ -19,8 +19,22 @@ def parser() -> argparse.ArgumentParser:
     return result
 
 
+def dashboard_parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(prog="vulcanary dashboard", description="Launch the local Vulcanary dashboard.")
+    result.add_argument("--repository", "-r", action="append", type=Path, default=[], help="Repository to scan on startup; repeat for multiple repositories")
+    result.add_argument("--host", default="127.0.0.1", help="Dashboard bind address")
+    result.add_argument("--port", type=int, default=8765, help="Dashboard port")
+    result.add_argument("--no-open", action="store_true", help="Do not open a browser automatically")
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = parser().parse_args(argv)
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "dashboard":
+        args = dashboard_parser().parse_args(argv[1:])
+        from .dashboard import serve
+        return serve(args.host, args.port, args.repository, open_browser=not args.no_open)
+    args = scan_parser().parse_args(argv)
     root = Path(args.path).resolve()
     if not root.is_dir():
         print(f"error: repository does not exist: {root}", file=sys.stderr)

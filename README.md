@@ -28,6 +28,19 @@ To scan several independent local repositories without adding Vulcanary to them:
 .\scripts\scan-many.ps1 ..\CabinScout ..\worktime-audit C:\path\to\zirze-native
 ```
 
+## Local dashboard
+
+Launch the dashboard and optionally scan one or more repositories immediately:
+
+```powershell
+vulcanary dashboard `
+  --repository ..\CabinScout `
+  --repository ..\worktime-audit `
+  --repository C:\path\to\zirze-native
+```
+
+The dashboard runs only on `127.0.0.1` by default. It provides repository summaries, severity distribution, searchable findings, and remediation details. Scanned source and findings remain on the local machine.
+
 ## Configuration
 
 Copy `.vulcanary.example.json` to `.vulcanary.json` in the repository being scanned:

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from vulcanary.cli import main
 from vulcanary.config import Config
+from vulcanary.dashboard import DashboardState
 from vulcanary.models import Severity
 from vulcanary.scanners import scan
 
@@ -55,6 +56,17 @@ class ScannerTests(unittest.TestCase):
             root = Path(directory)
             (root / "main.js").write_text("element.innerHTML = input", encoding="utf-8")
             self.assertEqual(main([str(root)]), 0)
+
+    def test_dashboard_aggregates_repositories(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "main.js").write_text("element.innerHTML = input", encoding="utf-8")
+            state = DashboardState()
+            state.scan_repository(root)
+            snapshot = state.snapshot()
+            self.assertEqual(snapshot["summary"]["total"], 1)
+            self.assertEqual(snapshot["summary"]["counts"]["medium"], 1)
+            self.assertEqual(snapshot["findings"][0]["repository"], root.name)
 
 
 if __name__ == "__main__":

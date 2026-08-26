@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Vulcanary local application security dashboard">
+  <title>Vulcanary — Security overview</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">V</span><span>Vulcanary</span></div>
+    <nav aria-label="Primary">
+      <a class="active" href="#overview">Overview</a>
+      <a href="#findings">Findings <span id="nav-count" class="nav-count">0</span></a>
+      <a href="#repositories">Repositories</a>
+    </nav>
+    <div class="sidebar-foot"><span class="status-dot"></span>Local scanner online</div>
+  </aside>
+
+  <main>
+    <header>
+      <div><p class="eyebrow">APPLICATION SECURITY</p><h1>Risk overview</h1><p id="updated" class="muted">Waiting for scan data</p></div>
+      <button id="scan-toggle" class="primary">+ Scan repository</button>
+    </header>
+
+    <form id="scan-form" class="scan-form hidden">
+      <label for="repository">Local repository path</label>
+      <div><input id="repository" name="repository" placeholder="C:\path\to\repository" required><button class="primary" type="submit">Run scan</button></div>
+      <p id="scan-message" class="muted"></p>
+    </form>
+
+    <section id="overview" class="metric-grid" aria-label="Security summary">
+      <article class="metric hero-metric"><p>Total findings</p><strong id="total">0</strong><span id="risk-label">No active risk</span></article>
+      <article class="metric critical"><p>Critical</p><strong id="critical">0</strong><span>Immediate action</span></article>
+      <article class="metric high"><p>High</p><strong id="high">0</strong><span>Fix before release</span></article>
+      <article class="metric medium"><p>Medium</p><strong id="medium">0</strong><span>Review soon</span></article>
+      <article class="metric low"><p>Low</p><strong id="low">0</strong><span>Monitor</span></article>
+    </section>
+
+    <section class="split-grid">
+      <article class="panel"><div class="panel-head"><div><p class="eyebrow">EXPOSURE</p><h2>Findings by severity</h2></div></div><div id="severity-chart" class="bars"></div></article>
+      <article class="panel"><div class="panel-head"><div><p class="eyebrow">COVERAGE</p><h2>Repositories</h2></div><span id="repo-count" class="pill">0 scanned</span></div><div id="repo-list" class="repo-list empty-state">No repositories scanned yet.</div></article>
+    </section>
+
+    <section id="findings" class="panel findings-panel">
+      <div class="panel-head"><div><p class="eyebrow">TRIAGE QUEUE</p><h2>Active findings</h2></div><div class="filters"><input id="search" type="search" placeholder="Search findings"><select id="severity-filter" aria-label="Filter severity"><option value="all">All severities</option><option>critical</option><option>high</option><option>medium</option><option>low</option><option>info</option></select></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Severity</th><th>Finding</th><th>Repository</th><th>Location</th><th>Category</th></tr></thead><tbody id="finding-rows"></tbody></table><div id="findings-empty" class="empty-state">No findings to display.</div></div>
+    </section>
+  </main>
+
+  <dialog id="finding-dialog"><button id="dialog-close" class="icon-button" aria-label="Close">×</button><p id="dialog-rule" class="eyebrow"></p><h2 id="dialog-title"></h2><span id="dialog-severity" class="severity"></span><dl><dt>Location</dt><dd id="dialog-location"></dd><dt>Description</dt><dd id="dialog-description"></dd><dt>Remediation</dt><dd id="dialog-remediation"></dd><dt>Fingerprint</dt><dd id="dialog-fingerprint" class="mono"></dd></dl></dialog>
+  <script src="/app.js" defer></script>
+</body>
+</html>
