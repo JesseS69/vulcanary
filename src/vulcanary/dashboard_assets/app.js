@@ -40,14 +40,33 @@ function filteredFindings() {
   return state.findings.filter(f => (severity === 'all' || f.severity === severity) && `${f.title} ${f.rule_id} ${f.path} ${f.repository}`.toLowerCase().includes(query));
 }
 
+function automaticFixStatus(finding) {
+  const metadata = finding.metadata || {};
+  if (metadata.fix_eligible) {
+    return {label: 'Safe automatic fix', detail: `Upgrade ${metadata.package} to ${metadata.fixed_version}`};
+  }
+  if (finding.category !== 'dependency') {
+    return {label: 'Manual code fix', detail: 'This finding requires a contextual source-code change'};
+  }
+  if (metadata.ecosystem && metadata.ecosystem !== 'npm') {
+    return {label: 'Manual dependency fix', detail: `Automatic upgrades do not yet support ${metadata.ecosystem}`};
+  }
+  if (!metadata.fixed_version) {
+    return {label: 'No safe version available', detail: 'The advisory does not identify a patched release yet'};
+  }
+  return {label: 'Major upgrade review', detail: `The fix requires upgrading to ${metadata.fixed_version} and may contain breaking changes`};
+}
+
 function renderFindings() {
   const findings = filteredFindings();
   $('#findings-empty').classList.toggle('hidden', findings.length > 0);
   $('#finding-rows').innerHTML = findings.map(f => {
     const eligible = Boolean(f.metadata?.fix_eligible);
     const checked = selectedFixes.has(f.fingerprint) ? 'checked' : '';
-    const reason = eligible ? `Select ${f.metadata.package} upgrade` : 'Automatic fix unavailable';
-    return `<tr data-fingerprint="${escapeHtml(f.fingerprint)}"><td class="check-cell"><input class="fix-check" type="checkbox" aria-label="${escapeHtml(reason)}" ${eligible ? '' : 'disabled'} ${checked}></td><td><span class="severity ${f.severity}">${f.severity}</span></td><td><strong>${escapeHtml(f.title)}</strong><div class="muted">${escapeHtml(f.rule_id)}</div></td><td>${escapeHtml(f.repository)}</td><td class="location">${escapeHtml(f.path)}:${f.line}</td><td>${escapeHtml(f.category)}</td></tr>`;
+    const fixStatus = automaticFixStatus(f);
+    const reason = eligible ? `Select ${fixStatus.detail}` : `${fixStatus.label}: ${fixStatus.detail}`;
+    const manualStatus = eligible ? '' : `<div class="fix-unavailable" title="${escapeHtml(fixStatus.detail)}"><span>${escapeHtml(fixStatus.label)}</span> · ${escapeHtml(fixStatus.detail)}</div>`;
+    return `<tr data-fingerprint="${escapeHtml(f.fingerprint)}"><td class="check-cell"><input class="fix-check" type="checkbox" aria-label="${escapeHtml(reason)}" title="${escapeHtml(reason)}" ${eligible ? '' : 'disabled'} ${checked}></td><td><span class="severity ${f.severity}">${f.severity}</span></td><td><strong>${escapeHtml(f.title)}</strong><div class="muted">${escapeHtml(f.rule_id)}</div>${manualStatus}</td><td>${escapeHtml(f.repository)}</td><td class="location">${escapeHtml(f.path)}:${f.line}</td><td>${escapeHtml(f.category)}</td></tr>`;
   }).join('');
   document.querySelectorAll('#finding-rows tr').forEach(row => {
     row.addEventListener('click', event => { if (!event.target.classList.contains('fix-check')) openFinding(row.dataset.fingerprint); });
