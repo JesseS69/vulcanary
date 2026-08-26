@@ -52,21 +52,25 @@ Copy `.vulcanary.example.json` to `.vulcanary.json` in the repository being scan
   "fail_on": "high",
   "exclude": ["fixtures/**"],
   "ignored_rules": ["CODE-JS-INNERHTML"],
+  "ignored_fingerprints": [],
   "max_file_bytes": 1000000
 }
 ```
 
-Suppressions are rule-level in this MVP. A production version should add reviewed, expiring suppressions tied to a fingerprint and approver rather than allowing permanent blanket ignores.
+Prefer fingerprint-scoped suppressions over blanket rule ignores. A single source finding can also be suppressed on its own line or the preceding line with `// vulcanary:ignore RULE-ID`.
 
 ## What the MVP covers
 
 - Secret patterns: AWS access keys, GitHub tokens, and private keys
 - SAST patterns: selected Python and JavaScript execution/XSS sinks
 - IaC patterns: root containers and public Terraform ingress
+- Dependency advisories: pinned npm and Python dependencies queried against OSV
 - Stable fingerprints and deduplication
 - Configurable exclusions and severity gates
 - Console, normalized JSON, and SARIF 2.1 output
 - A GitHub Actions workflow that uploads results to code scanning
+
+Dependency scanning sends only package names, ecosystems, and pinned versions to OSV.dev; source code is never uploaded. Use `--offline` to disable advisory queries.
 
 ## Production roadmap
 
@@ -77,7 +81,7 @@ Suppressions are rule-level in this MVP. A production version should add reviewe
 5. **Platform:** authenticated API, job queue, isolated ephemeral scan workers, Postgres, object storage, RBAC, audit log, and tenant isolation.
 6. **Supply-chain controls:** generate CycloneDX/SPDX SBOMs, scan lockfiles and container images, sign attestations, and enforce policies at merge/deploy time.
 
-The highest-value next step is dependency scanning from lockfiles. Do not build a private vulnerability database first: consume OSV/NVD/vendor feeds through maintained scanners and preserve their advisory identifiers and fix versions in the normalized model.
+The next dependency milestone is broader lockfile coverage and advisory caching. Vulcanary consumes OSV rather than maintaining a private vulnerability database, preserving advisory identifiers and fixed versions in its normalized findings.
 
 ## Security boundaries
 

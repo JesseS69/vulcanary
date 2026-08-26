@@ -2,10 +2,12 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from vulcanary.cli import main
 from vulcanary.config import Config
 from vulcanary.dashboard import DashboardState
+from vulcanary.dependencies import discover_packages, scan_dependencies
 from vulcanary.models import Severity
 from vulcanary.scanners import scan
 
@@ -39,6 +41,12 @@ class ScannerTests(unittest.TestCase):
             (dependencies / "bad.js").write_text("eval(input)", encoding="utf-8")
             self.assertEqual(scan(root, Config()), [])
 
+    def test_inline_rule_suppression(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "main.js").write_text("// vulcanary:ignore CODE-JS-EVAL\neval(input)\n", encoding="utf-8")
+            self.assertEqual(scan(root, Config()), [])
+
     def test_cli_policy_and_reports(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -67,6 +75,29 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(snapshot["summary"]["total"], 1)
             self.assertEqual(snapshot["summary"]["counts"]["medium"], 1)
             self.assertEqual(snapshot["findings"][0]["repository"], root.name)
+
+    def test_discovers_pinned_dependencies_and_skips_generated_copies(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            lock = {"packages": {"node_modules/lodash": {"version": "4.17.20"}}}
+            (root / "package-lock.json").write_text(json.dumps(lock), encoding="utf-8")
+            generated = root / ".expo" / "archive"
+            generated.mkdir(parents=True)
+            (generated / "package-lock.json").write_text(json.dumps(lock), encoding="utf-8")
+            packages = discover_packages(root)
+            self.assertEqual([(item.name, item.version, item.ecosystem) for item in packages], [("lodash", "4.17.20", "npm")])
+
+    def test_normalizes_osv_advisories(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "requirements.txt").write_text("demo==1.0.0\n", encoding="utf-8")
+            batch = {"results": [{"vulns": [{"id": "GHSA-test"}]}]}
+            record = {"summary": "Demo advisory", "database_specific": {"severity": "CRITICAL"}, "affected": [{"package": {"name": "demo"}, "ranges": [{"events": [{"fixed": "1.1.0"}]}]}]}
+            with patch("vulcanary.dependencies._json_request", side_effect=[batch, record]):
+                findings, warning = scan_dependencies(root)
+            self.assertIsNone(warning)
+            self.assertEqual(findings[0].severity, Severity.CRITICAL)
+            self.assertIn("1.1.0", findings[0].remediation)
 
 
 if __name__ == "__main__":

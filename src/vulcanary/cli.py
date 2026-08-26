@@ -7,6 +7,7 @@ from pathlib import Path
 from .config import Config
 from .reporters import render_console, write_json, write_sarif
 from .scanners import scan
+from .dependencies import scan_dependencies
 
 
 def scan_parser() -> argparse.ArgumentParser:
@@ -16,6 +17,7 @@ def scan_parser() -> argparse.ArgumentParser:
     result.add_argument("--json", type=Path, dest="json_path", help="Write normalized JSON report")
     result.add_argument("--sarif", type=Path, help="Write SARIF 2.1 report")
     result.add_argument("--no-fail", action="store_true", help="Always exit successfully")
+    result.add_argument("--offline", action="store_true", help="Skip OSV dependency advisory queries")
     return result
 
 
@@ -41,6 +43,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     config = Config.load(root, args.config)
     findings = scan(root, config)
+    if not args.offline:
+        dependency_findings, warning = scan_dependencies(root)
+        dependency_findings = [finding for finding in dependency_findings if finding.fingerprint not in config.ignored_fingerprints]
+        findings = sorted(findings + dependency_findings, key=lambda f: (-int(f.severity), f.path, f.line))
+        if warning:
+            print(f"warning: {warning}", file=sys.stderr)
     print(render_console(findings))
     if args.json_path:
         write_json(findings, args.json_path)

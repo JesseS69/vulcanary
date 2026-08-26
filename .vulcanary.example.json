@@ -5,6 +5,6 @@
     "docs/examples/**"
   ],
   "ignored_rules": [],
+  "ignored_fingerprints": [],
   "max_file_bytes": 1000000
 }
-

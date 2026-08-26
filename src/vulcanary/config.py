@@ -19,6 +19,7 @@ class Config:
     fail_on: Severity = Severity.HIGH
     exclude: list[str] = field(default_factory=lambda: list(DEFAULT_EXCLUDES))
     ignored_rules: set[str] = field(default_factory=set)
+    ignored_fingerprints: set[str] = field(default_factory=set)
     max_file_bytes: int = 1_000_000
 
     @classmethod
@@ -31,5 +32,6 @@ class Config:
             fail_on=Severity.parse(data.get("fail_on", "high")),
             exclude=DEFAULT_EXCLUDES + list(data.get("exclude", [])),
             ignored_rules=set(data.get("ignored_rules", [])),
+            ignored_fingerprints=set(data.get("ignored_fingerprints", [])),
             max_file_bytes=int(data.get("max_file_bytes", 1_000_000)),
         )

@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 from .config import Config
 from .scanners import scan
+from .dependencies import scan_dependencies
 
 
 @dataclass
@@ -46,7 +47,11 @@ class DashboardState:
         if not root.is_dir():
             raise ValueError(f"Repository does not exist: {root}")
         started = time.perf_counter()
-        findings = scan(root, Config.load(root))
+        config = Config.load(root)
+        findings = scan(root, config)
+        dependency_findings, dependency_warning = scan_dependencies(root)
+        dependency_findings = [finding for finding in dependency_findings if finding.fingerprint not in config.ignored_fingerprints]
+        findings = sorted(findings + dependency_findings, key=lambda f: (-int(f.severity), f.path, f.line))
         result = RepositoryScan(
             repository=str(root),
             name=root.name,

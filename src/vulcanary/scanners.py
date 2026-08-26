@@ -70,6 +70,7 @@ def scan(root: Path, config: Config) -> list[Finding]:
         except (UnicodeDecodeError, OSError):
             continue
         rel = relative_path(path, root)
+        lines = text.splitlines()
         for rule in RULES:
             if rule.id in config.ignored_rules:
                 continue
@@ -81,8 +82,13 @@ def scan(root: Path, config: Config) -> list[Finding]:
                 continue
             for match in rule.pattern.finditer(text):
                 line = text.count("\n", 0, match.start()) + 1
+                nearby = " ".join(lines[max(0, line - 2):line])
+                if "vulcanary:ignore" in nearby and (rule.id in nearby or "vulcanary:ignore all" in nearby):
+                    continue
                 evidence = match.group(0).replace("\n", " ")[:120]
                 if rule.category == "secret":
                     evidence = "[redacted]"
-                findings.append(Finding(rule.id, rule.title, f"Matched security rule {rule.id}.", rule.severity, rule.category, rel, line, evidence, rule.remediation))
+                finding = Finding(rule.id, rule.title, f"Matched security rule {rule.id}.", rule.severity, rule.category, rel, line, evidence, rule.remediation)
+                if finding.fingerprint not in config.ignored_fingerprints:
+                    findings.append(finding)
     return sorted({item.fingerprint: item for item in findings}.values(), key=lambda f: (-int(f.severity), f.path, f.line))
