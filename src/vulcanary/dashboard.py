@@ -113,14 +113,22 @@ def make_handler(state: DashboardState):
             if path == "/api/state":
                 self._json(state.snapshot())
                 return
-            assets = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"), "/styles.css": ("styles.css", "text/css")}
+            assets = {
+                "/": ("index.html", "text/html"),
+                "/app.js": ("app.js", "text/javascript"),
+                "/styles.css": ("styles.css", "text/css"),
+                "/brand.css": ("brand.css", "text/css"),
+                "/vulcanary-logo.png": ("vulcanary-logo.png", "image/png"),
+                "/vulcanary-favicon.png": ("vulcanary-favicon.png", "image/png"),
+            }
             if path not in assets:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             filename, content_type = assets[path]
             body = (_assets() / filename).read_bytes()
             self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+            rendered_type = f"{content_type}; charset=utf-8" if content_type.startswith("text/") else content_type
+            self.send_header("Content-Type", rendered_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
             self.send_header("X-Content-Type-Options", "nosniff")
