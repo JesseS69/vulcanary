@@ -1,0 +1,10 @@
+{
+  "fail_on": "high",
+  "exclude": [
+    "fixtures/**",
+    "docs/examples/**"
+  ],
+  "ignored_rules": [],
+  "max_file_bytes": 1000000
+}
+

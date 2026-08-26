@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vulcanary"
+version = "0.1.0"
+description = "Local-first application security scanner and policy engine"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = []
+
+[project.scripts]
+vulcanary = "vulcanary.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vulcanary"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
