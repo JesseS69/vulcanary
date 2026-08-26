@@ -12,6 +12,7 @@
 .finding-tools { display: flex; flex-direction: column; align-items: flex-end; gap: 9px; }
 .selection-actions { display: flex; gap: 8px; }
 .selection-actions .secondary { padding: 7px 10px; font-size: 10px; }
+.repo-item .parent-evaluate { grid-column: 1 / -1; justify-self: start; margin-top: 6px; padding: 6px 9px; font-size: 9px; }
 .fix-dialog { max-height: 82vh; overflow: auto; }
 .fix-dialog h2 { margin-bottom: 5px; }
 .fix-plan { display: grid; gap: 8px; margin: 22px 0; }

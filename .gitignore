@@ -8,3 +8,4 @@ build/
 *.sarif
 *-findings.json
 vulcanary.json
+.vulcanary-dashboard*.log

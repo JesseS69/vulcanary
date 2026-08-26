@@ -15,6 +15,7 @@ from .config import Config
 from .scanners import scan
 from .dependencies import scan_dependencies
 from .fixes import apply_changes, commit_changes, preview as preview_fixes, rollback_changes, run_verification
+from .evaluator import evaluate_parent_upgrades
 
 
 @dataclass
@@ -146,7 +147,7 @@ def make_handler(state: DashboardState):
 
         def do_POST(self) -> None:
             route = urlparse(self.path).path
-            if route not in {"/api/scan", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit"}:
+            if route not in {"/api/scan", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/parents/evaluate"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             try:
@@ -184,6 +185,13 @@ def make_handler(state: DashboardState):
                     else:
                         state.pending_fix = applied
                     self._json({"applied": applied})
+                elif route == "/api/parents/evaluate":
+                    repository = str(Path(payload["repository"]).resolve())
+                    if repository not in state.repositories:
+                        raise ValueError("Scan the repository before evaluating parent upgrades")
+                    requested = payload.get("packages")
+                    packages = set(requested) if isinstance(requested, list) and all(isinstance(item, str) for item in requested) else None
+                    self._json({"evaluation": evaluate_parent_upgrades(state.snapshot()["findings"], repository, packages=packages)})
                 else:
                     if not state.pending_fix:
                         raise ValueError("No applied fix batch is waiting to be committed")

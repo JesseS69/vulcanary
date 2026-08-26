@@ -30,8 +30,24 @@ function renderRepositories() {
   target.className = 'repo-list';
   target.innerHTML = state.repositories.map(repo => {
     const severe = repo.findings.filter(f => ['critical','high'].includes(f.severity)).length;
-    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">${repo.duration_ms} ms · ${severe} high priority</span></div>`;
+    const parentCount = repo.findings.filter(f => f.metadata?.parent_packages?.length).length;
+    const evaluate = parentCount ? `<button class="parent-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Evaluate ${parentCount} upgrade path${parentCount === 1 ? '' : 's'}</button>` : '';
+    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">${repo.duration_ms} ms · ${severe} high priority</span>${evaluate}</div>`;
   }).join('');
+  document.querySelectorAll('.parent-evaluate').forEach(button => button.addEventListener('click', () => evaluateParents(button)));
+}
+
+async function evaluateParents(button) {
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = 'Evaluating…';
+  try {
+    const body = await postJson('/api/parents/evaluate', {repository:button.dataset.repository});
+    const labels = {safe_candidate:'Safe candidate',verification_skipped:'Security pass · checks not configured',verification_failed:'Project checks failed',partial_improvement:'Partial improvement',still_vulnerable:'Still vulnerable',install_failed:'Dependency conflict or migration required',worktree_failed:'Worktree failed',no_candidate:'No compatible candidate'};
+    $('#parent-results').innerHTML = body.evaluation.results.map(item => { const outcome = item.resolved?.length ? ` · clears ${item.resolved.length} of ${item.advisories.length}` : ''; return `<div class="fix-item ${item.status === 'safe_candidate' ? '' : 'blocked'}"><strong>${escapeHtml(item.package)} ${escapeHtml(item.specification)} → ${escapeHtml(item.candidate_version || '—')}</strong><span>${escapeHtml(labels[item.status] || item.status)}${escapeHtml(outcome)}</span><span class="mono">Affects ${escapeHtml(item.vulnerable_packages.join(', '))} · ${escapeHtml(item.advisories.join(', '))}</span></div>`; }).join('') || '<p class="muted">No direct parent candidates were found.</p>';
+    $('#parent-dialog').showModal();
+  } catch(error) { $('#scan-message').textContent = error.message; }
+  finally { button.disabled = false; button.textContent = original; }
 }
 
 function filteredFindings() {
@@ -141,6 +157,7 @@ $('#preview-fixes').addEventListener('click', async () => {
   catch(error) { $('#fix-message').textContent = error.message; }
 });
 $('#fix-close').addEventListener('click', () => $('#fix-dialog').close());
+$('#parent-close').addEventListener('click', () => $('#parent-dialog').close());
 $('#apply-fixes').addEventListener('click', async () => {
   const button = $('#apply-fixes'); button.disabled = true; button.textContent = 'Applying and rescanning…'; $('#fix-message').textContent = '';
   try {
