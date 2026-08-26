@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import re
+import shutil
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,13 +35,18 @@ def preview(findings: list[dict], fingerprints: list[str]) -> dict:
             else:
                 changes_by_package[key] = item
         else:
-            item["reason"] = "Requires a transitive, major-version, or manual source change"
+            item["reason"] = meta.get("fix_block_reason") or "Requires a transitive, major-version, or manual source change"
             blocked.append(item)
     return {"changes": list(changes_by_package.values()), "blocked": blocked, "selected": len(selected)}
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["git", "-C", str(root), *args], text=True, capture_output=True, timeout=30)
+
+
+def _resolve_executable(command: list[str]) -> list[str]:
+    executable = shutil.which(command[0]) or shutil.which(f"{command[0]}.cmd") or command[0]
+    return [executable, *command[1:]]
 
 
 def rollback_changes(repository: str, branch: str, original_branch: str) -> dict:
@@ -72,7 +78,7 @@ def run_verification(repository: str, commands: list[list[str]], timeout_seconds
         label = f"check {index} ({Path(command[0]).name})"
         try:
             completed = subprocess.run(
-                command, cwd=root, text=True, capture_output=True, timeout=timeout_seconds, shell=False,
+                _resolve_executable(command), cwd=root, text=True, capture_output=True, timeout=timeout_seconds, shell=False,
             )
         except subprocess.TimeoutExpired:
             return {"passed": False, "failed_command": label, "reason": "timed out", "results": results}
@@ -112,7 +118,7 @@ def apply_changes(plan: dict) -> dict:
                     prefix = "^" if str(old).startswith("^") else "~" if str(old).startswith("~") else ""
                     package[section][item["package"]] = prefix + item["to"]
     package_path.write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
-    command = ["npm", "install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"]
+    command = _resolve_executable(["npm", "install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"])
     try:
         completed = subprocess.run(command, cwd=root, text=True, capture_output=True, timeout=180)
     except (subprocess.TimeoutExpired, OSError) as error:

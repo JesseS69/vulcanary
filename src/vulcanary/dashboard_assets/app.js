@@ -48,6 +48,9 @@ function automaticFixStatus(finding) {
   if (finding.category !== 'dependency') {
     return {label: 'Manual code fix', detail: 'This finding requires a contextual source-code change'};
   }
+  if (metadata.fix_block_reason) {
+    return {label: metadata.direct ? 'Manual dependency fix' : 'Parent upgrade required', detail: metadata.fix_block_reason};
+  }
   if (metadata.ecosystem && metadata.ecosystem !== 'npm') {
     return {label: 'Manual dependency fix', detail: `Automatic upgrades do not yet support ${metadata.ecosystem}`};
   }

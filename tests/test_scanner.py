@@ -111,6 +111,34 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(findings[0].severity, Severity.CRITICAL)
             self.assertIn("1.1.0", findings[0].remediation)
 
+    def test_only_direct_same_major_npm_dependencies_are_auto_fixable(self) -> None:
+        record = {
+            "summary": "Demo advisory",
+            "affected": [{"package": {"name": "demo"}, "ranges": [{"events": [{"fixed": "1.1.0"}]}]}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            direct_lock = {"packages": {
+                "": {"dependencies": {"demo": "1.0.0"}},
+                "node_modules/demo": {"version": "1.0.0"},
+            }}
+            (root / "package-lock.json").write_text(json.dumps(direct_lock), encoding="utf-8")
+            with patch("vulcanary.dependencies._json_request", side_effect=[{"results": [{"vulns": [{"id": "GHSA-demo"}]}]}, record]):
+                direct_findings, _ = scan_dependencies(root)
+            self.assertTrue(direct_findings[0].metadata["fix_eligible"])
+
+            transitive_lock = {"packages": {
+                "": {"dependencies": {"parent": "1.0.0"}},
+                "node_modules/parent": {"version": "1.0.0"},
+                "node_modules/demo": {"version": "1.0.0"},
+            }}
+            (root / "package-lock.json").write_text(json.dumps(transitive_lock), encoding="utf-8")
+            batch = {"results": [{}, {"vulns": [{"id": "GHSA-demo"}]}]}
+            with patch("vulcanary.dependencies._json_request", side_effect=[batch, record]):
+                transitive_findings, _ = scan_dependencies(root)
+            self.assertFalse(transitive_findings[0].metadata["fix_eligible"])
+            self.assertIn("parent dependency", transitive_findings[0].metadata["fix_block_reason"])
+
     def test_fix_preview_separates_safe_and_manual_findings(self) -> None:
         findings = [
             {"fingerprint": "safe", "title": "Safe", "repository": "app", "repository_path": "C:/app", "metadata": {"fix_eligible": True, "package": "demo", "current_version": "1.0.0", "fixed_version": "1.1.0", "advisory": "GHSA-safe"}},

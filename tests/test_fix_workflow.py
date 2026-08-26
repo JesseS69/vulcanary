@@ -68,7 +68,7 @@ class FixWorkflowTests(unittest.TestCase):
             real_run = subprocess.run
 
             def run_without_network(command, **kwargs):
-                if command[0] != "npm":
+                if Path(command[0]).stem.lower() != "npm":
                     return real_run(command, **kwargs)
                 updated_lock = json.loads((root / "package-lock.json").read_text(encoding="utf-8"))
                 updated_lock["packages"][""]["dependencies"]["demo-package"] = "^1.1.0"
@@ -96,7 +96,7 @@ class FixWorkflowTests(unittest.TestCase):
             real_run = subprocess.run
 
             def fail_npm(command, **kwargs):
-                if command[0] != "npm":
+                if Path(command[0]).stem.lower() != "npm":
                     return real_run(command, **kwargs)
                 return subprocess.CompletedProcess(command, 1, stdout="", stderr="registry token: secret-value")
 

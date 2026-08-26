@@ -109,6 +109,18 @@ def scan_dependencies(root: Path, timeout: float = 10) -> tuple[list[Finding], s
         for summary in result.get("vulns", []):
             record = records.get(summary["id"], {})
             fixed = _fixed_version(record, package)
+            same_major = _same_major(package.version, fixed)
+            fix_eligible = bool(package.ecosystem == "npm" and package.direct and same_major)
+            if package.ecosystem != "npm":
+                fix_block_reason = f"Automatic upgrades do not yet support {package.ecosystem}"
+            elif not fixed:
+                fix_block_reason = "The advisory does not identify a patched release yet"
+            elif not same_major:
+                fix_block_reason = f"The fix requires a major upgrade to {fixed}"
+            elif not package.direct:
+                fix_block_reason = "Upgrade the direct parent dependency; unscoped transitive overrides can break other dependency paths"
+            else:
+                fix_block_reason = None
             remediation = f"Upgrade {package.name} to {fixed} or later." if fixed else f"Review {summary['id']} and upgrade {package.name} to a non-affected release."
             findings.append(Finding(
                 f"SCA-{summary['id']}", record.get("summary") or f"Vulnerable dependency: {package.name}",
@@ -119,7 +131,8 @@ def scan_dependencies(root: Path, timeout: float = 10) -> tuple[list[Finding], s
                     "fixed_version": fixed,
                     "ecosystem": package.ecosystem,
                     "direct": package.direct,
-                    "fix_eligible": bool(package.ecosystem == "npm" and _same_major(package.version, fixed)),
+                    "fix_eligible": fix_eligible,
+                    "fix_block_reason": fix_block_reason,
                     "fix_strategy": "dependency" if package.direct else "override",
                     "advisory": summary["id"],
                 },
