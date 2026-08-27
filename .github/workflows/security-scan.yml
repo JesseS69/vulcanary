@@ -22,7 +22,14 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install pinned Vulcanary
-        run: pip install "vulcanary @ git+https://github.com/JesseS69/vulcanary.git@${{ inputs.vulcanary_ref }}"
+        env:
+          VULCANARY_REF: ${{ inputs.vulcanary_ref }}
+        run: |
+          if [[ ! "$VULCANARY_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "vulcanary_ref must be a full lowercase commit SHA" >&2
+            exit 2
+          fi
+          pip install "vulcanary @ git+https://github.com/JesseS69/vulcanary.git@$VULCANARY_REF"
       - name: Run Semgrep Community Edition
         shell: bash
         run: |
