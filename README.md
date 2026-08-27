@@ -132,6 +132,17 @@ vulcanary . --baseline-json base-vulcanary.json --github-annotations --sarif vul
 
 Malformed or incomplete baseline reports fail closed. The workflow uploads SARIF to GitHub code scanning when its token has `security-events: write`; uploads are skipped for untrusted fork pull requests while local annotations and policy enforcement still run.
 
+## Import other scanners
+
+Vulcanary can normalize existing scanner output into the same local policy gate, JSON, SARIF, SBOM vulnerability data, and GitHub annotations. The external tools remain optional and run wherever you choose; Vulcanary only reads their JSON reports.
+
+```powershell
+vulcanary . --semgrep-json semgrep.json --gitleaks-json gitleaks.json `
+  --trivy-json trivy.json --checkov-json checkov.json --sarif vulcanary.sarif
+```
+
+Each option can be repeated. Imported paths are constrained to the scanned repository, malformed reports fail closed, and Gitleaks secret values are never retained in Vulcanary output.
+
 ## Production roadmap
 
 1. **Scanner adapters:** ingest Semgrep (SAST), Gitleaks (secrets), OSV-Scanner or Trivy (SCA), and Checkov (IaC/container) JSON. Pin engine and ruleset versions.

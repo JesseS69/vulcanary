@@ -12,6 +12,7 @@ from .dependencies import discover_packages, scan_dependencies
 from .reachability import analyze_reachability
 from .sbom import cyclonedx_document, write_cyclonedx
 from .governance import suppression_findings
+from .adapters import AdapterError, import_report
 
 
 def scan_parser() -> argparse.ArgumentParser:
@@ -25,6 +26,8 @@ def scan_parser() -> argparse.ArgumentParser:
     result.add_argument("--github-annotations", action="store_true", help="Emit GitHub Actions workflow annotations for gated findings")
     result.add_argument("--no-fail", action="store_true", help="Always exit successfully")
     result.add_argument("--offline", action="store_true", help="Skip OSV dependency advisory queries")
+    for scanner in ("semgrep", "gitleaks", "trivy", "checkov"):
+        result.add_argument(f"--{scanner}-json", action="append", type=Path, default=[], help=f"Import a {scanner.title()} JSON report; repeat as needed")
     return result
 
 
@@ -54,6 +57,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: invalid Vulcanary configuration: {error}", file=sys.stderr)
         return 2
     findings = scan(root, config)
+    try:
+        imported = [finding for scanner in ("semgrep", "gitleaks", "trivy", "checkov") for report in getattr(args, f"{scanner}_json") for finding in import_report(scanner, report, root)]
+    except AdapterError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    imported = [finding for finding in imported if finding.rule_id not in config.ignored_rules and not config.is_suppressed(finding.fingerprint)]
+    imported = list({finding.fingerprint: finding for finding in imported}.values())
+    findings = sorted(findings + imported, key=lambda f: (-int(f.severity), f.path, f.line))
     if not args.offline:
         dependency_findings, warning = scan_dependencies(root)
         dependency_findings = analyze_reachability(root, dependency_findings, config)
