@@ -52,6 +52,26 @@ jobs:
           set -e
           if [ "$status" -gt 1 ]; then exit "$status"; fi
           test -f "$RUNNER_TEMP/gitleaks.json"
+      - name: Run Trivy
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/trivy-cache"
+          docker run --rm \
+            -v "$PWD:/src:ro" \
+            -v "$RUNNER_TEMP:/reports" \
+            -v "$RUNNER_TEMP/trivy-cache:/root/.cache" \
+            aquasec/trivy:0.73.0 \
+            fs --scanners vuln,misconfig --format json --output /reports/trivy.json --exit-code 0 /src
+          test -s "$RUNNER_TEMP/trivy.json"
+      - name: Run Checkov
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$PWD:/src:ro" \
+            -w /src \
+            bridgecrew/checkov:3.3.8 \
+            --directory /src --output json --soft-fail --quiet --compact > "$RUNNER_TEMP/checkov.json"
+          test -s "$RUNNER_TEMP/checkov.json"
       - name: Build pull-request baseline
         if: github.event_name == 'pull_request'
         run: |
@@ -59,10 +79,10 @@ jobs:
           vulcanary "$RUNNER_TEMP/vulcanary-base" --json "$RUNNER_TEMP/vulcanary-baseline.json" --no-fail
       - name: Scan pull-request changes
         if: github.event_name == 'pull_request'
-        run: vulcanary . --semgrep-json "$RUNNER_TEMP/semgrep.json" --gitleaks-json "$RUNNER_TEMP/gitleaks.json" --baseline-json "$RUNNER_TEMP/vulcanary-baseline.json" --github-annotations --sarif vulcanary.sarif --json vulcanary.json --sbom vulcanary.cdx.json
+        run: vulcanary . --semgrep-json "$RUNNER_TEMP/semgrep.json" --gitleaks-json "$RUNNER_TEMP/gitleaks.json" --trivy-json "$RUNNER_TEMP/trivy.json" --checkov-json "$RUNNER_TEMP/checkov.json" --baseline-json "$RUNNER_TEMP/vulcanary-baseline.json" --github-annotations --sarif vulcanary.sarif --json vulcanary.json --sbom vulcanary.cdx.json
       - name: Scan repository
         if: github.event_name != 'pull_request'
-        run: vulcanary . --semgrep-json "$RUNNER_TEMP/semgrep.json" --gitleaks-json "$RUNNER_TEMP/gitleaks.json" --sarif vulcanary.sarif --json vulcanary.json --sbom vulcanary.cdx.json
+        run: vulcanary . --semgrep-json "$RUNNER_TEMP/semgrep.json" --gitleaks-json "$RUNNER_TEMP/gitleaks.json" --trivy-json "$RUNNER_TEMP/trivy.json" --checkov-json "$RUNNER_TEMP/checkov.json" --sarif vulcanary.sarif --json vulcanary.json --sbom vulcanary.cdx.json
       - name: Upload SARIF to GitHub code scanning
         if: ${{ always() && hashFiles('vulcanary.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         uses: github/codeql-action/upload-sarif@v4
