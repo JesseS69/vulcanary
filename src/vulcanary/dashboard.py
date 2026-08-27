@@ -15,7 +15,7 @@ from .config import Config
 from .scanners import scan
 from .dependencies import discover_packages, scan_dependencies
 from .reachability import analyze_reachability
-from .sbom import cyclonedx_document
+from .sbom import cyclonedx_document, inventory_snapshot
 from .fixes import apply_changes, commit_changes, preview as preview_fixes, rollback_changes, run_verification
 from .evaluator import create_expo_migration_branch, evaluate_expo_platform, evaluate_parent_upgrades
 
@@ -27,6 +27,7 @@ class RepositoryScan:
     scanned_at: str
     duration_ms: int
     findings: list[dict]
+    inventory_change: dict
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -38,6 +39,7 @@ class DashboardState:
         self.repositories: dict[str, RepositoryScan] = {}
         self.history_path = history_path
         self.history: list[dict] = []
+        self.inventory_snapshots: dict[str, dict[str, dict]] = {}
         self.pending_fix: dict | None = None
         self.last_platform_evaluation: dict | None = None
         self.last_platform_repository: str | None = None
@@ -45,8 +47,11 @@ class DashboardState:
             try:
                 payload = json.loads(history_path.read_text(encoding="utf-8"))
                 self.history = list(payload.get("history", []))[-100:]
+                snapshots = payload.get("inventory_snapshots", {})
+                self.inventory_snapshots = snapshots if isinstance(snapshots, dict) else {}
             except (OSError, ValueError, TypeError):
                 self.history = []
+                self.inventory_snapshots = {}
 
     def scan_repository(self, path: Path) -> RepositoryScan:
         import time
@@ -60,15 +65,28 @@ class DashboardState:
         dependency_findings = analyze_reachability(root, dependency_findings, config)
         dependency_findings = [finding for finding in dependency_findings if finding.fingerprint not in config.ignored_fingerprints]
         findings = sorted(findings + dependency_findings, key=lambda f: (-int(f.severity), f.path, f.line))
-        result = RepositoryScan(
-            repository=str(root),
-            name=root.name,
-            scanned_at=datetime.now(timezone.utc).isoformat(),
-            duration_ms=round((time.perf_counter() - started) * 1000),
-            findings=[finding.to_dict() for finding in findings],
-        )
+        current_inventory = inventory_snapshot(discover_packages(root))
         with self._lock:
+            previous_inventory = self.inventory_snapshots.get(str(root))
+            added_refs = sorted(set(current_inventory) - set(previous_inventory or {})) if previous_inventory is not None else []
+            removed_refs = sorted(set(previous_inventory or {}) - set(current_inventory)) if previous_inventory is not None else []
+            inventory_change = {
+                "baseline": previous_inventory is None,
+                "current_count": len(current_inventory),
+                "previous_count": len(previous_inventory) if previous_inventory is not None else None,
+                "added": [dict(current_inventory[reference], ref=reference) for reference in added_refs],
+                "removed": [dict(previous_inventory[reference], ref=reference) for reference in removed_refs],
+            }
+            result = RepositoryScan(
+                repository=str(root),
+                name=root.name,
+                scanned_at=datetime.now(timezone.utc).isoformat(),
+                duration_ms=round((time.perf_counter() - started) * 1000),
+                findings=[finding.to_dict() for finding in findings],
+                inventory_change=inventory_change,
+            )
             self.repositories[str(root)] = result
+            self.inventory_snapshots[str(root)] = current_inventory
             self.history.append({
                 "repository": result.repository,
                 "name": result.name,
@@ -80,7 +98,7 @@ class DashboardState:
             if self.history_path:
                 try:
                     self.history_path.parent.mkdir(parents=True, exist_ok=True)
-                    self.history_path.write_text(json.dumps({"history": self.history}, indent=2) + "\n", encoding="utf-8")
+                    self.history_path.write_text(json.dumps({"history": self.history, "inventory_snapshots": self.inventory_snapshots}, indent=2) + "\n", encoding="utf-8")
                 except OSError:
                     # Scanning must still work in restricted or read-only environments.
                     pass

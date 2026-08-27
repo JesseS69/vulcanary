@@ -35,10 +35,25 @@ function renderRepositories() {
     const evaluate = parentCount ? `<button class="parent-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Evaluate ${parentCount} upgrade path${parentCount === 1 ? '' : 's'}</button>` : '';
     const platform = repo.findings.some(f => f.metadata?.parent_packages?.includes('expo')) ? `<button class="platform-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Evaluate Expo platform set</button><button class="platform-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" data-migration="true" type="button">Evaluate next Expo SDK migration</button>` : '';
     const sbom = `<a class="secondary" href="/api/repositories/sbom?repository=${encodeURIComponent(repo.repository)}" download>Download SBOM</a>`;
-    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">${repo.duration_ms} ms · ${severe} high priority · ${reachable} import-observed</span><div class="repo-actions">${sbom}${evaluate}${platform}</div></div>`;
+    const changes = repo.inventory_change || {added:[],removed:[]};
+    const inventoryLabel = changes.baseline ? `${changes.current_count || 0} components · baseline` : `${changes.current_count || 0} components · +${changes.added.length} / −${changes.removed.length}`;
+    const inventoryButton = `<button class="inventory-change secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Inventory changes</button>`;
+    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">${repo.duration_ms} ms · ${severe} high priority · ${reachable} import-observed · ${inventoryLabel}</span><div class="repo-actions">${sbom}${inventoryButton}${evaluate}${platform}</div></div>`;
   }).join('');
   document.querySelectorAll('.parent-evaluate').forEach(button => button.addEventListener('click', () => evaluateParents(button)));
   document.querySelectorAll('.platform-evaluate').forEach(button => button.addEventListener('click', () => evaluatePlatform(button)));
+  document.querySelectorAll('.inventory-change').forEach(button => button.addEventListener('click', () => showInventoryChange(button.dataset.repository)));
+}
+
+function showInventoryChange(repository) {
+  const repo = state.repositories.find(item => item.repository === repository);
+  if (!repo) return;
+  const change = repo.inventory_change || {baseline:true,current_count:0,added:[],removed:[]};
+  $('#inventory-title').textContent = `${repo.name} dependency inventory`;
+  $('#inventory-summary').textContent = change.baseline ? `Baseline established with ${change.current_count} components. Future scans will be compared with this snapshot.` : `${change.previous_count} → ${change.current_count} components · ${change.added.length} added · ${change.removed.length} removed`;
+  const renderItems = (items, label, className) => items.map(item => `<div class="fix-item ${className}"><strong>${escapeHtml(item.name)} ${escapeHtml(item.version)}</strong><span>${label} · ${escapeHtml(item.ecosystem)} · ${item.direct ? 'direct' : 'transitive'}</span><span class="mono">${escapeHtml(item.ref)}</span></div>`).join('');
+  $('#inventory-results').innerHTML = renderItems(change.added, 'ADDED', '') + renderItems(change.removed, 'REMOVED', 'blocked') || '<p class="muted">No dependency inventory changes since the previous scan.</p>';
+  $('#inventory-dialog').showModal();
 }
 
 async function evaluatePlatform(button) {
@@ -196,6 +211,7 @@ $('#preview-fixes').addEventListener('click', async () => {
 });
 $('#fix-close').addEventListener('click', () => $('#fix-dialog').close());
 $('#parent-close').addEventListener('click', () => $('#parent-dialog').close());
+$('#inventory-close').addEventListener('click', () => $('#inventory-dialog').close());
 $('#create-migration-branch').addEventListener('click', async () => {
   const button = $('#create-migration-branch');
   button.disabled = true; button.textContent = 'Creating draft branch…'; $('#platform-message').textContent = '';

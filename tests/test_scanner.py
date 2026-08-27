@@ -88,6 +88,31 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(snapshot["summary"]["counts"]["medium"], 1)
             self.assertEqual(snapshot["findings"][0]["repository"], root.name)
 
+    def test_dashboard_tracks_and_persists_inventory_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repository"
+            root.mkdir()
+            history = Path(directory) / "dashboard-history.json"
+            lock_path = root / "package-lock.json"
+            lock_path.write_text(json.dumps({"packages": {"node_modules/one": {"version": "1.0.0"}}}), encoding="utf-8")
+            with patch("vulcanary.dashboard.scan_dependencies", return_value=([], None)):
+                state = DashboardState(history)
+                baseline = state.scan_repository(root)
+                self.assertTrue(baseline.inventory_change["baseline"])
+                self.assertEqual(baseline.inventory_change["current_count"], 1)
+
+                lock_path.write_text(json.dumps({"packages": {
+                    "node_modules/one": {"version": "1.0.0"},
+                    "node_modules/two": {"version": "2.0.0"},
+                }}), encoding="utf-8")
+                changed = state.scan_repository(root)
+                self.assertFalse(changed.inventory_change["baseline"])
+                self.assertEqual([item["name"] for item in changed.inventory_change["added"]], ["two"])
+
+                restored = DashboardState(history).scan_repository(root)
+                self.assertEqual(restored.inventory_change["added"], [])
+                self.assertEqual(restored.inventory_change["removed"], [])
+
     def test_discovers_pinned_dependencies_and_skips_generated_copies(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

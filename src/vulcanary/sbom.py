@@ -20,29 +20,34 @@ def _purl(package: Package) -> str:
     return f"pkg:{package_type}/{encoded_name}@{quote(package.version, safe='')}"
 
 
-def cyclonedx_document(repository_name: str, packages: list[Package], findings: list[dict]) -> dict:
+def inventory_snapshot(packages: list[Package]) -> dict[str, dict]:
     grouped: dict[str, dict] = {}
     for package in packages:
         reference = _purl(package)
         item = grouped.setdefault(reference, {
-            "type": "library",
-            "bom-ref": reference,
             "name": package.name,
             "version": package.version,
-            "purl": reference,
-            "properties": [],
-            "_direct": False,
-            "_managers": set(),
+            "ecosystem": package.ecosystem,
+            "direct": False,
+            "managers": [],
         })
-        item["_direct"] = item["_direct"] or package.direct
-        item["_managers"].add(package.manager)
+        item["direct"] = item["direct"] or package.direct
+        item["managers"] = sorted(set(item["managers"]) | {package.manager})
+    return dict(sorted(grouped.items()))
+
+
+def cyclonedx_document(repository_name: str, packages: list[Package], findings: list[dict]) -> dict:
+    grouped = inventory_snapshot(packages)
     components = []
-    for item in grouped.values():
-        item["properties"] = [
-            {"name": "vulcanary:dependency:direct", "value": str(item.pop("_direct")).lower()},
-            {"name": "vulcanary:dependency:managers", "value": ",".join(sorted(item.pop("_managers")))},
-        ]
-        components.append(item)
+    for reference, inventory in grouped.items():
+        components.append({
+            "type": "library", "bom-ref": reference, "name": inventory["name"],
+            "version": inventory["version"], "purl": reference,
+            "properties": [
+                {"name": "vulcanary:dependency:direct", "value": str(inventory["direct"]).lower()},
+                {"name": "vulcanary:dependency:managers", "value": ",".join(inventory["managers"])},
+            ],
+        })
     components.sort(key=lambda item: (item["name"].lower(), item["version"]))
 
     vulnerabilities = []
