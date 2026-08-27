@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from .scanners import scan
 from .dependencies import discover_packages, scan_dependencies
 from .reachability import analyze_reachability
 from .sbom import cyclonedx_document, write_cyclonedx
+from .governance import suppression_findings
 
 
 def scan_parser() -> argparse.ArgumentParser:
@@ -46,15 +48,20 @@ def main(argv: list[str] | None = None) -> int:
     if not root.is_dir():
         print(f"error: repository does not exist: {root}", file=sys.stderr)
         return 2
-    config = Config.load(root, args.config)
+    try:
+        config = Config.load(root, args.config)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
+        print(f"error: invalid Vulcanary configuration: {error}", file=sys.stderr)
+        return 2
     findings = scan(root, config)
     if not args.offline:
         dependency_findings, warning = scan_dependencies(root)
         dependency_findings = analyze_reachability(root, dependency_findings, config)
-        dependency_findings = [finding for finding in dependency_findings if finding.fingerprint not in config.ignored_fingerprints]
+        dependency_findings = [finding for finding in dependency_findings if not config.is_suppressed(finding.fingerprint)]
         findings = sorted(findings + dependency_findings, key=lambda f: (-int(f.severity), f.path, f.line))
         if warning:
             print(f"warning: {warning}", file=sys.stderr)
+    findings = sorted(findings + suppression_findings(config), key=lambda finding: (-int(finding.severity), finding.path, finding.line))
     print(render_console(findings))
     if args.json_path:
         write_json(findings, args.json_path)

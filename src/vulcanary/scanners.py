@@ -89,6 +89,6 @@ def scan(root: Path, config: Config) -> list[Finding]:
                 if rule.category == "secret":
                     evidence = "[redacted]"
                 finding = Finding(rule.id, rule.title, f"Matched security rule {rule.id}.", rule.severity, rule.category, rel, line, evidence, rule.remediation)
-                if finding.fingerprint not in config.ignored_fingerprints:
+                if not config.is_suppressed(finding.fingerprint):
                     findings.append(finding)
     return sorted({item.fingerprint: item for item in findings}.values(), key=lambda f: (-int(f.severity), f.path, f.line))

@@ -16,7 +16,24 @@ function render() {
   $('#updated').textContent = state.repositories.length ? `Updated ${new Date(state.generated_at).toLocaleString()}` : 'Scan a repository to begin';
   renderChart(counts);
   renderRepositories();
+  renderGovernance();
   renderFindings();
+}
+
+function renderGovernance() {
+  const records = state.repositories.flatMap(repo => (repo.suppressions || []).map(item => ({...item, repository:repo.name})));
+  const expiring = records.filter(item => item.status === 'expiring').length;
+  const expired = records.filter(item => item.status === 'expired').length;
+  const legacy = records.filter(item => item.status === 'legacy').length;
+  $('#governance-count').textContent = records.length;
+  $('#governance-summary').textContent = `${records.length} exceptions · ${expiring} expiring · ${expired} expired`;
+  $('#governance-register').innerHTML = records.map(item => {
+    const blocked = ['expired','legacy'].includes(item.status) ? 'blocked' : '';
+    const expiry = item.expires ? `expires ${item.expires}` : 'no expiration';
+    return `<div class="fix-item ${blocked}"><strong>${escapeHtml(item.repository)} · ${escapeHtml(item.reason.replaceAll('_', ' '))}</strong><span>${escapeHtml(item.status.toUpperCase())} · ${escapeHtml(item.owner)} · ${escapeHtml(expiry)}</span><span>${escapeHtml(item.justification)}</span><span class="mono">${escapeHtml(item.fingerprint)}</span></div>`;
+  }).join('') || '<p class="muted">No security exceptions are active. Findings follow normal remediation policy.</p>';
+  const audit = state.suppression_audit || [];
+  $('#governance-audit').innerHTML = audit.slice(0, 12).map(item => `<div class="fix-item"><strong>${escapeHtml(item.repository)} · ${escapeHtml(item.action)} exception</strong><span>${escapeHtml(item.owner)} · ${escapeHtml(item.reason)} · ${escapeHtml(item.expires || 'no expiration')}</span><span class="mono">${escapeHtml(item.fingerprint)} · ${escapeHtml(new Date(item.scanned_at).toLocaleString())}</span></div>`).join('') || '<p class="muted">No exception changes have been recorded yet.</p>';
 }
 
 function renderChart(counts) {

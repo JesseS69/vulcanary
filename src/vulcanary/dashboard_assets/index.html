@@ -18,6 +18,7 @@
       <a class="active" href="#overview">The Forge</a>
       <a href="#findings">Remediation <span id="nav-count" class="nav-count">0</span></a>
       <a href="#repositories">Repository Watch</a>
+      <a href="#governance">Risk Register <span id="governance-count" class="nav-count">0</span></a>
     </nav>
     <div class="sidebar-foot"><span class="status-dot"></span>Watch active · local</div>
   </aside>
@@ -47,6 +48,8 @@
       <article class="panel"><div class="panel-head"><div><p class="eyebrow">THREAT TEMPERATURE</p><h2>Exposure by severity</h2></div></div><div id="severity-chart" class="bars"></div></article>
       <article id="repositories" class="panel"><div class="panel-head"><div><p class="eyebrow">WATCH COVERAGE</p><h2>Repository watch</h2></div><span id="repo-count" class="pill">0 watched</span></div><div id="repo-list" class="repo-list empty-state">No repositories under watch.</div></article>
     </section>
+
+    <section id="governance" class="panel"><div class="panel-head"><div><p class="eyebrow">EXCEPTION GOVERNANCE</p><h2>Risk acceptance register</h2></div><span id="governance-summary" class="pill">0 exceptions</span></div><p class="muted">Exceptions require an owner, approved reason, justification, and expiration. Expired exceptions fail closed and restore the underlying finding.</p><div id="governance-register" class="fix-plan"></div><div class="panel-head"><div><p class="eyebrow">LOCAL AUDIT TRAIL</p><h3>Recent exception changes</h3></div></div><div id="governance-audit" class="fix-plan"></div></section>
 
     <section id="findings" class="panel findings-panel">
       <div class="panel-head findings-head"><div><p class="eyebrow">REMEDIATION QUEUE</p><h2>Findings on the anvil</h2></div><div class="finding-tools"><div class="filters"><input id="search" type="search" placeholder="Search rules, paths, repositories"><select id="severity-filter" aria-label="Filter severity"><option value="all">All severities</option><option>critical</option><option>high</option><option>medium</option><option>low</option><option>info</option></select></div><div class="selection-actions"><button id="select-safe" class="secondary" type="button">Select all safe fixes</button><button id="clear-fixes" class="secondary" type="button">Clear selection</button></div></div></div>

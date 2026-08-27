@@ -16,6 +16,7 @@ from .scanners import scan
 from .dependencies import discover_packages, scan_dependencies
 from .reachability import analyze_reachability
 from .sbom import cyclonedx_document, inventory_snapshot
+from .governance import suppression_findings
 from .fixes import apply_changes, commit_changes, preview as preview_fixes, rollback_changes, run_verification
 from .evaluator import create_expo_migration_branch, evaluate_expo_platform, evaluate_parent_upgrades
 
@@ -28,6 +29,8 @@ class RepositoryScan:
     duration_ms: int
     findings: list[dict]
     inventory_change: dict
+    suppressions: list[dict]
+    suppression_change: dict
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -40,6 +43,8 @@ class DashboardState:
         self.history_path = history_path
         self.history: list[dict] = []
         self.inventory_snapshots: dict[str, dict[str, dict]] = {}
+        self.suppression_snapshots: dict[str, dict[str, dict]] = {}
+        self.suppression_audit: list[dict] = []
         self.pending_fix: dict | None = None
         self.last_platform_evaluation: dict | None = None
         self.last_platform_repository: str | None = None
@@ -49,9 +54,15 @@ class DashboardState:
                 self.history = list(payload.get("history", []))[-100:]
                 snapshots = payload.get("inventory_snapshots", {})
                 self.inventory_snapshots = snapshots if isinstance(snapshots, dict) else {}
+                suppression_snapshots = payload.get("suppression_snapshots", {})
+                self.suppression_snapshots = suppression_snapshots if isinstance(suppression_snapshots, dict) else {}
+                audit = payload.get("suppression_audit", [])
+                self.suppression_audit = list(audit)[-500:] if isinstance(audit, list) else []
             except (OSError, ValueError, TypeError):
                 self.history = []
                 self.inventory_snapshots = {}
+                self.suppression_snapshots = {}
+                self.suppression_audit = []
 
     def scan_repository(self, path: Path) -> RepositoryScan:
         import time
@@ -63,9 +74,11 @@ class DashboardState:
         findings = scan(root, config)
         dependency_findings, dependency_warning = scan_dependencies(root)
         dependency_findings = analyze_reachability(root, dependency_findings, config)
-        dependency_findings = [finding for finding in dependency_findings if finding.fingerprint not in config.ignored_fingerprints]
-        findings = sorted(findings + dependency_findings, key=lambda f: (-int(f.severity), f.path, f.line))
+        dependency_findings = [finding for finding in dependency_findings if not config.is_suppressed(finding.fingerprint)]
+        findings = sorted(findings + dependency_findings + suppression_findings(config), key=lambda f: (-int(f.severity), f.path, f.line))
         current_inventory = inventory_snapshot(discover_packages(root))
+        suppression_register = config.suppression_register()
+        current_suppressions = {item["fingerprint"]: item for item in suppression_register}
         with self._lock:
             previous_inventory = self.inventory_snapshots.get(str(root))
             added_refs = sorted(set(current_inventory) - set(previous_inventory or {})) if previous_inventory is not None else []
@@ -77,28 +90,58 @@ class DashboardState:
                 "added": [dict(current_inventory[reference], ref=reference) for reference in added_refs],
                 "removed": [dict(previous_inventory[reference], ref=reference) for reference in removed_refs],
             }
+            previous_suppressions = self.suppression_snapshots.get(str(root))
+            added_suppressions = sorted(set(current_suppressions) - set(previous_suppressions or {})) if previous_suppressions is not None else []
+            removed_suppressions = sorted(set(previous_suppressions or {}) - set(current_suppressions)) if previous_suppressions is not None else []
+            changed_suppressions = sorted(
+                fingerprint for fingerprint in set(current_suppressions) & set(previous_suppressions or {})
+                if current_suppressions[fingerprint] != previous_suppressions[fingerprint]
+            ) if previous_suppressions is not None else []
+            suppression_change = {
+                "baseline": previous_suppressions is None,
+                "added": [current_suppressions[fingerprint] for fingerprint in added_suppressions],
+                "changed": [current_suppressions[fingerprint] for fingerprint in changed_suppressions],
+                "removed": [previous_suppressions[fingerprint] for fingerprint in removed_suppressions],
+            }
+            scanned_at = datetime.now(timezone.utc).isoformat()
+            for action, records in (("added", suppression_change["added"]), ("changed", suppression_change["changed"]), ("removed", suppression_change["removed"])):
+                for record in records:
+                    self.suppression_audit.append({
+                        "repository": root.name, "scanned_at": scanned_at, "action": action,
+                        "fingerprint": record["fingerprint"], "owner": record["owner"],
+                        "reason": record["reason"], "expires": record["expires"],
+                    })
+            self.suppression_audit = self.suppression_audit[-500:]
             result = RepositoryScan(
                 repository=str(root),
                 name=root.name,
-                scanned_at=datetime.now(timezone.utc).isoformat(),
+                scanned_at=scanned_at,
                 duration_ms=round((time.perf_counter() - started) * 1000),
                 findings=[finding.to_dict() for finding in findings],
                 inventory_change=inventory_change,
+                suppressions=suppression_register,
+                suppression_change=suppression_change,
             )
             self.repositories[str(root)] = result
             self.inventory_snapshots[str(root)] = current_inventory
+            self.suppression_snapshots[str(root)] = current_suppressions
             self.history.append({
                 "repository": result.repository,
                 "name": result.name,
                 "scanned_at": result.scanned_at,
                 "duration_ms": result.duration_ms,
                 "finding_count": len(result.findings),
+                "suppression_count": len(result.suppressions),
+                "suppression_change_count": sum(len(suppression_change[key]) for key in ("added", "changed", "removed")),
             })
             self.history = self.history[-100:]
             if self.history_path:
                 try:
                     self.history_path.parent.mkdir(parents=True, exist_ok=True)
-                    self.history_path.write_text(json.dumps({"history": self.history, "inventory_snapshots": self.inventory_snapshots}, indent=2) + "\n", encoding="utf-8")
+                    self.history_path.write_text(json.dumps({
+                        "history": self.history, "inventory_snapshots": self.inventory_snapshots,
+                        "suppression_snapshots": self.suppression_snapshots, "suppression_audit": self.suppression_audit,
+                    }, indent=2) + "\n", encoding="utf-8")
                 except OSError:
                     # Scanning must still work in restricted or read-only environments.
                     pass
@@ -117,6 +160,7 @@ class DashboardState:
             "repositories": scans,
             "findings": findings,
             "history": list(reversed(self.history)),
+            "suppression_audit": list(reversed(self.suppression_audit)),
             "summary": {"total": len(findings), "counts": counts, "categories": categories},
         }
 

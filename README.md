@@ -57,6 +57,13 @@ Copy `.vulcanary.example.json` to `.vulcanary.json` in the repository being scan
   "exclude": ["fixtures/**"],
   "ignored_rules": ["CODE-JS-INNERHTML"],
   "ignored_fingerprints": [],
+  "suppressions": [{
+    "fingerprint": "0123456789abcdefabcd",
+    "reason": "deferred",
+    "owner": "security@example.com",
+    "justification": "Waiting for a verified upstream remediation.",
+    "expires": "2026-12-31"
+  }],
   "max_file_bytes": 1000000,
   "verify_commands": [["npm", "test", "--", "--runInBand"], ["npm", "run", "build"]],
   "verify_timeout_seconds": 300
@@ -64,6 +71,12 @@ Copy `.vulcanary.example.json` to `.vulcanary.json` in the repository being scan
 ```
 
 Verification commands are opt-in and executed directly without a shell after a proposed dependency fix passes its security rescan. Only configure commands you trust; scanned repositories are otherwise treated as hostile input. Command output is not returned to the dashboard, preventing accidental leakage of tokens or other build-log secrets.
+
+### Risk acceptance and expiration
+
+Structured `suppressions` are fingerprint-scoped and require a reason (`false_positive`, `mitigated`, `accepted_risk`, or `deferred`), owner, meaningful justification, and ISO expiration date. Active exceptions suppress only the matching finding. Exceptions expiring within 14 days are highlighted in the dashboard; expired exceptions stop suppressing the underlying finding and add a high-severity governance finding that fails the default CI policy. Invalid, duplicate, or incomplete entries fail configuration loading.
+
+The dashboard displays the current register and persists exception additions, changes, and removals in the local audit file at `~/.vulcanary/dashboard-history.json`. Justifications and audit events are never uploaded by Vulcanary. Legacy `ignored_fingerprints` and blanket `ignored_rules` remain compatible but generate medium-severity unmanaged-exception findings until converted to structured fingerprint suppressions.
 
 ### Parent upgrade evaluation
 
@@ -124,7 +137,7 @@ Malformed or incomplete baseline reports fail closed. The workflow uploads SARIF
 1. **Scanner adapters:** ingest Semgrep (SAST), Gitleaks (secrets), OSV-Scanner or Trivy (SCA), and Checkov (IaC/container) JSON. Pin engine and ruleset versions.
 2. **Reachability and context:** correlate vulnerable packages with imports, exposed routes, runtime assets, and internet exposure to reduce noise.
 3. **Service inventory:** connect repositories, owners, deploys, cloud resources, images, SBOMs, and findings in a graph-backed data model.
-4. **Workflow:** add fingerprint-scoped suppressions with expiry, assignment, SLA tracking, notifications, and ticket/PR integrations.
+4. **Workflow:** add SLA notifications and ticket integrations on top of fingerprint-scoped, owned, expiring suppressions and PR enforcement.
 5. **Platform:** authenticated API, job queue, isolated ephemeral scan workers, Postgres, object storage, RBAC, audit log, and tenant isolation.
 6. **Supply-chain controls:** generate CycloneDX/SPDX SBOMs, scan lockfiles and container images, sign attestations, and enforce policies at merge/deploy time.
 
