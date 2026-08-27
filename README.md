@@ -2,9 +2,9 @@
 
 # Vulcanary
 
-Vulcanary is a local-first application security scanner inspired by the developer workflow of platforms such as Wiz and Aikido. It scans checked-out source code for secrets, risky code patterns, and insecure infrastructure-as-code, then turns every result into one finding format that can be used locally or in CI.
+Vulcanary is a local-first code defense system that finds vulnerabilities, tests remediation paths, and turns verified repairs into reviewable Git commits. Its forge-inspired dashboard watches multiple repositories, normalizes findings from built-in and external engines, and keeps source code under the operator's control.
 
-It is intentionally a foundation, not a claim of parity with a commercial CNAPP. The architecture is designed so mature engines such as Semgrep, Trivy, Gitleaks, OSV-Scanner, and Checkov can be added as adapters while policy, deduplication, suppression, reporting, and ownership remain centralized.
+The canary detects trouble; the forge proves the repair. Vulcanary evaluates dependency and platform upgrades in isolated Git worktrees, runs the repository's own verification commands, rescans the result, and unlocks a fix only when the tested findings disappear without breaking configured checks. It can also enforce the same policy in GitHub Actions and produce normalized JSON, SARIF, and CycloneDX reports.
 
 ## Quick start
 
@@ -41,11 +41,13 @@ vulcanary dashboard `
   --repository C:\path\to\zirze-native
 ```
 
-The dashboard runs only on `127.0.0.1` by default. It provides repository summaries, severity distribution, searchable findings, and remediation details. Scanned source and findings remain on the local machine.
+The dashboard runs only on `127.0.0.1` by default. It provides repository summaries, live threat temperature, searchable findings, dependency inventory changes, governed exceptions, and guarded remediation. Reloading the page rescans every watched repository. Scanned source and findings remain on the local machine.
 
 ### Guarded fixes
 
-Eligible dependency findings have checkboxes in the remediation queue. Select findings and choose **Preview fixes** to review exact versions and files before changing anything. Vulcanary auto-applies direct npm upgrades only when OSV provides a same-major fixed version. Transitive findings remain manual because an unscoped npm override can silently force an incompatible version into unrelated dependency paths. For those findings, Vulcanary traces the lockfile graph and identifies the direct parent dependencies that should be upgraded and re-resolved. Vulcanary requires a clean Git worktree, creates a dedicated `vulcanary/fixes-*` branch, refreshes the lockfile with lifecycle scripts disabled, rescans the repository, runs explicitly configured project checks, and enables **Commit verified fixes** only when every check passes. A failed advisory rescan or project check automatically restores the npm files, original branch, and clean worktree. Major upgrades, advisories without fixed versions, and source findings remain manual-review items.
+Eligible findings have checkboxes in the remediation queue. **Select all safe fixes** collects deterministic upgrades, while **Evaluate all blocked fixes** deduplicates shared parent and platform paths and tests them without touching the watched branch. Findings are labeled with an actionable state: automatic fix, evaluate, draft source fix, or no patched release.
+
+Select verified findings and choose **Preview fixes** to review the exact candidate and affected files. Vulcanary requires a clean Git worktree, creates a dedicated `vulcanary/fixes-*` or `vulcanary/fix-expo-*` branch, applies the evaluated change with lifecycle scripts disabled, rescans the repository, and runs explicitly configured project checks. **Commit verified fixes** appears only after every selected advisory is cleared and every check passes. A failed rescan or project check restores the original branch and working tree. Vulcanary never pushes or merges a fix branch automatically.
 
 ## Configuration
 
@@ -84,15 +86,15 @@ Repositories with vulnerable transitive dependencies expose an **Evaluate upgrad
 
 Results distinguish safe candidates, partial improvements, still-vulnerable releases, dependency conflicts or platform migrations, failed project checks, and missing compatible releases. Pre-1.0 dependencies are constrained to their current minor line because minor releases may contain breaking changes.
 
-Expo repositories also expose coordinated platform evaluation. Vulcanary first tests the latest release on the current SDK line, lets Expo align its supported React Native, Router, and module versions together, runs `expo install --check`, and then applies the same advisory and project-verification gates. A separate action can test the next Expo SDK line as an explicit migration experiment; major SDK migrations are never converted into automatic-fix checkboxes.
+Expo repositories also expose coordinated platform evaluation. Vulcanary first tests the latest release on the current SDK line, lets Expo align its supported React Native, Router, and module versions together, runs `expo install --check`, and then applies the same advisory and project-verification gates. Advisories cleared by a candidate that passes configured checks become selectable verified fixes. A separate action can test the next Expo SDK line as an explicit migration experiment; a migration with unresolved findings or failing checks remains a review-only draft.
 
 After a platform evaluation, the dashboard offers JSON and SARIF migration reports. Reports include resolved and remaining advisory IDs, proposed direct-package version changes, modified repository-relative files, verification stages and exit codes, and sanitized TypeScript diagnostics containing only error code, relative path, line, and column. Raw compiler/build output, diagnostic messages, source snippets, command arguments, environment values, and absolute local paths are excluded.
 
-An explicit migration evaluation also enables **Create draft migration branch**. This action is limited to the exact next-SDK candidate that Vulcanary just evaluated, requires a clean Git working tree and a named current branch, and creates a timestamped `vulcanary/migrate-expo-*` branch. It reapplies Expo's coordinated package alignment, then reports the original branch and changed files while deliberately leaving the result uncommitted for review. Vulcanary restores the repository, removes generated untracked files, and deletes the draft branch if setup fails; it never commits or pushes the branch automatically.
+An explicit migration evaluation can also enable **Create draft migration branch**. This action is limited to the exact candidate Vulcanary just evaluated, requires a clean Git working tree and a named current branch, and creates a timestamped `vulcanary/migrate-expo-*` branch. It reapplies Expo's coordinated package alignment, then reports the original branch and changed files while deliberately leaving the result uncommitted for review. Vulcanary restores the repository and deletes the draft branch if setup fails; it never pushes or merges the branch automatically.
 
 Prefer fingerprint-scoped suppressions over blanket rule ignores. A single source finding can also be suppressed on its own line or the preceding line with `// vulcanary:ignore RULE-ID`.
 
-## What the MVP covers
+## Current capabilities
 
 - Secret patterns: AWS access keys, GitHub tokens, and private keys
 - SAST patterns: selected Python and JavaScript execution/XSS sinks
@@ -103,6 +105,11 @@ Prefer fingerprint-scoped suppressions over blanket rule ignores. A single sourc
 - Configurable exclusions and severity gates
 - Console, normalized JSON, and SARIF 2.1 output
 - A GitHub Actions workflow that uploads results to code scanning
+- Multi-repository local dashboard with automatic rescans
+- Isolated parent-package and coordinated Expo upgrade evaluation
+- Verified fix branches with rollback, project checks, rescanning, and guarded commits
+- CycloneDX dependency inventory and change tracking
+- Fingerprint-scoped, owned, expiring security exceptions with a local audit trail
 
 Dependency scanning sends only package names, ecosystems, and pinned versions to OSV.dev; source code is never uploaded. Successful query and public advisory responses are cached for six hours in the operating system's temporary directory using hashed package identities. The cache never contains repository paths or source, and `VULCANARY_CACHE_DIR` can select a different location. Use `--offline` to disable advisory queries.
 
@@ -149,14 +156,14 @@ Other public repositories can call `.github/workflows/security-scan.yml` as a re
 
 The included GitHub Actions workflow automatically runs pinned Semgrep Community Edition, Gitleaks, Trivy, and Checkov containers. Source is mounted read-only, temporary reports stay outside the checkout, Semgrep metrics are disabled, Gitleaks output is fully redacted, and no scanner receives the Docker socket. Vulcanary applies one policy gate to all four reports. No scanner account or API token is required.
 
-## Production roadmap
+## Roadmap
 
-1. **Scanner expansion:** add container-image targets and a controlled process for reviewing external ruleset updates.
-2. **Reachability and context:** correlate vulnerable packages with imports, exposed routes, runtime assets, and internet exposure to reduce noise.
-3. **Service inventory:** connect repositories, owners, deploys, cloud resources, images, SBOMs, and findings in a graph-backed data model.
-4. **Workflow:** add SLA notifications and ticket integrations on top of fingerprint-scoped, owned, expiring suppressions and PR enforcement.
-5. **Platform:** authenticated API, job queue, isolated ephemeral scan workers, Postgres, object storage, RBAC, audit log, and tenant isolation.
-6. **Supply-chain controls:** generate CycloneDX/SPDX SBOMs, scan lockfiles and container images, sign attestations, and enforce policies at merge/deploy time.
+1. **Verified source patches:** generate contextual source-code diffs, display them before application, and subject them to the same branch, test, rescan, and rollback gates as dependency fixes.
+2. **Scanner expansion:** add container-image targets and a controlled process for reviewing external ruleset updates.
+3. **Exposure context:** correlate findings with routes, runtime assets, deploys, and internet reachability without using absence of evidence as proof of safety.
+4. **Team workflow:** add repository ownership, remediation SLAs, notifications, and ticket integrations.
+5. **Hosted control plane:** add authenticated workers, tenant isolation, RBAC, durable audit storage, and explicit source-retention controls without weakening the local-first mode.
+6. **Supply-chain controls:** add SPDX, signed attestations, container inventories, and merge/deploy policy enforcement.
 
 Vulcanary consumes OSV rather than maintaining a private vulnerability database, preserving advisory identifiers and fixed versions in its normalized findings. Yarn and pnpm findings are currently read-only; automatic lockfile rewriting remains limited to npm until equivalent rollback and verification coverage is available.
 

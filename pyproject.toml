@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "vulcanary"
 version = "0.14.0"
-description = "Local-first application security scanner and policy engine"
+description = "Local-first code defense, verified remediation, and security policy"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
