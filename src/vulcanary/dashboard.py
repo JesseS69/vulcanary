@@ -18,7 +18,7 @@ from .reachability import analyze_reachability
 from .sbom import cyclonedx_document, inventory_snapshot
 from .governance import suppression_findings
 from .fixes import apply_changes, commit_changes, preview as preview_fixes, rollback_changes, run_verification
-from .evaluator import create_expo_migration_branch, evaluate_expo_platform, evaluate_parent_upgrades
+from .evaluator import create_expo_candidate_branch, evaluate_expo_platform, evaluate_parent_upgrades
 from .adapters import PARSERS, import_report
 
 
@@ -50,6 +50,7 @@ class DashboardState:
         self.pending_fix: dict | None = None
         self.last_platform_evaluation: dict | None = None
         self.last_platform_repository: str | None = None
+        self.verified_fixes: dict[str, dict] = {}
         self.external_reports: dict[str, dict[str, list[Path]]] = {}
         if history_path and history_path.exists():
             try:
@@ -170,6 +171,10 @@ class DashboardState:
         with self._lock:
             scans = [item.to_dict() for item in self.repositories.values()]
         findings = [dict(finding, repository=repo["name"], repository_path=repo["repository"]) for repo in scans for finding in repo["findings"]]
+        for finding in findings:
+            verified = self.verified_fixes.get(finding["fingerprint"])
+            if verified:
+                finding["metadata"] = dict(finding.get("metadata", {}), fix_eligible=True, verified_fix=verified, fix_strategy="platform")
         counts = {severity: sum(item["severity"] == severity for item in findings) for severity in ("critical", "high", "medium", "low", "info")}
         categories: dict[str, int] = {}
         scanners: dict[str, int] = {}
@@ -184,6 +189,20 @@ class DashboardState:
             "suppression_audit": list(reversed(self.suppression_audit)),
             "summary": {"total": len(findings), "counts": counts, "categories": categories, "scanners": scanners},
         }
+
+    def register_platform_evaluation(self, repository: str, evaluation: dict) -> None:
+        resolved = set(evaluation.get("resolved", []))
+        verification = evaluation.get("verification", {})
+        if not resolved or not verification.get("passed") or verification.get("skipped"):
+            return
+        candidate = {
+            "strategy": "platform", "candidate_version": evaluation["candidate_version"],
+            "is_migration": bool(evaluation.get("is_migration")), "resolved": sorted(resolved),
+        }
+        for finding in self.snapshot()["findings"]:
+            advisory = finding.get("metadata", {}).get("advisory")
+            if finding["repository_path"] == repository and advisory in resolved:
+                self.verified_fixes[finding["fingerprint"]] = candidate
 
     def rescan_all(self) -> list[RepositoryScan]:
         with self._lock:
@@ -304,7 +323,20 @@ def make_handler(state: DashboardState):
                     self._json({"plan": preview_fixes(state.snapshot()["findings"], payload.get("fingerprints", []))})
                 elif route == "/api/fixes/apply":
                     plan = preview_fixes(state.snapshot()["findings"], payload.get("fingerprints", []))
-                    applied = apply_changes(plan)
+                    strategies = {item.get("strategy") for item in plan["changes"]}
+                    if "platform" in strategies:
+                        if strategies != {"platform"}:
+                            raise ValueError("Apply verified platform fixes separately from direct dependency upgrades")
+                        versions = {item["to"] for item in plan["changes"]}
+                        migrations = {item.get("is_migration", False) for item in plan["changes"]}
+                        repositories = {item["repository_path"] for item in plan["changes"]}
+                        if len(versions) != 1 or len(migrations) != 1 or len(repositories) != 1:
+                            raise ValueError("Selected platform fixes do not share one verified candidate")
+                        selected_repository = repositories.pop()
+                        applied = create_expo_candidate_branch(selected_repository, versions.pop(), migrations.pop())
+                        applied["repository"] = selected_repository
+                    else:
+                        applied = apply_changes(plan)
                     result = state.scan_repository(Path(applied["repository"]))
                     expected = {f"SCA-{advisory}" for item in plan["changes"] for advisory in item.get("advisories", [item["advisory"]])}
                     remaining = sorted(expected & {item["rule_id"] for item in result.findings})
@@ -340,13 +372,14 @@ def make_handler(state: DashboardState):
                     evaluation = evaluate_expo_platform(state.snapshot()["findings"], repository, test_migration=payload.get("migration") is True)
                     state.last_platform_evaluation = dict(evaluation, repository=Path(repository).name)
                     state.last_platform_repository = repository
+                    state.register_platform_evaluation(repository, evaluation)
                     self._json({"evaluation": evaluation})
                 elif route == "/api/platform/create-branch":
                     report = state.last_platform_evaluation
                     repository = state.last_platform_repository
-                    if not report or not report.get("is_migration") or not repository:
-                        raise ValueError("Evaluate an explicit SDK migration before creating its branch")
-                    created = create_expo_migration_branch(repository, report["candidate_version"])
+                    if not report or not repository or not report.get("verification", {}).get("passed"):
+                        raise ValueError("Evaluate and verify an Expo candidate before creating its branch")
+                    created = create_expo_candidate_branch(repository, report["candidate_version"], bool(report.get("is_migration")))
                     self._json({"created": created})
                 else:
                     if not state.pending_fix:

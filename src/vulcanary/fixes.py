@@ -23,6 +23,12 @@ def preview(findings: list[dict], fingerprints: list[str]) -> dict:
             "files": ["package.json", "package-lock.json"],
             "strategy": meta.get("fix_strategy"),
         }
+        verified = meta.get("verified_fix")
+        if verified and verified.get("strategy") == "platform":
+            item.update(
+                package="expo", to=verified.get("candidate_version"), strategy="platform",
+                is_migration=bool(verified.get("is_migration")), files=["package.json", "package-lock.json"],
+            )
         if meta.get("fix_eligible"):
             key = (item["repository_path"], item["package"])
             existing = changes_by_package.get(key)
@@ -54,9 +60,10 @@ def _resolve_executable(command: list[str]) -> list[str]:
 def rollback_changes(repository: str, branch: str, original_branch: str) -> dict:
     root = Path(repository).resolve()
     current = _git(root, "branch", "--show-current").stdout.strip()
-    if current != branch or not branch.startswith("vulcanary/fixes-"):
+    allowed = ("vulcanary/fixes-", "vulcanary/fix-expo-", "vulcanary/migrate-expo-")
+    if current != branch or not branch.startswith(allowed):
         raise ValueError("Rollback refused: repository is not on the expected Vulcanary fix branch")
-    restored = _git(root, "restore", "--source=HEAD", "--", "package.json", "package-lock.json")
+    restored = _git(root, "restore", "--source=HEAD", "--staged", "--worktree", "--", ".")
     if restored.returncode:
         raise ValueError(restored.stderr.strip() or "Rollback could not restore npm files")
     switched = _git(root, "switch", original_branch)
@@ -69,7 +76,7 @@ def rollback_changes(repository: str, branch: str, original_branch: str) -> dict
         "completed": True,
         "original_branch": original_branch,
         "removed_branch": branch,
-        "restored_files": ["package.json", "package-lock.json"],
+        "restored_files": ["tracked Vulcanary changes"],
     }
 
 
@@ -143,10 +150,12 @@ def apply_changes(plan: dict) -> dict:
 def commit_changes(repository: str, branch: str) -> dict:
     root = Path(repository).resolve()
     current = _git(root, "branch", "--show-current").stdout.strip()
-    if current != branch or not branch.startswith("vulcanary/fixes-"):
+    allowed = ("vulcanary/fixes-", "vulcanary/fix-expo-", "vulcanary/migrate-expo-")
+    if current != branch or not branch.startswith(allowed):
         raise ValueError("The repository is not on the expected Vulcanary fix branch")
-    _git(root, "add", "--", "package.json", "package-lock.json")
-    committed = _git(root, "commit", "-m", "fix: apply verified Vulcanary dependency upgrades")
+    _git(root, "add", "-u")
+    message = "fix: apply verified Vulcanary remediation" if "expo-" in branch else "fix: apply verified Vulcanary dependency upgrades"
+    committed = _git(root, "commit", "-m", message)
     if committed.returncode:
         raise ValueError(committed.stderr.strip() or "Could not commit fixes")
     return {"repository": str(root), "branch": branch, "commit": _git(root, "rev-parse", "HEAD").stdout.strip()}

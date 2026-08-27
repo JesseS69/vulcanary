@@ -189,15 +189,16 @@ def evaluate_expo_platform(findings: list[dict], repository: str, test_migration
             _run(["git", "worktree", "remove", "--force", str(worktree)], git_root, 60)
 
 
-def create_expo_migration_branch(repository: str, candidate_version: str) -> dict:
+def create_expo_candidate_branch(repository: str, candidate_version: str, is_migration: bool = False) -> dict:
     root = Path(repository).resolve()
     declared = _declared_direct_packages(root)
     current_line = _compatibility_line(declared.get("expo", ""))
     if not current_line:
         raise ValueError("Expo is not a declared direct dependency")
-    expected = latest_same_major(root, "expo", str(current_line[0] + 1))
+    selector = str(current_line[0] + 1) if is_migration else declared["expo"]
+    expected = latest_same_major(root, "expo", selector)
     if not expected or candidate_version != expected:
-        raise ValueError("Migration branch refused: candidate is not the evaluated next Expo SDK release")
+        raise ValueError("Fix branch refused: candidate is not the evaluated Expo release")
     git_root_result = _run(["git", "rev-parse", "--show-toplevel"], root, 30)
     if git_root_result.returncode:
         raise ValueError("Migration branch requires a Git repository")
@@ -207,7 +208,8 @@ def create_expo_migration_branch(repository: str, candidate_version: str) -> dic
     original_branch = _run(["git", "branch", "--show-current"], git_root, 30).stdout.strip()
     if not original_branch:
         raise ValueError("Repository must be on a named branch")
-    branch = f"vulcanary/migrate-expo-{candidate_version}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+    action = "migrate" if is_migration else "fix"
+    branch = f"vulcanary/{action}-expo-{candidate_version}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
     switched = _run(["git", "switch", "-c", branch], git_root, 30)
     if switched.returncode:
         raise ValueError("Could not create the Expo migration branch")
@@ -230,3 +232,7 @@ def create_expo_migration_branch(repository: str, candidate_version: str) -> dic
         raise ValueError("Expo package alignment failed; the original branch was restored")
     changed = _run(["git", "diff", "--name-only"], git_root, 30).stdout.splitlines()
     return {"repository": root.name, "branch": branch, "original_branch": original_branch, "candidate_version": candidate_version, "changed_files": sorted(changed)}
+
+
+def create_expo_migration_branch(repository: str, candidate_version: str) -> dict:
+    return create_expo_candidate_branch(repository, candidate_version, is_migration=True)
