@@ -199,6 +199,48 @@ async function evaluateFindingFix(button, fingerprint) {
   else await evaluateParents(proxy);
 }
 
+async function evaluateAllBlocked() {
+  const button = $('#evaluate-all');
+  const blocked = state.findings.filter(finding => !finding.metadata?.fix_eligible);
+  const repositories = [...new Set(blocked.map(finding => finding.repository_path))];
+  const results = [];
+  button.disabled = true;
+  button.textContent = 'Evaluating…';
+  $('#scan-message').textContent = `Evaluating ${blocked.length} blocked findings across ${repositories.length} repositories…`;
+  try {
+    for (const repository of repositories) {
+      const repoFindings = blocked.filter(finding => finding.repository_path === repository);
+      const expoFindings = repoFindings.filter(finding => finding.metadata?.parent_packages?.includes('expo'));
+      const otherParents = [...new Set(repoFindings.flatMap(finding => finding.metadata?.parent_packages || []).filter(parent => parent !== 'expo'))];
+      if (expoFindings.length) {
+        const body = await postJson('/api/platform/evaluate', {repository, migration:false});
+        const item = body.evaluation;
+        results.push({title:`${repoFindings[0].repository} · Expo ${item.candidate_version || '—'}`, status:item.status, detail:item.resolved?.length ? `Resolves ${item.resolved.length} of ${item.advisories.length} targeted advisories` : 'No compatible resolving candidate'});
+      }
+      if (otherParents.length) {
+        const body = await postJson('/api/parents/evaluate', {repository, packages:otherParents});
+        body.evaluation.results.forEach(item => results.push({title:`${repoFindings[0].repository} · ${item.package} ${item.candidate_version || '—'}`, status:item.status, detail:item.resolved?.length ? `Resolves ${item.resolved.length} of ${item.advisories.length} advisories` : `Affects ${item.vulnerable_packages.join(', ')}`}));
+      }
+      const noPatch = repoFindings.filter(finding => finding.category === 'dependency' && !finding.metadata?.fixed_version);
+      if (noPatch.length) results.push({title:`${repoFindings[0].repository} · upstream patches`, status:'no_patch', detail:`${noPatch.length} finding${noPatch.length === 1 ? '' : 's'} have no patched release`});
+      const source = repoFindings.filter(finding => finding.category !== 'dependency');
+      if (source.length) results.push({title:`${repoFindings[0].repository} · source drafts`, status:'draft_required', detail:`${source.length} contextual code fix${source.length === 1 ? '' : 'es'} require a verified patch`});
+    }
+    const safeStatuses = new Set(['safe_candidate']);
+    $('#parent-results').innerHTML = results.map(item => `<div class="fix-item ${safeStatuses.has(item.status) ? '' : 'blocked'}"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.status.replaceAll('_', ' ').toUpperCase())}</span><span class="mono">${escapeHtml(item.detail)}</span></div>`).join('') || '<p class="muted">No blocked findings need evaluation.</p>';
+    $('#platform-downloads').classList.add('hidden');
+    $('#create-migration-branch').classList.add('hidden');
+    $('#platform-message').textContent = 'Evaluation is isolated. Only candidates that pass project checks and rescanning are considered verified.';
+    $('#parent-dialog').showModal();
+    $('#scan-message').textContent = `Evaluated ${blocked.length} blocked findings.`;
+  } catch(error) {
+    $('#scan-message').textContent = `Evaluation stopped: ${error.message}`;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Evaluate all blocked fixes';
+  }
+}
+
 function updateFixBar() {
   $('#fix-bar').classList.toggle('hidden', selectedFixes.size === 0);
   $('#selected-count').textContent = `${selectedFixes.size} selected`;
@@ -265,6 +307,7 @@ $('#category-filter').addEventListener('change', renderFindings);
 $('#dialog-close').addEventListener('click', () => $('#finding-dialog').close());
 $('#clear-fixes').addEventListener('click', () => { selectedFixes.clear(); updateFixBar(); renderFindings(); });
 $('#select-safe').addEventListener('click', () => { state.findings.filter(f => f.metadata?.fix_eligible).forEach(f => selectedFixes.add(f.fingerprint)); updateFixBar(); renderFindings(); });
+$('#evaluate-all').addEventListener('click', evaluateAllBlocked);
 $('#preview-fixes').addEventListener('click', async () => {
   $('#fix-message').textContent = '';
   try { const body = await postJson('/api/fixes/preview', {fingerprints:[...selectedFixes]}); renderFixPlan(body.plan); $('#fix-dialog').showModal(); }
