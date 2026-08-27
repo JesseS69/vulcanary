@@ -19,7 +19,7 @@ class ScannerTests(unittest.TestCase):
     def test_detects_code_secret_and_iac(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "app.py").write_text('token = "AKIAABCDEFGHIJKLMNOP"\nvalue = eval(user_input)\n', encoding="utf-8")
+            (root / "app.py").write_text('token = "AKIAABCDEFGHIJKLMNOP"\nvalue = eval(user_input)\n', encoding="utf-8")  # gitleaks:allow -- intentional detector fixture
             (root / "Dockerfile").write_text("FROM python:3.12\nUSER root\n", encoding="utf-8")
             findings = scan(root, Config())
             self.assertEqual({f.rule_id for f in findings}, {"SECRET-AWS-KEY", "CODE-PY-EVAL", "IAC-DOCKER-ROOT"})
