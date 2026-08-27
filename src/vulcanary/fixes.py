@@ -41,7 +41,9 @@ def preview(findings: list[dict], fingerprints: list[str]) -> dict:
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", "-C", str(root), *args], text=True, capture_output=True, timeout=30)
+    git_roots = [candidate for candidate in (root, *root.parents) if (candidate / ".git").exists()] or [root]
+    safe_directories = [argument for candidate in git_roots for argument in ("-c", f"safe.directory={candidate.as_posix()}")]
+    return subprocess.run(["git", *safe_directories, "-C", str(root), *args], text=True, capture_output=True, timeout=30)
 
 
 def _resolve_executable(command: list[str]) -> list[str]:

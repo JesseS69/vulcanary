@@ -16,6 +16,10 @@ from .fixes import run_verification
 
 
 def _run(command: list[str], cwd: Path, timeout: int = 180, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    if command and command[0] == "git":
+        git_roots = [candidate for candidate in (cwd, *cwd.parents) if (candidate / ".git").exists()] or [cwd]
+        safe_directories = [argument for root in git_roots for argument in ("-c", f"safe.directory={root.as_posix()}")]
+        command = ["git", *safe_directories, *command[1:]]
     executable = shutil.which(command[0]) or shutil.which(f"{command[0]}.cmd") or command[0]
     return subprocess.run([executable, *command[1:]], cwd=cwd, text=True, capture_output=True, timeout=timeout, shell=False, env=environment)
 

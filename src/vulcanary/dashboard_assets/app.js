@@ -168,13 +168,35 @@ function renderFindings() {
     const fixStatus = automaticFixStatus(f);
     const reason = eligible ? `Select ${fixStatus.detail}` : `${fixStatus.label}: ${fixStatus.detail}`;
     const manualStatus = eligible ? '' : `<div class="fix-unavailable" title="${escapeHtml(fixStatus.detail)}"><span>${escapeHtml(fixStatus.label)}</span> · ${escapeHtml(fixStatus.detail)}</div>`;
-    return `<tr data-fingerprint="${escapeHtml(f.fingerprint)}"><td class="check-cell"><input class="fix-check" type="checkbox" aria-label="${escapeHtml(reason)}" title="${escapeHtml(reason)}" ${eligible ? '' : 'disabled'} ${checked}></td><td><span class="severity ${f.severity}">${f.severity}</span></td><td><strong>${escapeHtml(f.title)}</strong><div class="muted">${escapeHtml(f.rule_id)}</div>${reachabilityStatus(f)}${manualStatus}</td><td>${escapeHtml(f.repository)}</td><td class="location">${escapeHtml(f.path)}:${f.line}</td><td><span class="pill">${escapeHtml(f.scanner)}</span></td><td>${escapeHtml(f.category)}</td></tr>`;
+    const hasParents = Boolean(f.metadata?.parent_packages?.length);
+    const noPatchedRelease = f.category === 'dependency' && !f.metadata?.fixed_version;
+    const control = eligible
+      ? `<input class="fix-check" type="checkbox" aria-label="${escapeHtml(reason)}" title="${escapeHtml(reason)}" ${checked}>`
+      : noPatchedRelease
+        ? `<button class="fix-path secondary" type="button" disabled title="No patched release is available">No patch</button>`
+        : `<button class="fix-path secondary" type="button" data-mode="${hasParents ? (f.metadata.parent_packages.includes('expo') ? 'platform' : 'parent') : 'code'}">${hasParents ? 'Evaluate' : 'Draft fix'}</button>`;
+    return `<tr data-fingerprint="${escapeHtml(f.fingerprint)}"><td class="check-cell">${control}</td><td><span class="severity ${f.severity}">${f.severity}</span></td><td><strong>${escapeHtml(f.title)}</strong><div class="muted">${escapeHtml(f.rule_id)}</div>${reachabilityStatus(f)}${manualStatus}</td><td>${escapeHtml(f.repository)}</td><td class="location">${escapeHtml(f.path)}:${f.line}</td><td><span class="pill">${escapeHtml(f.scanner)}</span></td><td>${escapeHtml(f.category)}</td></tr>`;
   }).join('');
   document.querySelectorAll('#finding-rows tr').forEach(row => {
-    row.addEventListener('click', event => { if (!event.target.classList.contains('fix-check')) openFinding(row.dataset.fingerprint); });
+    row.addEventListener('click', event => { if (!event.target.classList.contains('fix-check') && !event.target.classList.contains('fix-path')) openFinding(row.dataset.fingerprint); });
     const checkbox = row.querySelector('.fix-check');
-    checkbox.addEventListener('change', () => { checkbox.checked ? selectedFixes.add(row.dataset.fingerprint) : selectedFixes.delete(row.dataset.fingerprint); updateFixBar(); });
+    if (checkbox) checkbox.addEventListener('change', () => { checkbox.checked ? selectedFixes.add(row.dataset.fingerprint) : selectedFixes.delete(row.dataset.fingerprint); updateFixBar(); });
+    const fixPath = row.querySelector('.fix-path:not([disabled])');
+    if (fixPath) fixPath.addEventListener('click', () => evaluateFindingFix(fixPath, row.dataset.fingerprint));
   });
+}
+
+async function evaluateFindingFix(button, fingerprint) {
+  const finding = state.findings.find(item => item.fingerprint === fingerprint);
+  if (!finding) return;
+  if (button.dataset.mode === 'code') {
+    openFinding(fingerprint);
+    $('#dialog-remediation').textContent = `Draft required: ${finding.remediation || 'replace the unsafe source pattern with context-safe DOM or encoding APIs'}. Vulcanary will not apply an unverified source rewrite.`;
+    return;
+  }
+  const proxy = {disabled:false, textContent:'Evaluate', dataset:{repository:finding.repository_path}};
+  if (button.dataset.mode === 'platform') await evaluatePlatform(proxy);
+  else await evaluateParents(proxy);
 }
 
 function updateFixBar() {
