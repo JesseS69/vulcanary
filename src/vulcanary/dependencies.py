@@ -8,6 +8,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -28,11 +29,16 @@ class Package:
     manager: str = "npm"
 
 
-_SKIPPED_PARTS = {"node_modules", ".git", ".expo", ".pnpm-store", "dist", "build"}
+_SKIPPED_PARTS = {"node_modules", ".git", ".expo", ".pnpm-store", ".venv", "venv", ".vercel", "dist", "build", "coverage"}
 
 
-def _is_generated(path: Path) -> bool:
-    return bool(_SKIPPED_PARTS & set(path.parts))
+def _dependency_files(root: Path, accepted: Callable[[str], bool]) -> list[Path]:
+    found = []
+    for directory, names, files in os.walk(root, topdown=True):
+        names[:] = [name for name in names if name not in _SKIPPED_PARTS]
+        parent = Path(directory)
+        found.extend(parent / name for name in files if accepted(name))
+    return found
 
 
 def _declared_names(directory: Path) -> set[str]:
@@ -90,9 +96,7 @@ def _pnpm_packages(lock: Path, root: Path) -> list[Package]:
 
 def discover_packages(root: Path) -> list[Package]:
     packages: dict[tuple[str, str, str, str], Package] = {}
-    for lock in root.rglob("package-lock.json"):
-        if _is_generated(lock):
-            continue
+    for lock in _dependency_files(root, lambda name: name == "package-lock.json"):
         try:
             data = json.loads(lock.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -108,9 +112,7 @@ def discover_packages(root: Path) -> list[Package]:
                 package = Package(name, version, "npm", relative_path(lock, root), name in direct_names)
                 packages[(package.ecosystem, name, version, package.path)] = package
     for pattern, reader in (("yarn.lock", _yarn_packages), ("pnpm-lock.yaml", _pnpm_packages)):
-        for lock in root.rglob(pattern):
-            if _is_generated(lock):
-                continue
+        for lock in _dependency_files(root, lambda name, expected=pattern: name == expected):
             try:
                 discovered = reader(lock, root)
             except OSError:
@@ -118,9 +120,7 @@ def discover_packages(root: Path) -> list[Package]:
             for package in discovered:
                 packages[(package.ecosystem, package.name, package.version, package.path)] = package
     requirement = re.compile(r"^\s*([A-Za-z0-9_.-]+)==([^\s;]+)")
-    for lock in root.rglob("requirements*.txt"):
-        if {".git", ".venv", "venv", "build", "dist"} & set(lock.parts):
-            continue
+    for lock in _dependency_files(root, lambda name: name.startswith("requirements") and name.endswith(".txt")):
         try:
             lines = lock.read_text(encoding="utf-8").splitlines()
         except OSError:
