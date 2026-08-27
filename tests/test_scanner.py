@@ -71,7 +71,11 @@ class ScannerTests(unittest.TestCase):
             sarif_path = root / "report.sarif"
             self.assertEqual(main([str(root), "--json", str(json_path), "--sarif", str(sarif_path)]), 1)
             self.assertEqual(json.loads(json_path.read_text())["findings"][0]["severity"], "medium")
-            self.assertEqual(json.loads(sarif_path.read_text())["version"], "2.1.0")
+            sarif = json.loads(sarif_path.read_text())
+            self.assertEqual(sarif["version"], "2.1.0")
+            fingerprints = sarif["runs"][0]["results"][0]["partialFingerprints"]
+            self.assertIn("vulcanaryFingerprint/v1", fingerprints)
+            self.assertNotIn("primaryLocationLineHash", fingerprints)
 
     def test_default_threshold_allows_medium(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

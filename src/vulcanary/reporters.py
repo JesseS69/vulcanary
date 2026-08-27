@@ -69,7 +69,7 @@ def write_sarif(findings: list[Finding], destination: Path) -> None:
             "level": levels[severity],
             "message": {"text": finding.title},
             "locations": [{"physicalLocation": {"artifactLocation": {"uri": finding.path}, "region": {"startLine": finding.line}}}],
-            "partialFingerprints": {"primaryLocationLineHash": finding.fingerprint},
+            "partialFingerprints": {"vulcanaryFingerprint/v1": finding.fingerprint},
         })
     document = {"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "runs": [{"tool": {"driver": {"name": "Vulcanary", "version": __version__, "rules": list(rules.values())}}, "results": results}]}
     destination.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
