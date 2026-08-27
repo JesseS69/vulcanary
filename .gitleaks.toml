@@ -5,4 +5,4 @@ useDefault = true
 description = "Exact synthetic AWS access key used by Vulcanary's detector test"
 paths = ['''tests/test_scanner\.py''']
 regexTarget = "match"
-regexes = ['''AKIAABCDEFGHIJKLMNOP''']
+regexes = ['''AKIA[A]BCDEFGHIJKLMNOP''']
