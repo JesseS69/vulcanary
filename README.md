@@ -143,9 +143,11 @@ vulcanary . --semgrep-json semgrep.json --gitleaks-json gitleaks.json `
 
 Each option can be repeated. Imported paths are constrained to the scanned repository, malformed reports fail closed, and Gitleaks secret values are never retained in Vulcanary output.
 
+The included GitHub Actions workflow automatically runs pinned Semgrep Community Edition and Gitleaks containers. It stores their temporary reports outside the checkout, disables Semgrep metrics, requests full Gitleaks redaction, and passes both reports through Vulcanary's normal policy gate. No scanner account or API token is required.
+
 ## Production roadmap
 
-1. **Scanner adapters:** ingest Semgrep (SAST), Gitleaks (secrets), OSV-Scanner or Trivy (SCA), and Checkov (IaC/container) JSON. Pin engine and ruleset versions.
+1. **Scanner expansion:** automate the existing Trivy and Checkov adapters, then pin and review external ruleset updates.
 2. **Reachability and context:** correlate vulnerable packages with imports, exposed routes, runtime assets, and internet exposure to reduce noise.
 3. **Service inventory:** connect repositories, owners, deploys, cloud resources, images, SBOMs, and findings in a graph-backed data model.
 4. **Workflow:** add SLA notifications and ticket integrations on top of fingerprint-scoped, owned, expiring suppressions and PR enforcement.

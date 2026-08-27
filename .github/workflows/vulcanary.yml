@@ -24,6 +24,34 @@ jobs:
         run: pip install .
       - name: Run tests
         run: python -m unittest discover -s tests -v
+      - name: Run Semgrep Community Edition
+        shell: bash
+        run: |
+          set +e
+          docker run --rm \
+            -v "$PWD:/src:ro" \
+            -v "$RUNNER_TEMP:/reports" \
+            -w /src \
+            semgrep/semgrep:1.172.0 \
+            semgrep scan --config p/default --metrics off --json --json-output /reports/semgrep.json
+          status=$?
+          set -e
+          if [ "$status" -gt 1 ]; then exit "$status"; fi
+          test -s "$RUNNER_TEMP/semgrep.json"
+      - name: Run Gitleaks
+        shell: bash
+        run: |
+          set +e
+          docker run --rm \
+            -v "$PWD:/repo:ro" \
+            -v "$RUNNER_TEMP:/reports" \
+            -w /repo \
+            ghcr.io/gitleaks/gitleaks:v8.30.0 \
+            git . --redact=100 --report-format json --report-path /reports/gitleaks.json
+          status=$?
+          set -e
+          if [ "$status" -gt 1 ]; then exit "$status"; fi
+          test -f "$RUNNER_TEMP/gitleaks.json"
       - name: Build pull-request baseline
         if: github.event_name == 'pull_request'
         run: |
@@ -31,10 +59,10 @@ jobs:
           vulcanary "$RUNNER_TEMP/vulcanary-base" --json "$RUNNER_TEMP/vulcanary-baseline.json" --no-fail
       - name: Scan pull-request changes
         if: github.event_name == 'pull_request'
-        run: vulcanary . --baseline-json "$RUNNER_TEMP/vulcanary-baseline.json" --github-annotations --sarif vulcanary.sarif --json vulcanary.json --sbom vulcanary.cdx.json
+        run: vulcanary . --semgrep-json "$RUNNER_TEMP/semgrep.json" --gitleaks-json "$RUNNER_TEMP/gitleaks.json" --baseline-json "$RUNNER_TEMP/vulcanary-baseline.json" --github-annotations --sarif vulcanary.sarif --json vulcanary.json --sbom vulcanary.cdx.json
       - name: Scan repository
         if: github.event_name != 'pull_request'
-        run: vulcanary . --sarif vulcanary.sarif --json vulcanary.json --sbom vulcanary.cdx.json
+        run: vulcanary . --semgrep-json "$RUNNER_TEMP/semgrep.json" --gitleaks-json "$RUNNER_TEMP/gitleaks.json" --sarif vulcanary.sarif --json vulcanary.json --sbom vulcanary.cdx.json
       - name: Upload SARIF to GitHub code scanning
         if: ${{ always() && hashFiles('vulcanary.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         uses: github/codeql-action/upload-sarif@v4
