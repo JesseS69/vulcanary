@@ -87,10 +87,13 @@ def _gitleaks(document: Any, root: Path) -> list[Finding]:
 
 
 def _trivy(document: Any, root: Path) -> list[Finding]:
-    if not isinstance(document, dict) or not isinstance(document.get("Results"), list):
-        raise AdapterError("Trivy report must contain a Results array")
+    if not isinstance(document, dict) or not isinstance(document.get("SchemaVersion"), int):
+        raise AdapterError("Trivy report must contain an integer SchemaVersion")
+    results = document.get("Results", [])
+    if not isinstance(results, list):
+        raise AdapterError("Trivy Results must be an array when present")
     findings = []
-    for result in document["Results"]:
+    for result in results:
         if not isinstance(result, dict):
             raise AdapterError("Trivy result is malformed")
         target = result.get("Target")

@@ -27,9 +27,12 @@ class AdapterTests(unittest.TestCase):
         self.assertNotIn("do-not-store-me", serialized)
 
     def test_trivy_vulnerability_and_misconfiguration(self) -> None:
-        findings = self.load("trivy", {"Results": [{"Target": "package-lock.json", "Vulnerabilities": [{"VulnerabilityID": "CVE-1", "PkgName": "demo", "InstalledVersion": "1", "FixedVersion": "2", "Severity": "CRITICAL"}], "Misconfigurations": [{"ID": "AVD-1", "Title": "Unsafe config", "Severity": "HIGH", "CauseMetadata": {"StartLine": 4}}]}]})
+        findings = self.load("trivy", {"SchemaVersion": 2, "Results": [{"Target": "package-lock.json", "Vulnerabilities": [{"VulnerabilityID": "CVE-1", "PkgName": "demo", "InstalledVersion": "1", "FixedVersion": "2", "Severity": "CRITICAL"}], "Misconfigurations": [{"ID": "AVD-1", "Title": "Unsafe config", "Severity": "HIGH", "CauseMetadata": {"StartLine": 4}}]}]})
         self.assertEqual({finding.category for finding in findings}, {"dependency", "iac"})
         self.assertEqual(max(finding.severity for finding in findings), Severity.CRITICAL)
+
+    def test_trivy_schema_versioned_report_may_have_no_results(self) -> None:
+        self.assertEqual(self.load("trivy", {"SchemaVersion": 2, "ArtifactType": "filesystem"}), [])
 
     def test_checkov_array_report_and_path_traversal(self) -> None:
         findings = self.load("checkov", [{"results": {"failed_checks": [{"check_id": "CKV_AWS_1", "check_name": "Encryption", "file_path": "../../secret.tf", "file_line_range": [9, 10], "severity": "HIGH"}]}}])
