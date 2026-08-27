@@ -6,6 +6,7 @@ dist/
 build/
 *.egg-info/
 *.sarif
+*.cdx.json
 *-findings.json
 vulcanary.json
 .vulcanary-dashboard*.log

@@ -7,8 +7,9 @@ from pathlib import Path
 from .config import Config
 from .reporters import render_console, write_json, write_sarif
 from .scanners import scan
-from .dependencies import scan_dependencies
+from .dependencies import discover_packages, scan_dependencies
 from .reachability import analyze_reachability
+from .sbom import cyclonedx_document, write_cyclonedx
 
 
 def scan_parser() -> argparse.ArgumentParser:
@@ -17,6 +18,7 @@ def scan_parser() -> argparse.ArgumentParser:
     result.add_argument("--config", type=Path, help="Configuration JSON path")
     result.add_argument("--json", type=Path, dest="json_path", help="Write normalized JSON report")
     result.add_argument("--sarif", type=Path, help="Write SARIF 2.1 report")
+    result.add_argument("--sbom", type=Path, help="Write a CycloneDX 1.5 SBOM")
     result.add_argument("--no-fail", action="store_true", help="Always exit successfully")
     result.add_argument("--offline", action="store_true", help="Skip OSV dependency advisory queries")
     return result
@@ -56,6 +58,8 @@ def main(argv: list[str] | None = None) -> int:
         write_json(findings, args.json_path)
     if args.sarif:
         write_sarif(findings, args.sarif)
+    if args.sbom:
+        write_cyclonedx(cyclonedx_document(root.name, discover_packages(root), [finding.to_dict() for finding in findings]), args.sbom)
     blocked = any(f.severity >= config.fail_on for f in findings)
     return 0 if args.no_fail or not blocked else 1
 

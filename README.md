@@ -95,6 +95,16 @@ Dependency scanning sends only package names, ecosystems, and pinned versions to
 
 Reachability is local static context, not proof of safety. **Import observed** means Vulcanary found an application import of the vulnerable package or an introducing direct parent. **Import not observed** never suppresses or lowers a finding because dynamic imports, build tooling, plugins, and runtime entry points may still execute it.
 
+## Software bill of materials
+
+Export a CycloneDX 1.5 SBOM alongside scan results:
+
+```powershell
+vulcanary . --sbom vulcanary.cdx.json
+```
+
+The local dashboard also provides **Download SBOM** for every watched repository. SBOMs contain package identities, versions, package-manager and direct/transitive properties, OSV advisory relationships, and Vulcanary reachability context. They exclude source content, absolute repository paths, credentials, and raw command output. The bundled GitHub Actions workflow uploads the SBOM with the normalized JSON and SARIF reports.
+
 ## Production roadmap
 
 1. **Scanner adapters:** ingest Semgrep (SAST), Gitleaks (secrets), OSV-Scanner or Trivy (SCA), and Checkov (IaC/container) JSON. Pin engine and ruleset versions.

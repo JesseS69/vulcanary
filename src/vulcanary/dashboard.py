@@ -9,12 +9,13 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .config import Config
 from .scanners import scan
-from .dependencies import scan_dependencies
+from .dependencies import discover_packages, scan_dependencies
 from .reachability import analyze_reachability
+from .sbom import cyclonedx_document
 from .fixes import apply_changes, commit_changes, preview as preview_fixes, rollback_changes, run_verification
 from .evaluator import create_expo_migration_branch, evaluate_expo_platform, evaluate_parent_upgrades
 
@@ -131,9 +132,21 @@ def make_handler(state: DashboardState):
             self.wfile.write(body)
 
         def do_GET(self) -> None:
-            path = urlparse(self.path).path
+            parsed = urlparse(self.path)
+            path = parsed.path
             if path == "/api/state":
                 self._json(state.snapshot())
+                return
+            if path == "/api/repositories/sbom":
+                requested = parse_qs(parsed.query).get("repository", [""])[0]
+                repository = str(Path(requested).resolve()) if requested else ""
+                scan_result = state.repositories.get(repository)
+                if not scan_result:
+                    self.send_error(HTTPStatus.NOT_FOUND, "Scan the repository before exporting its SBOM")
+                    return
+                document = cyclonedx_document(scan_result.name, discover_packages(Path(repository)), scan_result.findings)
+                safe_name = "".join(character if character.isalnum() or character in {"-", "_"} else "-" for character in scan_result.name)
+                self._download_json(document, f"{safe_name}-vulcanary.cdx.json")
                 return
             if path in {"/api/platform/report.json", "/api/platform/report.sarif"}:
                 if not state.last_platform_evaluation:

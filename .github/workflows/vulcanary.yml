@@ -22,7 +22,7 @@ jobs:
       - name: Run tests
         run: python -m unittest discover -s tests -v
       - name: Scan repository
-        run: vulcanary . --sarif vulcanary.sarif --json vulcanary.json
+        run: vulcanary . --sarif vulcanary.sarif --json vulcanary.json --sbom vulcanary.cdx.json
       - name: Preserve normalized report
         if: always()
         uses: actions/upload-artifact@v7
@@ -31,3 +31,4 @@ jobs:
           path: |
             vulcanary.json
             vulcanary.sarif
+            vulcanary.cdx.json

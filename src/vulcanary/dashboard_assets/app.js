@@ -34,7 +34,8 @@ function renderRepositories() {
     const parentCount = repo.findings.filter(f => f.metadata?.parent_packages?.length).length;
     const evaluate = parentCount ? `<button class="parent-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Evaluate ${parentCount} upgrade path${parentCount === 1 ? '' : 's'}</button>` : '';
     const platform = repo.findings.some(f => f.metadata?.parent_packages?.includes('expo')) ? `<button class="platform-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Evaluate Expo platform set</button><button class="platform-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" data-migration="true" type="button">Evaluate next Expo SDK migration</button>` : '';
-    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">${repo.duration_ms} ms · ${severe} high priority · ${reachable} import-observed</span><div class="repo-actions">${evaluate}${platform}</div></div>`;
+    const sbom = `<a class="secondary" href="/api/repositories/sbom?repository=${encodeURIComponent(repo.repository)}" download>Download SBOM</a>`;
+    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">${repo.duration_ms} ms · ${severe} high priority · ${reachable} import-observed</span><div class="repo-actions">${sbom}${evaluate}${platform}</div></div>`;
   }).join('');
   document.querySelectorAll('.parent-evaluate').forEach(button => button.addEventListener('click', () => evaluateParents(button)));
   document.querySelectorAll('.platform-evaluate').forEach(button => button.addEventListener('click', () => evaluatePlatform(button)));

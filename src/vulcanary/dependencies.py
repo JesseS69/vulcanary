@@ -12,6 +12,7 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from .models import Finding, Severity, relative_path
+from .version import __version__
 
 
 _CACHE_TTL_SECONDS = 6 * 60 * 60
@@ -127,14 +128,14 @@ def discover_packages(root: Path) -> list[Package]:
         for line in lines:
             match = requirement.match(line)
             if match:
-                package = Package(match.group(1), match.group(2), "PyPI", relative_path(lock, root))
+                package = Package(match.group(1), match.group(2), "PyPI", relative_path(lock, root), True, "pip")
                 packages[(package.ecosystem, package.name.lower(), package.version, package.path)] = package
     return list(packages.values())
 
 
 def _json_request(url: str, payload: dict | None = None, timeout: float = 10) -> dict:
     body = json.dumps(payload).encode() if payload is not None else None
-    request = Request(url, data=body, headers={"Content-Type": "application/json", "User-Agent": "Vulcanary/0.3"})
+    request = Request(url, data=body, headers={"Content-Type": "application/json", "User-Agent": f"Vulcanary/{__version__}"})
     with urlopen(request, timeout=timeout) as response:
         return json.loads(response.read())
 
@@ -329,6 +330,7 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
                     "current_version": package.version,
                     "fixed_version": fixed,
                     "ecosystem": package.ecosystem,
+                    "manager": package.manager,
                     "direct": package.direct,
                     "fix_eligible": fix_eligible,
                     "fix_block_reason": fix_block_reason,

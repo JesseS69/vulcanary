@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from .models import Finding
+from .version import __version__
 
 
 def write_json(findings: list[Finding], destination: Path) -> None:
@@ -29,7 +30,7 @@ def write_sarif(findings: list[Finding], destination: Path) -> None:
             "locations": [{"physicalLocation": {"artifactLocation": {"uri": finding.path}, "region": {"startLine": finding.line}}}],
             "partialFingerprints": {"primaryLocationLineHash": finding.fingerprint},
         })
-    document = {"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "runs": [{"tool": {"driver": {"name": "Vulcanary", "version": "0.4.0", "rules": list(rules.values())}}, "results": results}]}
+    document = {"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "runs": [{"tool": {"driver": {"name": "Vulcanary", "version": __version__, "rules": list(rules.values())}}, "results": results}]}
     destination.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 
 
