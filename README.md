@@ -107,6 +107,18 @@ The local dashboard also provides **Download SBOM** for every watched repository
 
 The dashboard keeps a local dependency-inventory baseline in `~/.vulcanary/dashboard-history.json`. Every subsequent scan reports exact components added and removed since the previous successful scan, including version changes as one removal plus one addition. Use **Inventory changes** on a repository card to review the delta. This history stays on the local machine and is not included in GitHub artifacts or the public Vulcanary repository.
 
+## Pull-request enforcement
+
+The bundled GitHub Actions workflow scans the pull request's base commit with the same Vulcanary version, then gates only findings introduced by the proposed change. New findings produce native workflow annotations at their file and line; findings at or above `.vulcanary.json`'s `fail_on` severity fail the check. Existing findings remain in the normalized and SARIF reports without making every pull request permanently red. Moving an unchanged finding to another line does not reclassify it as new.
+
+For manual CI integration, create a normalized report for the trusted base revision and pass it to the candidate scan:
+
+```powershell
+vulcanary . --baseline-json base-vulcanary.json --github-annotations --sarif vulcanary.sarif
+```
+
+Malformed or incomplete baseline reports fail closed. The workflow uploads SARIF to GitHub code scanning when its token has `security-events: write`; uploads are skipped for untrusted fork pull requests while local annotations and policy enforcement still run.
+
 ## Production roadmap
 
 1. **Scanner adapters:** ingest Semgrep (SAST), Gitleaks (secrets), OSV-Scanner or Trivy (SCA), and Checkov (IaC/container) JSON. Pin engine and ruleset versions.

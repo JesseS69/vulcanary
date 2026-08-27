@@ -8,12 +8,15 @@ on:
 
 permissions:
   contents: read
+  security-events: write
 
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -21,8 +24,23 @@ jobs:
         run: pip install .
       - name: Run tests
         run: python -m unittest discover -s tests -v
+      - name: Build pull-request baseline
+        if: github.event_name == 'pull_request'
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/vulcanary-base" "${{ github.event.pull_request.base.sha }}"
+          vulcanary "$RUNNER_TEMP/vulcanary-base" --json "$RUNNER_TEMP/vulcanary-baseline.json" --no-fail
+      - name: Scan pull-request changes
+        if: github.event_name == 'pull_request'
+        run: vulcanary . --baseline-json "$RUNNER_TEMP/vulcanary-baseline.json" --github-annotations --sarif vulcanary.sarif --json vulcanary.json --sbom vulcanary.cdx.json
       - name: Scan repository
+        if: github.event_name != 'pull_request'
         run: vulcanary . --sarif vulcanary.sarif --json vulcanary.json --sbom vulcanary.cdx.json
+      - name: Upload SARIF to GitHub code scanning
+        if: ${{ always() && hashFiles('vulcanary.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: vulcanary.sarif
+          category: vulcanary
       - name: Preserve normalized report
         if: always()
         uses: actions/upload-artifact@v7

@@ -1,10 +1,51 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 
 from .models import Finding
 from .version import __version__
+
+
+def _policy_identity(rule_id: str, path: str, evidence: str) -> str:
+    return sha256(f"{rule_id}\0{path}\0{evidence}".encode()).hexdigest()
+
+
+def baseline_identities(path: Path) -> set[str]:
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        findings = document["findings"]
+        required = ("rule_id", "path", "evidence", "fingerprint")
+        if not isinstance(findings, list) or any(not isinstance(item, dict) or any(not isinstance(item.get(field), str) for field in required) for item in findings):
+            raise TypeError
+        return {_policy_identity(item["rule_id"], item["path"], item["evidence"]) for item in findings}
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise ValueError("Baseline must be a readable Vulcanary normalized JSON report") from error
+
+
+def findings_new_since(findings: list[Finding], identities: set[str]) -> list[Finding]:
+    return [finding for finding in findings if _policy_identity(finding.rule_id, finding.path, finding.evidence) not in identities]
+
+
+def _github_data(value: str) -> str:
+    return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _github_property(value: str) -> str:
+    return _github_data(value).replace(":", "%3A").replace(",", "%2C")
+
+
+def render_github_annotations(findings: list[Finding]) -> str:
+    levels = {"CRITICAL": "error", "HIGH": "error", "MEDIUM": "warning", "LOW": "notice", "INFO": "notice"}
+    lines = []
+    for finding in findings:
+        level = levels[finding.severity.name]
+        title = _github_property(f"Vulcanary {finding.severity.name.lower()}: {finding.rule_id}")
+        path = _github_property(finding.path)
+        message = _github_data(f"{finding.title}. {finding.remediation}".strip())
+        lines.append(f"::{level} file={path},line={max(1, finding.line)},title={title}::{message}")
+    return "\n".join(lines)
 
 
 def write_json(findings: list[Finding], destination: Path) -> None:

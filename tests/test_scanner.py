@@ -1,6 +1,8 @@
 import json
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -76,6 +78,35 @@ class ScannerTests(unittest.TestCase):
             root = Path(directory)
             (root / "main.js").write_text("element.innerHTML = input", encoding="utf-8")
             self.assertEqual(main([str(root)]), 0)
+
+    def test_pr_baseline_gates_and_annotates_only_new_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".vulcanary.json").write_text(json.dumps({"fail_on": "medium"}), encoding="utf-8")
+            (root / "existing.js").write_text("element.innerHTML = input\n", encoding="utf-8")
+            baseline = root / "baseline.json"
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(main([str(root), "--json", str(baseline), "--no-fail", "--offline"]), 0)
+                self.assertEqual(main([str(root), "--baseline-json", str(baseline), "--offline"]), 0)
+                (root / "existing.js").write_text("// line moved\nelement.innerHTML = input\n", encoding="utf-8")
+                self.assertEqual(main([str(root), "--baseline-json", str(baseline), "--offline"]), 0)
+
+            (root / "new.py").write_text("result = eval(user_input)\n", encoding="utf-8")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                status = main([str(root), "--baseline-json", str(baseline), "--github-annotations", "--offline"])
+            self.assertEqual(status, 1)
+            annotations = [line for line in output.getvalue().splitlines() if line.startswith("::")]
+            self.assertEqual(len(annotations), 1)
+            self.assertIn("::error file=new.py,line=1", annotations[0])
+            self.assertIn("CODE-PY-EVAL", annotations[0])
+
+    def test_pr_baseline_fails_closed_when_report_is_malformed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            baseline = root / "baseline.json"
+            baseline.write_text('{"findings": [{"title": "missing fingerprint"}]}', encoding="utf-8")
+            self.assertEqual(main([str(root), "--baseline-json", str(baseline), "--offline"]), 2)
 
     def test_dashboard_aggregates_repositories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

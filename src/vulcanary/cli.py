@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from .config import Config
-from .reporters import render_console, write_json, write_sarif
+from .reporters import baseline_identities, findings_new_since, render_console, render_github_annotations, write_json, write_sarif
 from .scanners import scan
 from .dependencies import discover_packages, scan_dependencies
 from .reachability import analyze_reachability
@@ -19,6 +19,8 @@ def scan_parser() -> argparse.ArgumentParser:
     result.add_argument("--json", type=Path, dest="json_path", help="Write normalized JSON report")
     result.add_argument("--sarif", type=Path, help="Write SARIF 2.1 report")
     result.add_argument("--sbom", type=Path, help="Write a CycloneDX 1.5 SBOM")
+    result.add_argument("--baseline-json", type=Path, help="Gate only findings absent from a prior normalized JSON report")
+    result.add_argument("--github-annotations", action="store_true", help="Emit GitHub Actions workflow annotations for gated findings")
     result.add_argument("--no-fail", action="store_true", help="Always exit successfully")
     result.add_argument("--offline", action="store_true", help="Skip OSV dependency advisory queries")
     return result
@@ -60,7 +62,19 @@ def main(argv: list[str] | None = None) -> int:
         write_sarif(findings, args.sarif)
     if args.sbom:
         write_cyclonedx(cyclonedx_document(root.name, discover_packages(root), [finding.to_dict() for finding in findings]), args.sbom)
-    blocked = any(f.severity >= config.fail_on for f in findings)
+    policy_findings = findings
+    if args.baseline_json:
+        try:
+            policy_findings = findings_new_since(findings, baseline_identities(args.baseline_json))
+        except ValueError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 2
+        print(f"PR policy delta: {len(policy_findings)} new finding(s), {len(findings) - len(policy_findings)} pre-existing.")
+    if args.github_annotations:
+        annotations = render_github_annotations(policy_findings)
+        if annotations:
+            print(annotations)
+    blocked = any(f.severity >= config.fail_on for f in policy_findings)
     return 0 if args.no_fail or not blocked else 1
 
 
