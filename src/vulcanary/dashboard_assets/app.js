@@ -17,7 +17,18 @@ function render() {
   renderChart(counts);
   renderRepositories();
   renderGovernance();
+  renderFilterOptions();
   renderFindings();
+}
+
+function renderFilterOptions() {
+  const update = (selector, values, label) => {
+    const target = $(selector); const selected = target.value;
+    target.innerHTML = `<option value="all">All ${label}</option>` + values.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join('');
+    target.value = values.includes(selected) ? selected : 'all';
+  };
+  update('#scanner-filter', Object.keys(state.summary.scanners || {}).sort(), 'scanners');
+  update('#category-filter', Object.keys(state.summary.categories || {}).sort(), 'categories');
 }
 
 function renderGovernance() {
@@ -55,7 +66,8 @@ function renderRepositories() {
     const changes = repo.inventory_change || {added:[],removed:[]};
     const inventoryLabel = changes.baseline ? `${changes.current_count || 0} components · baseline` : `${changes.current_count || 0} components · +${changes.added.length} / −${changes.removed.length}`;
     const inventoryButton = `<button class="inventory-change secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Inventory changes</button>`;
-    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">${repo.duration_ms} ms · ${severe} high priority · ${reachable} import-observed · ${inventoryLabel}</span><div class="repo-actions">${sbom}${inventoryButton}${evaluate}${platform}</div></div>`;
+    const scanners = [...new Set(repo.findings.map(f => f.scanner))].sort().join(' · ');
+    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">${repo.duration_ms} ms · ${severe} high priority · ${reachable} import-observed · ${inventoryLabel} · ${escapeHtml(scanners || 'builtin')}</span><div class="repo-actions">${sbom}${inventoryButton}${evaluate}${platform}</div></div>`;
   }).join('');
   document.querySelectorAll('.parent-evaluate').forEach(button => button.addEventListener('click', () => evaluateParents(button)));
   document.querySelectorAll('.platform-evaluate').forEach(button => button.addEventListener('click', () => evaluatePlatform(button)));
@@ -112,7 +124,9 @@ async function evaluateParents(button) {
 function filteredFindings() {
   const query = $('#search').value.toLowerCase();
   const severity = $('#severity-filter').value;
-  return state.findings.filter(f => (severity === 'all' || f.severity === severity) && `${f.title} ${f.rule_id} ${f.path} ${f.repository}`.toLowerCase().includes(query));
+  const scanner = $('#scanner-filter').value;
+  const category = $('#category-filter').value;
+  return state.findings.filter(f => (severity === 'all' || f.severity === severity) && (scanner === 'all' || f.scanner === scanner) && (category === 'all' || f.category === category) && `${f.title} ${f.rule_id} ${f.path} ${f.repository} ${f.scanner} ${f.category}`.toLowerCase().includes(query));
 }
 
 function automaticFixStatus(finding) {
@@ -154,7 +168,7 @@ function renderFindings() {
     const fixStatus = automaticFixStatus(f);
     const reason = eligible ? `Select ${fixStatus.detail}` : `${fixStatus.label}: ${fixStatus.detail}`;
     const manualStatus = eligible ? '' : `<div class="fix-unavailable" title="${escapeHtml(fixStatus.detail)}"><span>${escapeHtml(fixStatus.label)}</span> · ${escapeHtml(fixStatus.detail)}</div>`;
-    return `<tr data-fingerprint="${escapeHtml(f.fingerprint)}"><td class="check-cell"><input class="fix-check" type="checkbox" aria-label="${escapeHtml(reason)}" title="${escapeHtml(reason)}" ${eligible ? '' : 'disabled'} ${checked}></td><td><span class="severity ${f.severity}">${f.severity}</span></td><td><strong>${escapeHtml(f.title)}</strong><div class="muted">${escapeHtml(f.rule_id)}</div>${reachabilityStatus(f)}${manualStatus}</td><td>${escapeHtml(f.repository)}</td><td class="location">${escapeHtml(f.path)}:${f.line}</td><td>${escapeHtml(f.category)}</td></tr>`;
+    return `<tr data-fingerprint="${escapeHtml(f.fingerprint)}"><td class="check-cell"><input class="fix-check" type="checkbox" aria-label="${escapeHtml(reason)}" title="${escapeHtml(reason)}" ${eligible ? '' : 'disabled'} ${checked}></td><td><span class="severity ${f.severity}">${f.severity}</span></td><td><strong>${escapeHtml(f.title)}</strong><div class="muted">${escapeHtml(f.rule_id)}</div>${reachabilityStatus(f)}${manualStatus}</td><td>${escapeHtml(f.repository)}</td><td class="location">${escapeHtml(f.path)}:${f.line}</td><td><span class="pill">${escapeHtml(f.scanner)}</span></td><td>${escapeHtml(f.category)}</td></tr>`;
   }).join('');
   document.querySelectorAll('#finding-rows tr').forEach(row => {
     row.addEventListener('click', event => { if (!event.target.classList.contains('fix-check')) openFinding(row.dataset.fingerprint); });
@@ -188,6 +202,7 @@ function openFinding(fingerprint) {
   $('#dialog-title').textContent = f.title;
   $('#dialog-severity').className = `severity ${f.severity}`;
   $('#dialog-severity').textContent = f.severity;
+  $('#dialog-scanner').textContent = `${f.scanner} · ${f.category}`;
   $('#dialog-location').textContent = `${f.repository} · ${f.path}:${f.line}`;
   $('#dialog-description').textContent = f.description;
   $('#dialog-remediation').textContent = f.remediation || 'Review the affected code and remove the unsafe pattern.';
@@ -209,7 +224,8 @@ $('#scan-form').addEventListener('submit', async event => {
   const button = event.currentTarget.querySelector('button');
   button.disabled = true; button.textContent = 'Scanning…'; $('#scan-message').textContent = '';
   try {
-    const response = await fetch('/api/scan', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repository:$('#repository').value})});
+    const reports = Object.fromEntries(['semgrep','gitleaks','trivy','checkov'].map(scanner => [scanner, $(`#${scanner}-report`).value.trim()]).filter(([, path]) => path));
+    const response = await fetch('/api/scan', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repository:$('#repository').value,reports})});
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Scan failed');
     state = payload.state; render(); $('#scan-message').textContent = `Scanned ${payload.scan.name} in ${payload.scan.duration_ms} ms.`;
@@ -218,6 +234,8 @@ $('#scan-form').addEventListener('submit', async event => {
 });
 $('#search').addEventListener('input', renderFindings);
 $('#severity-filter').addEventListener('change', renderFindings);
+$('#scanner-filter').addEventListener('change', renderFindings);
+$('#category-filter').addEventListener('change', renderFindings);
 $('#dialog-close').addEventListener('click', () => $('#finding-dialog').close());
 $('#clear-fixes').addEventListener('click', () => { selectedFixes.clear(); updateFixBar(); renderFindings(); });
 $('#select-safe').addEventListener('click', () => { state.findings.filter(f => f.metadata?.fix_eligible).forEach(f => selectedFixes.add(f.fingerprint)); updateFixBar(); renderFindings(); });

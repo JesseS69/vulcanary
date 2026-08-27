@@ -19,6 +19,7 @@ from .sbom import cyclonedx_document, inventory_snapshot
 from .governance import suppression_findings
 from .fixes import apply_changes, commit_changes, preview as preview_fixes, rollback_changes, run_verification
 from .evaluator import create_expo_migration_branch, evaluate_expo_platform, evaluate_parent_upgrades
+from .adapters import PARSERS, import_report
 
 
 @dataclass
@@ -31,6 +32,7 @@ class RepositoryScan:
     inventory_change: dict
     suppressions: list[dict]
     suppression_change: dict
+    report_sources: list[dict]
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -48,6 +50,7 @@ class DashboardState:
         self.pending_fix: dict | None = None
         self.last_platform_evaluation: dict | None = None
         self.last_platform_repository: str | None = None
+        self.external_reports: dict[str, dict[str, list[Path]]] = {}
         if history_path and history_path.exists():
             try:
                 payload = json.loads(history_path.read_text(encoding="utf-8"))
@@ -64,7 +67,7 @@ class DashboardState:
                 self.suppression_snapshots = {}
                 self.suppression_audit = []
 
-    def scan_repository(self, path: Path) -> RepositoryScan:
+    def scan_repository(self, path: Path, external_reports: dict[str, list[Path]] | None = None) -> RepositoryScan:
         import time
         root = path.resolve()
         if not root.is_dir():
@@ -72,10 +75,25 @@ class DashboardState:
         started = time.perf_counter()
         config = Config.load(root)
         findings = scan(root, config)
+        repository_key = str(root)
+        reports = external_reports if external_reports is not None else self.external_reports.get(repository_key, {})
+        imported = []
+        report_sources = []
+        for scanner, paths in reports.items():
+            if scanner not in PARSERS:
+                raise ValueError(f"Unsupported external scanner: {scanner}")
+            for report in paths:
+                resolved = report.resolve()
+                imported.extend(import_report(scanner, resolved, root))
+                report_sources.append({"scanner": scanner, "path": str(resolved)})
+        imported = [finding for finding in imported if finding.rule_id not in config.ignored_rules and not config.is_suppressed(finding.fingerprint)]
+        imported = list({finding.fingerprint: finding for finding in imported}.values())
+        if external_reports is not None:
+            self.external_reports[repository_key] = external_reports
         dependency_findings, dependency_warning = scan_dependencies(root)
         dependency_findings = analyze_reachability(root, dependency_findings, config)
         dependency_findings = [finding for finding in dependency_findings if not config.is_suppressed(finding.fingerprint)]
-        findings = sorted(findings + dependency_findings + suppression_findings(config), key=lambda f: (-int(f.severity), f.path, f.line))
+        findings = sorted(findings + dependency_findings + imported + suppression_findings(config), key=lambda f: (-int(f.severity), f.path, f.line))
         current_inventory = inventory_snapshot(discover_packages(root))
         suppression_register = config.suppression_register()
         current_suppressions = {item["fingerprint"]: item for item in suppression_register}
@@ -121,6 +139,7 @@ class DashboardState:
                 inventory_change=inventory_change,
                 suppressions=suppression_register,
                 suppression_change=suppression_change,
+                report_sources=report_sources,
             )
             self.repositories[str(root)] = result
             self.inventory_snapshots[str(root)] = current_inventory
@@ -153,15 +172,17 @@ class DashboardState:
         findings = [dict(finding, repository=repo["name"], repository_path=repo["repository"]) for repo in scans for finding in repo["findings"]]
         counts = {severity: sum(item["severity"] == severity for item in findings) for severity in ("critical", "high", "medium", "low", "info")}
         categories: dict[str, int] = {}
+        scanners: dict[str, int] = {}
         for item in findings:
             categories[item["category"]] = categories.get(item["category"], 0) + 1
+            scanners[item["scanner"]] = scanners.get(item["scanner"], 0) + 1
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "repositories": scans,
             "findings": findings,
             "history": list(reversed(self.history)),
             "suppression_audit": list(reversed(self.suppression_audit)),
-            "summary": {"total": len(findings), "counts": counts, "categories": categories},
+            "summary": {"total": len(findings), "counts": counts, "categories": categories, "scanners": scanners},
         }
 
 
@@ -258,7 +279,18 @@ def make_handler(state: DashboardState):
                 payload = json.loads(self.rfile.read(length))
                 if route == "/api/scan":
                     repository = Path(payload["repository"])
-                    result = state.scan_repository(repository)
+                    submitted = payload.get("reports", {})
+                    if not isinstance(submitted, dict):
+                        raise ValueError("reports must be an object")
+                    reports = {}
+                    for scanner, value in submitted.items():
+                        if scanner not in PARSERS:
+                            raise ValueError(f"Unsupported external scanner: {scanner}")
+                        values = value if isinstance(value, list) else [value]
+                        if any(not isinstance(item, str) or not item.strip() for item in values):
+                            raise ValueError(f"{scanner} report paths must be non-empty strings")
+                        reports[scanner] = [Path(item) for item in values]
+                    result = state.scan_repository(repository, reports if submitted else None)
                     self._json({"scan": result.to_dict(), "state": state.snapshot()})
                 elif route == "/api/fixes/preview":
                     self._json({"plan": preview_fixes(state.snapshot()["findings"], payload.get("fingerprints", []))})

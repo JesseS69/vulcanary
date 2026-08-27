@@ -123,6 +123,27 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(snapshot["summary"]["counts"]["medium"], 1)
             self.assertEqual(snapshot["findings"][0]["repository"], root.name)
 
+    def test_dashboard_imports_and_reuses_external_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repository"
+            root.mkdir()
+            report = Path(directory) / "semgrep.json"
+            report.write_text(json.dumps({"results": [{"check_id": "demo.rule", "path": "app.py", "start": {"line": 3}, "extra": {"message": "External finding", "severity": "ERROR"}}]}), encoding="utf-8")
+            with patch("vulcanary.dashboard.scan_dependencies", return_value=([], None)):
+                state = DashboardState()
+                first = state.scan_repository(root, {"semgrep": [report]})
+                second = state.scan_repository(root)
+            self.assertEqual(first.findings[0]["scanner"], "semgrep")
+            self.assertEqual(first.report_sources, [{"scanner": "semgrep", "path": str(report.resolve())}])
+            self.assertEqual(second.findings[0]["fingerprint"], first.findings[0]["fingerprint"])
+            self.assertEqual(state.snapshot()["summary"]["scanners"], {"semgrep": 1})
+
+            malformed = Path(directory) / "malformed.json"
+            malformed.write_text("{}", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                state.scan_repository(root, {"semgrep": [malformed]})
+            self.assertEqual(state.scan_repository(root).findings[0]["fingerprint"], first.findings[0]["fingerprint"])
+
     def test_dashboard_tracks_and_persists_inventory_changes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "repository"

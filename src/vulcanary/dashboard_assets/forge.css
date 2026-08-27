@@ -157,6 +157,13 @@ tbody tr:hover { background: #e8ff5b08; }
 
 .severity, .pill, .nav-count { border-radius: 0; }
 
+.scan-form details { margin-top: 14px; color: var(--muted); }
+.scan-form summary { cursor: pointer; font-weight: 700; }
+.scan-form .report-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.scan-form .report-grid label { color: var(--muted); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+.scan-form .report-grid input { display: block; width: 100%; margin-top: 5px; text-transform: none; }
+@media(max-width:650px) { .scan-form .report-grid { grid-template-columns: 1fr; } }
+
 .sidebar-foot {
   border-top: 1px solid #292a22;
   padding-top: 16px;
