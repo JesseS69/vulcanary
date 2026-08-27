@@ -212,9 +212,13 @@ function openFinding(fingerprint) {
   $('#finding-dialog').showModal();
 }
 
-async function refresh() {
-  const response = await fetch('/api/state');
-  state = await response.json();
+async function refresh({rescan = false} = {}) {
+  const response = await fetch(rescan ? '/api/rescan' : '/api/state', rescan ? {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'
+  } : undefined);
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || 'Refresh failed');
+  state = rescan ? payload.state : payload;
   render();
 }
 
@@ -274,4 +278,4 @@ $('#commit-fixes').addEventListener('click', async () => {
   try { const body = await postJson('/api/fixes/commit'); $('#fix-message').textContent = `Committed ${body.committed.commit.slice(0, 8)} on ${body.committed.branch}.`; button.classList.add('hidden'); selectedFixes.clear(); updateFixBar(); }
   catch(error) { $('#fix-message').textContent = error.message; button.disabled = false; button.textContent = 'Commit verified fixes'; }
 });
-refresh().catch(error => { $('#updated').textContent = `Dashboard error: ${error.message}`; });
+refresh({rescan: true}).catch(error => { $('#updated').textContent = `Dashboard error: ${error.message}`; });

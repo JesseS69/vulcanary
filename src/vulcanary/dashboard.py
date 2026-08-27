@@ -185,6 +185,11 @@ class DashboardState:
             "summary": {"total": len(findings), "counts": counts, "categories": categories, "scanners": scanners},
         }
 
+    def rescan_all(self) -> list[RepositoryScan]:
+        with self._lock:
+            repositories = [Path(repository) for repository in self.repositories]
+        return [self.scan_repository(repository) for repository in repositories]
+
 
 def _assets() -> Path:
     return Path(str(files("vulcanary").joinpath("dashboard_assets")))
@@ -269,7 +274,7 @@ def make_handler(state: DashboardState):
 
         def do_POST(self) -> None:
             route = urlparse(self.path).path
-            if route not in {"/api/scan", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/parents/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
+            if route not in {"/api/scan", "/api/rescan", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/parents/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             try:
@@ -277,7 +282,10 @@ def make_handler(state: DashboardState):
                 if length > 16_384:
                     raise ValueError("Request is too large")
                 payload = json.loads(self.rfile.read(length))
-                if route == "/api/scan":
+                if route == "/api/rescan":
+                    rescanned = state.rescan_all()
+                    self._json({"scans": [result.to_dict() for result in rescanned], "state": state.snapshot()})
+                elif route == "/api/scan":
                     repository = Path(payload["repository"])
                     submitted = payload.get("reports", {})
                     if not isinstance(submitted, dict):

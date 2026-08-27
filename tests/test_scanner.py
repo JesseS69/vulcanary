@@ -123,6 +123,20 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(snapshot["summary"]["counts"]["medium"], 1)
             self.assertEqual(snapshot["findings"][0]["repository"], root.name)
 
+    def test_dashboard_rescan_all_refreshes_tracked_repositories(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "main.js"
+            source.write_text("element.innerHTML = input", encoding="utf-8")
+            with patch("vulcanary.dashboard.scan_dependencies", return_value=([], None)):
+                state = DashboardState()
+                state.scan_repository(root)
+                self.assertEqual(state.snapshot()["summary"]["total"], 1)
+                source.write_text("element.textContent = input", encoding="utf-8")
+                rescanned = state.rescan_all()
+            self.assertEqual(len(rescanned), 1)
+            self.assertEqual(state.snapshot()["summary"]["total"], 0)
+
     def test_dashboard_imports_and_reuses_external_reports(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "repository"
