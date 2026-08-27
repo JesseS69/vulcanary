@@ -73,6 +73,7 @@ jobs:
         run: vulcanary . --semgrep-json "$RUNNER_TEMP/semgrep.json" --gitleaks-json "$RUNNER_TEMP/gitleaks.json" --trivy-json "$RUNNER_TEMP/trivy.json" --checkov-json "$RUNNER_TEMP/checkov.json" --sarif vulcanary.sarif --json vulcanary.json --sbom vulcanary.cdx.json
       - name: Upload SARIF
         if: ${{ always() && hashFiles('vulcanary.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: vulcanary.sarif
