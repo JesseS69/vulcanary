@@ -164,6 +164,21 @@ tbody tr:hover { background: #e8ff5b08; }
 .scan-form .report-grid input { display: block; width: 100%; margin-top: 5px; text-transform: none; }
 @media(max-width:650px) { .scan-form .report-grid { grid-template-columns: 1fr; } }
 
+.threat-progress { width: 100%; height: 7px; border: 0; background: #242930; appearance: none; }
+.threat-progress::-webkit-progress-bar { background: #242930; }
+.threat-progress::-webkit-progress-value { background: var(--accent); }
+.threat-progress::-moz-progress-bar { background: var(--accent); }
+.threat-progress.critical::-webkit-progress-value { background: var(--critical); }
+.threat-progress.critical::-moz-progress-bar { background: var(--critical); }
+.threat-progress.high::-webkit-progress-value { background: var(--high); }
+.threat-progress.high::-moz-progress-bar { background: var(--high); }
+.threat-progress.medium::-webkit-progress-value { background: var(--medium); }
+.threat-progress.medium::-moz-progress-bar { background: var(--medium); }
+.threat-progress.low::-webkit-progress-value { background: var(--low); }
+.threat-progress.low::-moz-progress-bar { background: var(--low); }
+.threat-progress.info::-webkit-progress-value { background: #929aa5; }
+.threat-progress.info::-moz-progress-bar { background: #929aa5; }
+
 .sidebar-foot {
   border-top: 1px solid #292a22;
   padding-top: 16px;

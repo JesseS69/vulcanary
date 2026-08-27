@@ -49,7 +49,7 @@ function renderGovernance() {
 
 function renderChart(counts) {
   const max = Math.max(1, ...Object.values(counts));
-  $('#severity-chart').innerHTML = ['critical','high','medium','low','info'].map(level => `<div class="bar-row"><span>${level}</span><div class="bar-track"><div class="bar-fill" style="width:${(counts[level] || 0) / max * 100}%;background:${colors[level]}"></div></div><strong>${counts[level] || 0}</strong></div>`).join('');
+  $('#severity-chart').innerHTML = ['critical','high','medium','low','info'].map(level => `<div class="bar-row"><span>${level}</span><progress class="threat-progress ${level}" max="${max}" value="${counts[level] || 0}" aria-label="${level}: ${counts[level] || 0}"></progress><strong>${counts[level] || 0}</strong></div>`).join('');
 }
 
 function renderRepositories() {
