@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from vulcanary.dashboard import DashboardState, remediation_receipt
 from vulcanary.fixes import apply_changes, commit_changes, preview, run_verification
 
 
@@ -125,6 +126,24 @@ class FixWorkflowTests(unittest.TestCase):
         self.assertEqual(failed["results"][0]["returncode"], 7)
         self.assertEqual(failed["diagnostics"], [{"path": "src/app.ts", "line": 12, "column": 4, "code": "TS2322"}])
         self.assertNotIn("secret-value", json.dumps(failed))
+
+    def test_remediation_receipt_is_hashed_and_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            history = Path(directory) / "history.json"
+            applied = {
+                "repository": str(Path(directory) / "demo"), "branch": "vulcanary/fixes-demo",
+                "files": ["package-lock.json", "package.json"],
+                "validation": {"passed": True, "remaining": [], "finding_count": 2},
+                "verification": {"passed": True, "skipped": False, "results": [{"command": "check 1 (npm)", "returncode": 0, "diagnostics": []}]},
+            }
+            receipt = remediation_receipt(applied, ["finding-b", "finding-a"])
+            self.assertEqual(len(receipt["proof"]), 64)
+            self.assertEqual(receipt["selected_fingerprints"], ["finding-a", "finding-b"])
+            state = DashboardState(history)
+            state.record_remediation("verified", receipt)
+            restored = DashboardState(history)
+            self.assertEqual(restored.remediation_audit[0]["proof"], receipt["proof"])
+            self.assertEqual(restored.snapshot()["remediation_audit"][0]["action"], "verified")
 
 
 if __name__ == "__main__":

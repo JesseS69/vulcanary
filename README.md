@@ -49,6 +49,8 @@ Eligible findings have checkboxes in the remediation queue. **Select all safe fi
 
 Select verified findings and choose **Preview fixes** to review the exact candidate and affected files. Vulcanary requires a clean Git worktree, creates a dedicated `vulcanary/fixes-*` or `vulcanary/fix-expo-*` branch, applies the evaluated change with lifecycle scripts disabled, rescans the repository, and runs explicitly configured project checks. **Commit verified fixes** appears only after every selected advisory is cleared and every check passes. A failed rescan or project check restores the original branch and working tree. Vulcanary never pushes or merges a fix branch automatically.
 
+Every passing batch receives a tamper-evident remediation receipt containing the selected finding fingerprints, changed files, rescan result, sanitized project-check results, branch, timestamp, and SHA-256 proof. The receipt is shown before commit and retained in the local remediation audit; the dashboard refuses to commit a batch without a passing receipt.
+
 Supported source findings expose **Draft fix** instead of a disabled checkbox. Source recipes are deliberately structural and fail closed when the source shape differs from the reviewed pattern. The dashboard displays a unified diff before application, creates a `vulcanary/source-fix-*` branch, and subjects the draft to the same project-check, rescan, rollback, and guarded-commit workflow. The first recipe replaces a narrowly recognized static `innerHTML` construction with explicit DOM nodes and `textContent`; dynamic HTML assignments remain review-only.
 
 ## Configuration

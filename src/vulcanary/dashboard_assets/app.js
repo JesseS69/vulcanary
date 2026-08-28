@@ -319,6 +319,14 @@ function renderFixPlan(plan) {
   // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Every fix-plan field is escaped and structural labels are static.
   $('#fix-plan').innerHTML = [...plan.changes.map(item => `<div class="fix-item"><strong>${escapeHtml(item.package)} ${escapeHtml(item.from)} → ${escapeHtml(item.to)}</strong><span>${escapeHtml(item.strategy === 'override' ? 'TRANSITIVE OVERRIDE' : 'DIRECT UPGRADE')}</span><span class="mono">${escapeHtml(item.advisories.join(', '))} · ${escapeHtml(item.files.join(' · '))}</span></div>`), ...plan.blocked.map(item => `<div class="fix-item blocked"><strong>${escapeHtml(item.title)}</strong><span>Manual</span><span class="mono">${escapeHtml(item.reason)}</span></div>`)].join('');
   $('#apply-fixes').disabled = plan.changes.length === 0;
+  $('#fix-receipt').classList.add('hidden');
+}
+
+function renderRemediationReceipt(receipt) {
+  const checks = receipt.checks_skipped ? 'No project checks configured' : `${receipt.checks.length} project check${receipt.checks.length === 1 ? '' : 's'} passed`;
+  // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Receipt fields are escaped and boolean status labels are fixed locally.
+  $('#fix-receipt').innerHTML = `<strong>Verification receipt</strong><span>Rescan passed · ${escapeHtml(checks)} · ${receipt.finding_count} findings remain</span><span>${escapeHtml(receipt.changed_files.join(' · ') || 'No tracked files')}</span><span class="mono">SHA-256 ${escapeHtml(receipt.proof)}</span>`;
+  $('#fix-receipt').classList.remove('hidden');
 }
 
 function openFinding(fingerprint) {
@@ -409,6 +417,7 @@ $('#apply-fixes').addEventListener('click', async () => {
       : await postJson('/api/fixes/apply', {fingerprints:[...selectedFixes]});
     appliedBatch = body.applied;
     if (!appliedBatch.validation.passed) throw new Error(appliedBatch.diagnostic || `Validation failed and the fix was rolled back.`);
+    renderRemediationReceipt(appliedBatch.receipt);
     $('#fix-message').textContent = `Applied on ${appliedBatch.branch}. Rescan passed with ${appliedBatch.validation.finding_count} remaining findings.`;
     $('#commit-fixes').classList.remove('hidden'); await refresh();
   } catch(error) { $('#fix-message').textContent = error.message; }
@@ -416,7 +425,7 @@ $('#apply-fixes').addEventListener('click', async () => {
 });
 $('#commit-fixes').addEventListener('click', async () => {
   const button = $('#commit-fixes'); button.disabled = true; button.textContent = 'Committing…';
-  try { const body = await postJson('/api/fixes/commit'); $('#fix-message').textContent = `Committed ${body.committed.commit.slice(0, 8)} on ${body.committed.branch}.`; button.classList.add('hidden'); selectedFixes.clear(); updateFixBar(); }
+  try { const body = await postJson('/api/fixes/commit'); $('#fix-message').textContent = `Committed ${body.committed.commit.slice(0, 8)} on ${body.committed.branch}. Proof ${body.committed.receipt.proof.slice(0, 12)} recorded.`; button.classList.add('hidden'); selectedFixes.clear(); updateFixBar(); }
   catch(error) { $('#fix-message').textContent = error.message; button.disabled = false; button.textContent = 'Commit verified fixes'; }
 });
 refresh({rescan: true}).catch(error => { $('#updated').textContent = `Dashboard error: ${error.message}`; });

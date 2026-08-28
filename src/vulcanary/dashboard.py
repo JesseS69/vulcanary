@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import threading
 import webbrowser
 from dataclasses import asdict, dataclass
@@ -48,6 +49,7 @@ class DashboardState:
         self.inventory_snapshots: dict[str, dict[str, dict]] = {}
         self.suppression_snapshots: dict[str, dict[str, dict]] = {}
         self.suppression_audit: list[dict] = []
+        self.remediation_audit: list[dict] = []
         self.pending_fix: dict | None = None
         self.last_platform_evaluation: dict | None = None
         self.last_platform_repository: str | None = None
@@ -64,6 +66,8 @@ class DashboardState:
                 self.suppression_snapshots = suppression_snapshots if isinstance(suppression_snapshots, dict) else {}
                 audit = payload.get("suppression_audit", [])
                 self.suppression_audit = list(audit)[-500:] if isinstance(audit, list) else []
+                remediation_audit = payload.get("remediation_audit", [])
+                self.remediation_audit = list(remediation_audit)[-200:] if isinstance(remediation_audit, list) else []
                 verified = payload.get("verified_fixes", {})
                 self.verified_fixes = verified if isinstance(verified, dict) else {}
             except (OSError, ValueError, TypeError):
@@ -71,6 +75,7 @@ class DashboardState:
                 self.inventory_snapshots = {}
                 self.suppression_snapshots = {}
                 self.suppression_audit = []
+                self.remediation_audit = []
 
     def scan_repository(self, path: Path, external_reports: dict[str, list[Path]] | None = None) -> RepositoryScan:
         import time
@@ -170,6 +175,7 @@ class DashboardState:
                     self.history_path.write_text(json.dumps({
                         "history": self.history, "inventory_snapshots": self.inventory_snapshots,
                         "suppression_snapshots": self.suppression_snapshots, "suppression_audit": self.suppression_audit,
+                        "remediation_audit": self.remediation_audit,
                         "verified_fixes": self.verified_fixes,
                     }, indent=2) + "\n", encoding="utf-8")
                 except OSError:
@@ -197,6 +203,7 @@ class DashboardState:
             "findings": findings,
             "history": list(reversed(self.history)),
             "suppression_audit": list(reversed(self.suppression_audit)),
+            "remediation_audit": list(reversed(self.remediation_audit)),
             "summary": {"total": len(findings), "counts": counts, "categories": categories, "scanners": scanners},
         }
 
@@ -227,6 +234,37 @@ class DashboardState:
         with self._lock:
             repositories = [Path(repository) for repository in self.repositories]
         return [self.scan_repository(repository) for repository in repositories]
+
+    def record_remediation(self, action: str, receipt: dict) -> None:
+        self.remediation_audit.append({"action": action, **receipt})
+        self.remediation_audit = self.remediation_audit[-200:]
+        if self.history_path:
+            try:
+                payload = json.loads(self.history_path.read_text(encoding="utf-8")) if self.history_path.exists() else {}
+                payload["remediation_audit"] = self.remediation_audit
+                self.history_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            except (OSError, ValueError, TypeError):
+                pass
+
+
+def remediation_receipt(applied: dict, selected: list[str]) -> dict:
+    verification = applied.get("verification", {})
+    validation = applied.get("validation", {})
+    receipt = {
+        "repository": Path(applied["repository"]).name,
+        "branch": applied["branch"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "selected_fingerprints": sorted(selected),
+        "changed_files": sorted(applied.get("files", [])),
+        "rescan_passed": validation.get("passed") is True,
+        "remaining_selected": sorted(validation.get("remaining", [])),
+        "finding_count": int(validation.get("finding_count", 0)),
+        "checks_passed": verification.get("passed") is True,
+        "checks_skipped": verification.get("skipped") is True,
+        "checks": verification.get("results", []),
+    }
+    canonical = json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+    return {**receipt, "proof": hashlib.sha256(canonical).hexdigest()}
 
 
 def _assets() -> Path:
@@ -381,6 +419,8 @@ def make_handler(state: DashboardState):
                         applied["diagnostic"] = "The source draft failed validation; the original branch and clean working tree were restored."
                         state.pending_fix = None
                     else:
+                        applied["receipt"] = remediation_receipt(applied, [proposal["fingerprint"]])
+                        state.record_remediation("verified", applied["receipt"])
                         state.pending_fix = applied
                     state.pending_source_fix = None
                     self._json({"applied": applied})
@@ -419,6 +459,9 @@ def make_handler(state: DashboardState):
                             applied["diagnostic"] = f"Project verification failed at {applied['verification']['failed_command']}; npm files and branch were restored."
                         state.pending_fix = None
                     else:
+                        selected = [item for item in payload.get("fingerprints", []) if isinstance(item, str)]
+                        applied["receipt"] = remediation_receipt(applied, selected)
+                        state.record_remediation("verified", applied["receipt"])
                         state.pending_fix = applied
                     self._json({"applied": applied})
                 elif route == "/api/parents/evaluate":
@@ -447,7 +490,12 @@ def make_handler(state: DashboardState):
                 else:
                     if not state.pending_fix:
                         raise ValueError("No applied fix batch is waiting to be committed")
+                    receipt = state.pending_fix.get("receipt")
+                    if not receipt or not receipt.get("rescan_passed") or not receipt.get("checks_passed"):
+                        raise ValueError("The fix batch has no passing remediation receipt")
                     committed = commit_changes(state.pending_fix["repository"], state.pending_fix["branch"])
+                    committed["receipt"] = receipt
+                    state.record_remediation("committed", {**receipt, "commit": committed["commit"]})
                     state.pending_fix = None
                     self._json({"committed": committed})
             except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
