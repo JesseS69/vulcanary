@@ -150,15 +150,16 @@ function filteredFindings() {
 
 function automaticFixStatus(finding) {
   const metadata = finding.metadata || {};
+  const recommendation = metadata.recommendation?.reason;
   if (metadata.fix_eligible) {
-    return {label: 'Safe automatic fix', detail: `Upgrade ${metadata.package} to ${metadata.fixed_version}`};
+    return {label: 'Safe automatic fix', detail: recommendation || `Upgrade ${metadata.package} to ${metadata.fixed_version}`};
   }
   if (finding.category !== 'dependency') {
     return {label: 'Manual code fix', detail: 'This finding requires a contextual source-code change'};
   }
   if (metadata.fix_block_reason) {
     const parents = metadata.parent_packages?.length ? ` Suggested parent${metadata.parent_packages.length === 1 ? '' : 's'}: ${metadata.parent_packages.join(', ')}.` : '';
-    return {label: metadata.direct ? 'Manual dependency fix' : 'Parent upgrade required', detail: `${metadata.fix_block_reason}.${parents}`.replace('..', '.')};
+    return {label: metadata.direct ? 'Manual dependency fix' : 'Parent upgrade required', detail: recommendation || `${metadata.fix_block_reason}.${parents}`.replace('..', '.')};
   }
   if (metadata.ecosystem && metadata.ecosystem !== 'npm') {
     return {label: 'Manual dependency fix', detail: `Automatic upgrades do not yet support ${metadata.ecosystem}`};
@@ -178,6 +179,14 @@ function reachabilityStatus(finding) {
   return `<div class="fix-unavailable" title="${escapeHtml(reachability.reason)}"><span>${label}</span>${escapeHtml(paths)}</div>`;
 }
 
+function dependencyPathStatus(finding) {
+  const paths = finding.metadata?.dependency_paths || [];
+  if (!paths.length) return '';
+  const first = paths[0].join(' → ');
+  const additional = paths.length > 1 ? ` · +${paths.length - 1} path${paths.length === 2 ? '' : 's'}` : '';
+  return `<div class="fix-unavailable" title="${escapeHtml(paths.map(path => path.join(' → ')).join('\n'))}"><span>DEPENDENCY PATH</span> ${escapeHtml(first + additional)}</div>`;
+}
+
 function renderFindings() {
   const findings = filteredFindings();
   $('#findings-empty').classList.toggle('hidden', findings.length > 0);
@@ -194,7 +203,7 @@ function renderFindings() {
       : noPatchedRelease
         ? `<button class="fix-path secondary" type="button" disabled title="No patched release is available">No patch</button>`
         : `<button class="fix-path secondary" type="button" data-mode="${hasParents ? (f.metadata.parent_packages.includes('expo') ? 'platform' : 'parent') : 'code'}">${hasParents ? 'Evaluate' : 'Draft fix'}</button>`;
-    return `<tr data-fingerprint="${escapeHtml(f.fingerprint)}"><td class="check-cell">${control}</td><td><span class="severity ${f.severity}">${f.severity}</span></td><td><strong>${escapeHtml(f.title)}</strong><div class="muted">${escapeHtml(f.rule_id)}</div>${reachabilityStatus(f)}${manualStatus}</td><td>${escapeHtml(f.repository)}</td><td class="location">${escapeHtml(f.path)}:${f.line}</td><td><span class="pill">${escapeHtml(f.scanner)}</span></td><td>${escapeHtml(f.category)}</td></tr>`;
+    return `<tr data-fingerprint="${escapeHtml(f.fingerprint)}"><td class="check-cell">${control}</td><td><span class="severity ${f.severity}">${f.severity}</span></td><td><strong>${escapeHtml(f.title)}</strong><div class="muted">${escapeHtml(f.rule_id)}</div>${dependencyPathStatus(f)}${reachabilityStatus(f)}${manualStatus}</td><td>${escapeHtml(f.repository)}</td><td class="location">${escapeHtml(f.path)}:${f.line}</td><td><span class="pill">${escapeHtml(f.scanner)}</span></td><td>${escapeHtml(f.category)}</td></tr>`;
   }).join('');
   document.querySelectorAll('#finding-rows tr').forEach(row => {
     row.addEventListener('click', event => { if (!event.target.classList.contains('fix-check') && !event.target.classList.contains('fix-path')) openFinding(row.dataset.fingerprint); });
@@ -302,8 +311,14 @@ function openFinding(fingerprint) {
   $('#dialog-location').textContent = `${f.repository} · ${f.path}:${f.line}`;
   $('#dialog-description').textContent = f.description;
   $('#dialog-remediation').textContent = f.remediation || 'Review the affected code and remove the unsafe pattern.';
+  const dependencyPaths = f.metadata?.dependency_paths || [];
+  $('#dialog-dependency-path').textContent = dependencyPaths.length ? dependencyPaths.map(path => path.join(' → ')).join('\n') : f.category === 'dependency' ? 'Direct dependency or path unavailable.' : 'Not applicable.';
+  const usage = f.metadata?.usage;
+  $('#dialog-usage').textContent = usage ? `${usage.classification.replaceAll('_', ' ')}. ${usage.reason}` : 'Not classified.';
   const reachability = f.metadata?.reachability;
   $('#dialog-reachability').textContent = reachability ? `${reachability.status.replaceAll('_', ' ')}. ${reachability.reason}${reachability.evidence_paths?.length ? ` Evidence: ${reachability.evidence_paths.join(', ')}` : ''}` : 'Not applicable to this finding.';
+  const recommendation = f.metadata?.recommendation;
+  $('#dialog-recommendation').textContent = recommendation ? `${recommendation.action.replaceAll('_', ' ')}. ${recommendation.reason}` : 'Review the finding and choose the least disruptive verified remediation.';
   $('#dialog-fingerprint').textContent = f.fingerprint;
   $('#finding-dialog').showModal();
 }

@@ -15,6 +15,11 @@ _JS_IMPORT = re.compile(
 _PY_FROM = re.compile(r"(?m)^\s*from\s+([A-Za-z_]\w*(?:\.\w+)*)\s+import\b")
 _PY_IMPORT = re.compile(r"(?m)^\s*import\s+([^\n#]+)")
 _SOURCE_EXTENSIONS = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".py"}
+_TOOLING_PACKAGES = {
+    "babel-jest", "babel-plugin-istanbul", "@istanbuljs/load-nyc-config", "xcode",
+    "jest", "eslint", "typescript", "metro", "webpack", "vite", "rollup",
+    "@expo/config", "@expo/config-plugins", "@expo/cli",
+}
 
 
 def _npm_root(specifier: str) -> str | None:
@@ -26,6 +31,15 @@ def _npm_root(specifier: str) -> str | None:
 
 def _normalized_python(name: str) -> str:
     return name.lower().replace("-", "_").replace(".", "_")
+
+
+def _path_contains_tooling(paths: list[list[str]]) -> bool:
+    for path in paths:
+        for label in path[1:-1]:
+            name = label.rsplit("@", 1)[0] if "@" in label[1:] else label
+            if name.lower() in _TOOLING_PACKAGES:
+                return True
+    return False
 
 
 def observed_imports(root: Path, config: Config) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
@@ -91,5 +105,52 @@ def analyze_reachability(root: Path, findings: list[Finding], config: Config) ->
             "matched_packages": sorted(matched),
             "evidence_paths": sorted(paths)[:20],
         }
+        scopes = metadata.get("parent_scopes", {})
+        matched_scopes = {scopes.get(name) for name in matched if scopes.get(name)}
+        tooling_path = _path_contains_tooling(metadata.get("dependency_paths", []))
+        if matched and metadata.get("direct"):
+            usage = "direct_application_import_observed"
+            usage_reason = "The vulnerable direct dependency is imported by scanned application source."
+        elif matched and tooling_path:
+            usage = "tooling_path_via_runtime_parent"
+            usage_reason = "An imported runtime parent introduces the package through a build or test tooling path; production execution is not established."
+        elif matched and "runtime" in matched_scopes:
+            usage = "runtime_parent_observed"
+            usage_reason = "An introducing runtime dependency is imported, but static analysis does not prove the vulnerable transitive code executes in production."
+        elif matched and matched_scopes == {"development"}:
+            usage = "development_observed"
+            usage_reason = "Only an introducing development dependency was observed in scanned source."
+        elif "runtime" in set(scopes.values()):
+            usage = "runtime_not_observed"
+            usage_reason = "The package is reachable from a runtime dependency, but no static import was observed."
+        elif scopes and set(scopes.values()) == {"development"}:
+            usage = "development_not_observed"
+            usage_reason = "The package is reachable only from declared development dependencies; dynamic or build-time execution remains possible."
+        else:
+            usage = "unknown"
+            usage_reason = "Vulcanary cannot reliably classify this dependency as runtime-only or development-only."
+        metadata["usage"] = {"classification": usage, "reason": usage_reason}
+
+        parents = list(metadata.get("parent_packages", []))
+        fixed = metadata.get("fixed_version")
+        if metadata.get("fix_eligible"):
+            action = "safe_direct_upgrade"
+            recommendation = f"Upgrade {package} to {fixed}; verify project checks and rescan."
+        elif not fixed:
+            action = "monitor_upstream"
+            recommendation = "No patched release is identified. Monitor the advisory and upstream dependency while reviewing compensating controls."
+        elif not metadata.get("direct") and "expo" in parents:
+            action = "evaluate_platform_upgrade"
+            recommendation = "Evaluate the compatible Expo platform set in isolation; avoid forcing an unscoped transitive override."
+        elif not metadata.get("direct") and parents:
+            action = "evaluate_parent_upgrade"
+            recommendation = f"Evaluate upgrades for {', '.join(parents)} in isolation, then rescan the resolved lockfile."
+        elif metadata.get("direct"):
+            action = "review_major_upgrade"
+            recommendation = f"Review the breaking changes required to move {package} to {fixed}, test, and rescan."
+        else:
+            action = "trace_upstream"
+            recommendation = "Trace the introducing package and prefer an upstream upgrade over a global transitive override."
+        metadata["recommendation"] = {"action": action, "reason": recommendation}
         analyzed.append(replace(finding, metadata=metadata))
     return analyzed

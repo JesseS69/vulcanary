@@ -226,17 +226,19 @@ def _resolve_lock_dependency(packages: dict, parent_key: str, dependency: str) -
     return None
 
 
-def direct_parent_packages(root: Path, package: Package) -> list[str]:
+def dependency_context(root: Path, package: Package) -> tuple[list[str], list[list[str]], dict[str, str]]:
     lock = root / package.path
     try:
         data = json.loads(lock.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return []
+        return [], [], {}
     packages = data.get("packages", {})
     if not isinstance(packages, dict):
-        return []
+        return [], [], {}
     root_package = packages.get("", {})
-    direct_names = sorted(set(root_package.get("dependencies", {})) | set(root_package.get("devDependencies", {})))
+    runtime_names = set(root_package.get("dependencies", {})) | set(root_package.get("optionalDependencies", {}))
+    development_names = set(root_package.get("devDependencies", {}))
+    direct_names = sorted(runtime_names | development_names)
     graph: dict[str, list[str]] = {}
     for key, value in packages.items():
         if not isinstance(value, dict):
@@ -244,27 +246,42 @@ def direct_parent_packages(root: Path, package: Package) -> list[str]:
         dependencies = set(value.get("dependencies", {})) | set(value.get("optionalDependencies", {}))
         graph[key] = [resolved for name in dependencies if (resolved := _resolve_lock_dependency(packages, key, name))]
 
-    def contains_target(start: str) -> bool:
-        pending = [start]
+    def shortest_path(start: str) -> list[str] | None:
+        pending = [(start, [start])]
         visited = set()
         while pending:
-            key = pending.pop()
+            key, path = pending.pop(0)
             if key in visited:
                 continue
             visited.add(key)
             value = packages.get(key, {})
             name = key.rsplit("node_modules/", 1)[-1]
             if name.lower() == package.name.lower() and value.get("version") == package.version:
-                return True
-            pending.extend(graph.get(key, []))
-        return False
+                return path
+            pending.extend((child, path + [child]) for child in graph.get(key, []))
+        return None
+
+    def label(key: str) -> str:
+        value = packages.get(key, {})
+        name = key.rsplit("node_modules/", 1)[-1]
+        version = value.get("version")
+        return f"{name}@{version}" if version else name
 
     parents = []
+    paths = []
+    scopes = {}
     for name in direct_names:
         key = _resolve_lock_dependency(packages, "", name)
-        if key and contains_target(key):
+        path = shortest_path(key) if key else None
+        if path:
             parents.append(name)
-    return parents
+            paths.append([label(item) for item in path])
+            scopes[name] = "runtime" if name in runtime_names else "development"
+    return parents, paths[:10], scopes
+
+
+def direct_parent_packages(root: Path, package: Package) -> list[str]:
+    return dependency_context(root, package)[0]
 
 
 def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | None = None) -> tuple[list[Finding], str | None]:
@@ -306,7 +323,7 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
             record = records.get(summary["id"], {})
             fixed = _fixed_version(record, package)
             same_major = _same_major(package.version, fixed)
-            parent_packages = direct_parent_packages(root, package) if package.manager == "npm" and not package.direct else []
+            parent_packages, dependency_paths, parent_scopes = dependency_context(root, package) if package.manager == "npm" and not package.direct else ([], [], {})
             fix_eligible = bool(package.manager == "npm" and package.direct and same_major)
             if package.ecosystem != "npm":
                 fix_block_reason = f"Automatic upgrades do not yet support {package.ecosystem}"
@@ -335,6 +352,8 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
                     "fix_eligible": fix_eligible,
                     "fix_block_reason": fix_block_reason,
                     "parent_packages": parent_packages,
+                    "dependency_paths": dependency_paths,
+                    "parent_scopes": parent_scopes,
                     "fix_strategy": "dependency" if package.direct else "override",
                     "advisory": summary["id"],
                 },

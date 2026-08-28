@@ -7,10 +7,10 @@ from vulcanary.models import Finding, Severity
 from vulcanary.reachability import analyze_reachability, observed_imports
 
 
-def dependency(package: str, ecosystem: str = "npm", direct: bool = True, parents: list[str] | None = None) -> Finding:
+def dependency(package: str, ecosystem: str = "npm", direct: bool = True, parents: list[str] | None = None, scopes: dict[str, str] | None = None) -> Finding:
     return Finding(
         "SCA-test", f"Vulnerable {package}", "test", Severity.HIGH, "dependency", "lockfile", 1,
-        metadata={"package": package, "ecosystem": ecosystem, "direct": direct, "parent_packages": parents or []},
+        metadata={"package": package, "ecosystem": ecosystem, "direct": direct, "parent_packages": parents or [], "parent_scopes": scopes or {}, "fixed_version": "2.0.0"},
     )
 
 
@@ -30,7 +30,7 @@ class ReachabilityTests(unittest.TestCase):
             (root / "app.js").write_text("import express from 'express';\n", encoding="utf-8")
             findings = [
                 dependency("express"),
-                dependency("transitive-demo", direct=False, parents=["express"]),
+                dependency("transitive-demo", direct=False, parents=["express"], scopes={"express": "runtime"}),
                 dependency("unused-demo"),
             ]
             analyzed = analyze_reachability(root, findings, Config())
@@ -38,8 +38,20 @@ class ReachabilityTests(unittest.TestCase):
             self.assertEqual(reachability[0]["status"], "direct_import_observed")
             self.assertEqual(reachability[1]["status"], "parent_import_observed")
             self.assertEqual(reachability[1]["matched_packages"], ["express"])
+            self.assertEqual(analyzed[1].metadata["usage"]["classification"], "runtime_parent_observed")
+            self.assertEqual(analyzed[1].metadata["recommendation"]["action"], "evaluate_parent_upgrade")
             self.assertEqual(reachability[2]["status"], "not_observed")
             self.assertIn("may still be reachable", reachability[2]["reason"])
+
+    def test_distinguishes_tooling_chain_from_production_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.js").write_text("import ReactNative from 'react-native';\n", encoding="utf-8")
+            finding = dependency("js-yaml", direct=False, parents=["react-native"], scopes={"react-native": "runtime"})
+            finding = Finding(**{**finding.__dict__, "metadata": {**finding.metadata, "dependency_paths": [["react-native@1.0.0", "babel-jest@29.0.0", "js-yaml@3.0.0"]]}})
+            analyzed = analyze_reachability(root, [finding], Config())[0]
+            self.assertEqual(analyzed.metadata["usage"]["classification"], "tooling_path_via_runtime_parent")
+            self.assertIn("production execution is not established", analyzed.metadata["usage"]["reason"])
 
 
 if __name__ == "__main__":

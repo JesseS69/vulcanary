@@ -331,6 +331,8 @@ class ScannerTests(unittest.TestCase):
             self.assertFalse(transitive_findings[0].metadata["fix_eligible"])
             self.assertIn("Upgrade parent", transitive_findings[0].metadata["fix_block_reason"])
             self.assertEqual(transitive_findings[0].metadata["parent_packages"], ["parent"])
+            self.assertEqual(transitive_findings[0].metadata["parent_scopes"], {"parent": "runtime"})
+            self.assertEqual(transitive_findings[0].metadata["dependency_paths"], [["parent@1.0.0", "demo@1.0.0"]])
 
     def test_fix_preview_separates_safe_and_manual_findings(self) -> None:
         findings = [
