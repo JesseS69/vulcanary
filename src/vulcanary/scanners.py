@@ -30,10 +30,15 @@ RULES = [
     Rule("SECRET-GITHUB-TOKEN", "GitHub token in source", re.compile(r"\b(?:ghp|github_pat)_[A-Za-z0-9_]{30,255}\b"), Severity.CRITICAL, "secret", "Revoke the token and replace it with a short-lived credential."),
     Rule("CODE-PY-EVAL", "Dynamic Python eval", re.compile(r"(?<![\w.])eval\s*\("), Severity.HIGH, "sast", "Avoid eval; parse and validate structured input explicitly.", frozenset({".py"})),
     Rule("CODE-PY-SHELL", "Shell command execution enabled", re.compile(r"subprocess\.(?:run|Popen|call)\s*\([^\n]*shell\s*=\s*True"), Severity.HIGH, "sast", "Pass an argument list with shell=False and validate all user-controlled values.", frozenset({".py"})),
+    Rule("CODE-PY-PICKLE", "Unsafe Python deserialization", re.compile(r"(?<![\w.])pickle\.(?:load|loads)\s*\("), Severity.HIGH, "sast", "Do not deserialize untrusted pickle data; use a constrained data format such as JSON and validate its schema.", frozenset({".py"})),
     Rule("CODE-JS-EVAL", "Dynamic JavaScript eval", re.compile(r"(?<![\w.])eval\s*\("), Severity.HIGH, "sast", "Avoid eval and use a safe parser for the expected input format.", frozenset({".js", ".jsx", ".ts", ".tsx"})),
     Rule("CODE-JS-INNERHTML", "Potential DOM XSS sink", re.compile(r"\.innerHTML\s*="), Severity.MEDIUM, "sast", "Use textContent or sanitize trusted HTML with a maintained sanitizer.", frozenset({".js", ".jsx", ".ts", ".tsx"})),
     Rule("IAC-DOCKER-ROOT", "Container runs as root", re.compile(r"^\s*USER\s+(?:root|0)\s*$", re.I | re.M), Severity.MEDIUM, "iac", "Create and switch to an unprivileged user."),
+    Rule("IAC-DOCKER-LATEST", "Container base image uses the latest tag", re.compile(r"^\s*FROM\s+\S+:latest(?:\s|$)", re.I | re.M), Severity.MEDIUM, "iac", "Pin the base image to a reviewed immutable digest or explicit version tag."),
+    Rule("IAC-DOCKER-CURL-PIPE", "Container build pipes a download to a shell", re.compile(r"^\s*RUN\s+[^\n]*(?:curl|wget)[^\n]*\|\s*(?:sh|bash)\b", re.I | re.M), Severity.HIGH, "iac", "Download a pinned artifact, verify its checksum or signature, and execute it as a separate build step."),
     Rule("IAC-TF-PUBLIC-INGRESS", "Terraform allows ingress from the internet", re.compile(r'cidr_blocks\s*=\s*\[[^\]]*["\']0\.0\.0\.0/0["\']'), Severity.HIGH, "iac", "Restrict ingress CIDRs and ports to required sources."),
+    Rule("IAC-TF-PUBLIC-ACL", "Terraform configures a public object-storage ACL", re.compile(r'\bacl\s*=\s*["\']public-(?:read|read-write)["\']'), Severity.HIGH, "iac", "Use a private ACL and grant narrowly scoped access through an explicit policy."),
+    Rule("CI-GHA-WRITE-ALL", "GitHub Actions grants write-all permissions", re.compile(r"^\s*permissions\s*:\s*write-all\s*$", re.I | re.M), Severity.HIGH, "ci", "Declare the minimum required permissions and default unspecified scopes to none."),
 ]
 
 INLINE_IGNORE_PATTERN = re.compile(
@@ -161,9 +166,11 @@ def scan(root: Path, config: Config) -> list[Finding]:
                 continue
             if rule.extensions and path.suffix.lower() not in rule.extensions:
                 continue
-            if rule.id == "IAC-DOCKER-ROOT" and path.name.lower() not in {"dockerfile", "containerfile"}:
+            if rule.id.startswith("IAC-DOCKER-") and path.name.lower() not in {"dockerfile", "containerfile"}:
                 continue
-            if rule.id == "IAC-TF-PUBLIC-INGRESS" and path.suffix.lower() != ".tf":
+            if rule.id.startswith("IAC-TF-") and path.suffix.lower() != ".tf":
+                continue
+            if rule.id.startswith("CI-GHA-") and not (path.suffix.lower() in {".yml", ".yaml"} and ".github/workflows/" in f"/{rel}"):
                 continue
             for match in rule.pattern.finditer(text):
                 line = text.count("\n", 0, match.start()) + 1

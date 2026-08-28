@@ -111,8 +111,8 @@ The rule ID, owner, ISO expiration date, and meaningful justification are mandat
 ## Current capabilities
 
 - Secret patterns: AWS access keys, GitHub tokens, and private keys
-- SAST patterns: selected Python and JavaScript execution/XSS sinks
-- IaC patterns: root containers and public Terraform ingress
+- SAST patterns: selected Python and JavaScript execution/XSS sinks plus unsafe Python deserialization
+- IaC and CI patterns: root containers, floating base tags, download-to-shell builds, public Terraform ingress or storage ACLs, and GitHub Actions `write-all` permissions
 - Dependency advisories: pinned npm, Yarn Classic/Berry, pnpm, and Python dependencies queried against OSV
 - Conservative reachability context: observed JavaScript/TypeScript and Python imports, including imported direct parents of vulnerable transitive npm packages
 - Shortest npm dependency chains with runtime/development parent scope and explicit tooling-path classification

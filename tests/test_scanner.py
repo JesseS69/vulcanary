@@ -30,6 +30,22 @@ class ScannerTests(unittest.TestCase):
             secret = next(f for f in findings if f.category == "secret")
             self.assertEqual(secret.evidence, "[redacted]")
 
+    def test_detects_high_confidence_python_container_terraform_and_ci_risks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "unsafe.py").write_text("import pickle\nvalue = pickle.loads(payload)\n", encoding="utf-8")
+            (root / "Dockerfile").write_text("FROM python:latest\nRUN curl https://example.invalid/install | bash\n", encoding="utf-8")
+            (root / "storage.tf").write_text('resource "aws_s3_bucket_acl" "demo" {\n  acl = "public-read"\n}\n', encoding="utf-8")
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            (workflows / "unsafe.yml").write_text("name: unsafe\npermissions: write-all\n", encoding="utf-8")
+            (root / "ordinary.yml").write_text("permissions: write-all\n", encoding="utf-8")
+            rules = {finding.rule_id for finding in scan(root, Config())}
+            self.assertEqual(rules, {
+                "CODE-PY-PICKLE", "IAC-DOCKER-LATEST", "IAC-DOCKER-CURL-PIPE",
+                "IAC-TF-PUBLIC-ACL", "CI-GHA-WRITE-ALL",
+            })
+
     def test_exclusions_and_ignored_rules(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
