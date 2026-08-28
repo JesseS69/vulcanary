@@ -175,7 +175,16 @@ function filteredFindings() {
   const severity = $('#severity-filter').value;
   const scanner = $('#scanner-filter').value;
   const category = $('#category-filter').value;
-  return state.findings.filter(f => (severity === 'all' || f.severity === severity) && (scanner === 'all' || f.scanner === scanner) && (category === 'all' || f.category === category) && `${f.title} ${f.rule_id} ${f.path} ${f.repository} ${f.scanner} ${f.category}`.toLowerCase().includes(query));
+  const sort = $('#sort-findings').value;
+  const severityRank = {critical:5,high:4,medium:3,low:2,info:1};
+  const findings = state.findings.filter(f => (severity === 'all' || f.severity === severity) && (scanner === 'all' || f.scanner === scanner) && (category === 'all' || f.category === category) && `${f.title} ${f.rule_id} ${f.path} ${f.repository} ${f.scanner} ${f.category} ${f.metadata?.policy?.owner || ''}`.toLowerCase().includes(query));
+  return findings.sort((left, right) => {
+    if (sort === 'severity') return (severityRank[right.severity] || 0) - (severityRank[left.severity] || 0);
+    if (sort === 'deadline') return String(left.metadata?.policy?.deadline || '9999').localeCompare(String(right.metadata?.policy?.deadline || '9999'));
+    if (sort === 'fixability') return Number(Boolean(right.metadata?.fix_eligible)) - Number(Boolean(left.metadata?.fix_eligible));
+    if (sort === 'repository') return left.repository.localeCompare(right.repository) || left.path.localeCompare(right.path);
+    return (Number(right.metadata?.priority?.score) || 0) - (Number(left.metadata?.priority?.score) || 0);
+  });
 }
 
 function automaticFixStatus(finding) {
@@ -223,6 +232,13 @@ function priorityBadge(finding) {
   return `<span class="priority ${escapeHtml(priority.level)}" title="${escapeHtml(priority.reason)}">${escapeHtml(priority.label)}</span><span class="priority-score">${priority.score}</span>`;
 }
 
+function deadlineBadge(finding) {
+  const policy = finding.metadata?.policy;
+  if (!policy) return '';
+  const label = policy.status === 'overdue' ? 'OVERDUE' : policy.status === 'due_soon' ? 'DUE SOON' : `DUE ${new Date(policy.deadline).toLocaleDateString()}`;
+  return `<span class="priority ${escapeHtml(policy.status)}" title="Owner ${escapeHtml(policy.owner)} · ${escapeHtml(policy.sla_days)} day SLA">${escapeHtml(label)}</span>`;
+}
+
 function renderFindings() {
   const findings = filteredFindings();
   $('#findings-empty').classList.toggle('hidden', findings.length > 0);
@@ -240,7 +256,7 @@ function renderFindings() {
       : noPatchedRelease
         ? `<button class="fix-path secondary" type="button" disabled title="No patched release is available">No patch</button>`
         : `<button class="fix-path secondary" type="button" data-mode="${hasParents ? (f.metadata.parent_packages.includes('expo') ? 'platform' : 'parent') : 'code'}">${hasParents ? 'Evaluate' : 'Draft fix'}</button>`;
-    return `<tr data-fingerprint="${escapeHtml(f.fingerprint)}"><td class="check-cell">${control}</td><td><span class="severity ${f.severity}">${f.severity}</span></td><td>${priorityBadge(f)}</td><td><strong>${escapeHtml(f.title)}</strong><div class="muted">${escapeHtml(f.rule_id)}</div>${dependencyPathStatus(f)}${reachabilityStatus(f)}${manualStatus}</td><td>${escapeHtml(f.repository)}</td><td class="location">${escapeHtml(f.path)}:${f.line}</td><td><span class="pill">${escapeHtml(f.scanner)}</span></td><td>${escapeHtml(f.category)}</td></tr>`;
+    return `<tr data-fingerprint="${escapeHtml(f.fingerprint)}"><td class="check-cell">${control}</td><td><span class="severity ${f.severity}">${f.severity}</span></td><td>${priorityBadge(f)}${deadlineBadge(f)}</td><td><strong>${escapeHtml(f.title)}</strong><div class="muted">${escapeHtml(f.rule_id)}</div>${dependencyPathStatus(f)}${reachabilityStatus(f)}${manualStatus}</td><td>${escapeHtml(f.repository)}</td><td class="location">${escapeHtml(f.path)}:${f.line}</td><td><span class="pill">${escapeHtml(f.scanner)}</span></td><td>${escapeHtml(f.category)}</td></tr>`;
   }).join('');
   document.querySelectorAll('#finding-rows tr').forEach(row => {
     row.addEventListener('click', event => { if (!event.target.classList.contains('fix-check') && !event.target.classList.contains('fix-path')) openFinding(row.dataset.fingerprint); });
@@ -407,6 +423,7 @@ $('#search').addEventListener('input', renderFindings);
 $('#severity-filter').addEventListener('change', renderFindings);
 $('#scanner-filter').addEventListener('change', renderFindings);
 $('#category-filter').addEventListener('change', renderFindings);
+$('#sort-findings').addEventListener('change', renderFindings);
 $('#dialog-close').addEventListener('click', () => $('#finding-dialog').close());
 $('#clear-fixes').addEventListener('click', () => { selectedFixes.clear(); updateFixBar(); renderFindings(); });
 $('#select-safe').addEventListener('click', () => { state.findings.filter(f => f.metadata?.fix_eligible).forEach(f => selectedFixes.add(f.fingerprint)); updateFixBar(); renderFindings(); });

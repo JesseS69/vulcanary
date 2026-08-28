@@ -138,6 +138,8 @@ For transitive npm findings, Vulcanary records the shortest chain from each intr
 
 Remediation priority is a deterministic operational score, separate from advisory severity. It combines severity with direct/import evidence, runtime versus tooling context, patched-release availability, and automatic-fix eligibility. The dashboard reports **Urgent**, **High priority**, **Planned**, or **Monitor upstream** while always retaining the scanner's original severity.
 
+The remediation queue can be sorted by contextual priority, original severity, policy deadline, fixability, or repository. Deadline badges keep overdue ownership visible during triage instead of requiring each finding to be opened individually.
+
 ## Software bill of materials
 
 Export a CycloneDX 1.5 SBOM alongside scan results:

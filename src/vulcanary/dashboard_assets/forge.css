@@ -185,6 +185,9 @@ tbody tr:hover { background: #e8ff5b08; }
 .priority.monitor_upstream { border-color: var(--low); color: var(--low); }
 .priority.unknown { color: #929aa5; }
 .priority-score { display: block; margin-top: 4px; color: #929aa5; font: 10px var(--mono); text-align: center; }
+.priority.overdue { background: #48202a; color: #ff8298; display: block; margin-top: 5px; width: max-content; }
+.priority.due_soon { background: #44371f; color: #ffce70; display: block; margin-top: 5px; width: max-content; }
+.priority.on_track { background: #233629; color: #9ee6aa; display: block; margin-top: 5px; width: max-content; }
 
 .sidebar-foot {
   border-top: 1px solid #292a22;
