@@ -154,10 +154,66 @@ def _preview_python_literal_eval(finding: dict) -> dict:
     }
 
 
+def _preview_python_shell_false(finding: dict) -> dict:
+    root = Path(finding["repository_path"]).resolve()
+    relative = Path(finding["path"])
+    target = (root / relative).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as error:
+        raise ValueError("Finding path escapes the repository") from error
+    text = target.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    line_number = int(finding["line"])
+    if line_number < 1 or line_number > len(lines):
+        raise ValueError("Finding line is outside the source file")
+    original_line = lines[line_number - 1].rstrip("\r\n")
+    try:
+        parsed = ast.parse(original_line.strip())
+    except SyntaxError as error:
+        raise ValueError("This subprocess call needs contextual review; only a complete single-line call can use the deterministic recipe") from error
+    calls = [node for node in ast.walk(parsed) if isinstance(node, ast.Call)]
+    candidates = []
+    for call in calls:
+        function = call.func
+        is_subprocess = (
+            isinstance(function, ast.Attribute) and isinstance(function.value, ast.Name)
+            and function.value.id == "subprocess" and function.attr in {"run", "Popen", "call"}
+        )
+        shell_keywords = [keyword for keyword in call.keywords if keyword.arg == "shell"]
+        static_argv = bool(call.args) and isinstance(call.args[0], (ast.List, ast.Tuple)) and all(
+            isinstance(item, ast.Constant) and isinstance(item.value, str) for item in call.args[0].elts
+        )
+        if is_subprocess and len(shell_keywords) == 1 and isinstance(shell_keywords[0].value, ast.Constant) and shell_keywords[0].value.value is True and static_argv:
+            candidates.append(call)
+    if len(candidates) != 1:
+        raise ValueError("This subprocess call needs contextual review; a static string-only argument list and one shell=True flag are required")
+    revised_line, replacements = re.subn(r",\s*shell\s*=\s*True\b", "", original_line, count=1)
+    if replacements != 1:
+        revised_line, replacements = re.subn(r"shell\s*=\s*True\s*,\s*", "", original_line, count=1)
+    if replacements != 1:
+        raise ValueError("The shell flag could not be removed without changing the command structure")
+    newline = "\r\n" if lines[line_number - 1].endswith("\r\n") else "\n"
+    revised_lines = list(lines)
+    revised_lines[line_number - 1] = revised_line + newline
+    revised = "".join(revised_lines)
+    diff = "".join(difflib.unified_diff(
+        text.splitlines(keepends=True), revised.splitlines(keepends=True),
+        fromfile=f"a/{relative.as_posix()}", tofile=f"b/{relative.as_posix()}",
+    ))
+    return {
+        "fingerprint": finding["fingerprint"], "repository": str(root), "file": relative.as_posix(),
+        "line": line_number, "rule_id": finding["rule_id"], "recipe": "python-static-argv-without-shell",
+        "diff": diff, "changes": [{"file": relative.as_posix(), "original": text, "replacement": revised}],
+        "files": [relative.as_posix()],
+    }
+
+
 def preview_source_fix(finding: dict) -> dict:
     recipes = {
         "CODE-JS-INNERHTML": _preview_static_innerhtml,
         "CODE-PY-EVAL": _preview_python_literal_eval,
+        "CODE-PY-SHELL": _preview_python_shell_false,
     }
     recipe = recipes.get(finding.get("rule_id"))
     if not recipe:

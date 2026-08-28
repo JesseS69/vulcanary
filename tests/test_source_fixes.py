@@ -99,6 +99,38 @@ class SourceFixTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "contextual review"):
                 preview_source_fix(finding)
 
+    def test_python_shell_recipe_removes_shell_for_static_argv(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "runner.py"
+            source.write_text("import subprocess\n\ndef status():\n    return subprocess.run(['git', 'status', '--short'], check=True, shell=True)\n", encoding="utf-8")
+            self._git(root, "init", "-b", "main")
+            self._git(root, "add", "runner.py")
+            self._git(root, "commit", "-m", "initial")
+            finding = {
+                "rule_id": "CODE-PY-SHELL", "repository_path": str(root), "path": "runner.py",
+                "line": 4, "fingerprint": "python-shell-fingerprint",
+            }
+            proposal = preview_source_fix(finding)
+            self.assertEqual(proposal["recipe"], "python-static-argv-without-shell")
+            self.assertIn("-    return subprocess.run", proposal["diff"])
+            apply_source_fix(proposal)
+            revised = source.read_text(encoding="utf-8")
+            self.assertIn("subprocess.run(['git', 'status', '--short'], check=True)", revised)
+            self.assertNotIn("shell=True", revised)
+
+    def test_python_shell_recipe_refuses_string_or_dynamic_argv(self) -> None:
+        for command in ("'git status'", "command", "['git', user_arg]"):
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "runner.py").write_text(f"subprocess.run({command}, shell=True)\n", encoding="utf-8")
+                finding = {
+                    "rule_id": "CODE-PY-SHELL", "repository_path": str(root), "path": "runner.py",
+                    "line": 1, "fingerprint": "dynamic-python-shell",
+                }
+                with self.assertRaisesRegex(ValueError, "contextual review"):
+                    preview_source_fix(finding)
+
 
 if __name__ == "__main__":
     unittest.main()
