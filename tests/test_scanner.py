@@ -1,14 +1,18 @@
 import json
 import io
 import tempfile
+import threading
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from http.server import ThreadingHTTPServer
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from unittest.mock import patch
 
 from vulcanary.cli import main
 from vulcanary.config import Config
-from vulcanary.dashboard import DashboardState
+from vulcanary.dashboard import DashboardState, make_handler
 from vulcanary.dependencies import discover_packages, scan_dependencies
 from vulcanary.fixes import preview
 from vulcanary.models import Severity
@@ -136,6 +140,30 @@ class ScannerTests(unittest.TestCase):
                 rescanned = state.rescan_all()
             self.assertEqual(len(rescanned), 1)
             self.assertEqual(state.snapshot()["summary"]["total"], 0)
+
+    def test_dashboard_post_actions_reject_cross_site_and_non_json_requests(self) -> None:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(DashboardState()))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        url = f"http://127.0.0.1:{server.server_port}/api/rescan"
+        try:
+            with self.assertRaises(HTTPError) as non_json:
+                urlopen(Request(url, data=b"{}", method="POST", headers={"Content-Type": "text/plain"}), timeout=5)
+            self.assertEqual(non_json.exception.code, 415)
+            non_json.exception.close()
+            with self.assertRaises(HTTPError) as cross_site:
+                urlopen(Request(url, data=b"{}", method="POST", headers={"Content-Type": "application/json", "Origin": "https://attacker.invalid"}), timeout=5)
+            self.assertEqual(cross_site.exception.code, 403)
+            cross_site.exception.close()
+            response = urlopen(Request(
+                url, data=b"{}", method="POST",
+                headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{server.server_port}"},
+            ), timeout=5)
+            self.assertEqual(response.status, 200)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
     def test_dashboard_imports_and_reuses_external_reports(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

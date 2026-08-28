@@ -315,6 +315,19 @@ def make_handler(state: DashboardState):
             if route not in {"/api/scan", "/api/rescan", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/source/preview", "/api/source/apply", "/api/parents/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
+            content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            if content_type != "application/json":
+                self._json({"error": "POST requests require application/json"}, HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+                return
+            origin = self.headers.get("Origin")
+            expected_origin = f"http://{self.headers.get('Host', '')}"
+            if origin and origin != expected_origin:
+                self._json({"error": "Cross-origin dashboard actions are forbidden"}, HTTPStatus.FORBIDDEN)
+                return
+            fetch_site = self.headers.get("Sec-Fetch-Site")
+            if fetch_site and fetch_site not in {"same-origin", "none"}:
+                self._json({"error": "Cross-site dashboard actions are forbidden"}, HTTPStatus.FORBIDDEN)
+                return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 if length > 16_384:
