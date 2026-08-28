@@ -34,6 +34,20 @@ class AdapterTests(unittest.TestCase):
     def test_trivy_schema_versioned_report_may_have_no_results(self) -> None:
         self.assertEqual(self.load("trivy", {"SchemaVersion": 2, "ArtifactType": "filesystem"}), [])
 
+    def test_trivy_container_image_is_tracked_separately_without_docker_access(self) -> None:
+        findings = self.load("trivy-image", {
+            "SchemaVersion": 2, "ArtifactName": "registry.example/demo:1.0", "ArtifactType": "container_image",
+            "Results": [{"Target": "alpine 3.19", "Type": "alpine", "Vulnerabilities": [{
+                "VulnerabilityID": "CVE-IMAGE-1", "PkgName": "libssl3", "InstalledVersion": "3.1.4-r0",
+                "FixedVersion": "3.1.4-r1", "Severity": "HIGH",
+            }]}],
+        })
+        finding = findings[0]
+        self.assertEqual(finding.category, "container")
+        self.assertEqual(finding.metadata["image"], "registry.example/demo:1.0")
+        self.assertEqual(finding.evidence, "libssl3@3.1.4-r0")
+        self.assertTrue(finding.path.startswith("container-image/"))
+
     def test_checkov_array_report_and_path_traversal(self) -> None:
         findings = self.load("checkov", [{"results": {"failed_checks": [{"check_id": "CKV_AWS_1", "check_name": "Encryption", "file_path": "../../secret.tf", "file_line_range": [9, 10], "severity": "HIGH"}]}}])
         self.assertEqual(findings[0].path, "external-report")

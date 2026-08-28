@@ -107,6 +107,19 @@ def analyze_reachability(root: Path, findings: list[Finding], config: Config) ->
     npm_imports, python_imports = observed_imports(root, config)
     analyzed = []
     for finding in findings:
+        if finding.category == "container":
+            metadata = dict(finding.metadata)
+            metadata["usage"] = {
+                "classification": "container_inventory",
+                "reason": "The vulnerable package is present in the supplied container-image inventory; runtime execution is not inferred.",
+            }
+            metadata["recommendation"] = {
+                "action": "rebuild_container",
+                "reason": "Update the affected package or reviewed base image, rebuild without privileged Docker access from Vulcanary, and rescan the resulting image.",
+            }
+            metadata["priority"] = remediation_priority(finding, metadata)
+            analyzed.append(replace(finding, metadata=metadata))
+            continue
         if finding.category != "dependency":
             metadata = dict(finding.metadata)
             metadata["usage"] = {

@@ -391,7 +391,11 @@ $('#scan-form').addEventListener('submit', async event => {
   const button = event.currentTarget.querySelector('button');
   button.disabled = true; button.textContent = 'Scanning…'; $('#scan-message').textContent = '';
   try {
-    const reports = Object.fromEntries(['semgrep','gitleaks','trivy','checkov'].map(scanner => [scanner, $(`#${scanner}-report`).value.trim()]).filter(([, path]) => path));
+    const reports = Object.fromEntries([
+      ['semgrep', $('#semgrep-report').value.trim()], ['gitleaks', $('#gitleaks-report').value.trim()],
+      ['trivy', $('#trivy-report').value.trim()], ['trivy-image', $('#trivy-image-report').value.trim()],
+      ['checkov', $('#checkov-report').value.trim()],
+    ].filter(([, path]) => path));
     const response = await fetch('/api/scan', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repository:$('#repository').value,reports})});
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Scan failed');

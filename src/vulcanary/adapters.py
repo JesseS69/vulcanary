@@ -44,12 +44,12 @@ def _text(value: object, fallback: str = "External scanner finding") -> str:
 
 def _finding(*, scanner: str, rule: object, title: object, description: object, severity: object,
              category: str, path: object, line: object, root: Path, remediation: object = "",
-             metadata: dict[str, Any] | None = None, secret: bool = False) -> Finding:
+             metadata: dict[str, Any] | None = None, secret: bool = False, evidence: object = "") -> Finding:
     rule_id = _text(rule, "unknown")
     return Finding(
         rule_id=f"{scanner.upper()}-{rule_id}", title=_text(title, rule_id),
         description=_text(description), severity=_severity(severity), category=category,
-        path=_path(path, root), line=_line(line), evidence="[redacted]" if secret else "",
+        path=_path(path, root), line=_line(line), evidence="[redacted]" if secret else _text(evidence, ""),
         remediation=_text(remediation, "Review and remediate the external scanner finding."),
         scanner=scanner, metadata={key: value for key, value in (metadata or {}).items() if value not in (None, "", [])},
     )
@@ -93,6 +93,9 @@ def _trivy(document: Any, root: Path) -> list[Finding]:
     if not isinstance(results, list):
         raise AdapterError("Trivy Results must be an array when present")
     findings = []
+    artifact_type = str(document.get("ArtifactType") or "filesystem")
+    is_image = artifact_type in {"container_image", "container-image", "image"}
+    image_name = _text(document.get("ArtifactName"), "local-image") if is_image else None
     for result in results:
         if not isinstance(result, dict):
             raise AdapterError("Trivy result is malformed")
@@ -101,9 +104,11 @@ def _trivy(document: Any, root: Path) -> list[Finding]:
             if not isinstance(item, dict):
                 raise AdapterError("Trivy vulnerability is malformed")
             findings.append(_finding(scanner="trivy", rule=item.get("VulnerabilityID"), title=item.get("Title"),
-                description=item.get("Description"), severity=item.get("Severity"), category="dependency",
-                path=target, line=1, root=root, remediation=f"Upgrade {item.get('PkgName', 'the package')} to {item.get('FixedVersion') or 'a patched version'}.",
-                metadata={"package": item.get("PkgName"), "installed_version": item.get("InstalledVersion"), "fixed_version": item.get("FixedVersion"), "advisory": item.get("PrimaryURL")}))
+                description=item.get("Description"), severity=item.get("Severity"), category="container" if is_image else "dependency",
+                path=f"container-image/{target or 'packages'}" if is_image else target, line=1, root=root,
+                remediation=f"Upgrade {item.get('PkgName', 'the package')} to {item.get('FixedVersion') or 'a patched version'} and rebuild the image from a reviewed base.",
+                evidence=f"{item.get('PkgName', 'package')}@{item.get('InstalledVersion', 'unknown')}",
+                metadata={"package": item.get("PkgName"), "installed_version": item.get("InstalledVersion"), "current_version": item.get("InstalledVersion"), "fixed_version": item.get("FixedVersion"), "advisory": item.get("VulnerabilityID"), "artifact_type": artifact_type, "image": image_name, "package_type": result.get("Type")}))
         for item in result.get("Misconfigurations") or []:
             if not isinstance(item, dict):
                 raise AdapterError("Trivy misconfiguration is malformed")
@@ -135,7 +140,7 @@ def _checkov(document: Any, root: Path) -> list[Finding]:
 
 
 PARSERS: dict[str, Callable[[Any, Path], list[Finding]]] = {
-    "semgrep": _semgrep, "gitleaks": _gitleaks, "trivy": _trivy, "checkov": _checkov,
+    "semgrep": _semgrep, "gitleaks": _gitleaks, "trivy": _trivy, "trivy-image": _trivy, "checkov": _checkov,
 }
 
 

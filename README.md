@@ -179,6 +179,8 @@ vulcanary . --semgrep-json semgrep.json --gitleaks-json gitleaks.json `
 
 Each option can be repeated. Imported paths are constrained to the scanned repository, malformed reports fail closed, and Gitleaks secret values are never retained in Vulcanary output.
 
+Container images are opt-in and report-driven: generate a Trivy image report separately and import it with `--trivy-image-json report.json`, or provide the report path in the dashboard scan form. Vulcanary normalizes the image package inventory and vulnerabilities under the `container` category. It never starts Docker, mounts the Docker socket, pulls an image, contacts a registry, or executes anything from the report.
+
 The local dashboard accepts optional report paths for all four external engines in the scan form. Imported findings retain their scanner identity and can be filtered by scanner, category, or severity. Report paths stay in memory for rescans and are not written to dashboard history.
 
 Other public repositories can call `.github/workflows/security-scan.yml` as a reusable workflow. Consumers should pin both the workflow reference and its required `vulcanary_ref` input to the same full Vulcanary commit SHA.

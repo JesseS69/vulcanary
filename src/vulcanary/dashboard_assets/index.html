@@ -35,7 +35,7 @@
     <form id="scan-form" class="scan-form hidden">
       <label for="repository">Local repository path</label>
       <div><input id="repository" name="repository" placeholder="C:\path\to\repository" required><button class="primary" type="submit">Run scan</button></div>
-      <details><summary>Import external scanner reports</summary><div class="report-grid"><label>Semgrep JSON<input id="semgrep-report" type="text" placeholder="Optional path outside the repository"></label><label>Gitleaks JSON<input id="gitleaks-report" type="text" placeholder="Optional redacted report path"></label><label>Trivy JSON<input id="trivy-report" type="text" placeholder="Optional report path"></label><label>Checkov JSON<input id="checkov-report" type="text" placeholder="Optional report path"></label></div></details>
+      <details><summary>Import external scanner reports</summary><div class="report-grid"><label>Semgrep JSON<input id="semgrep-report" type="text" placeholder="Optional path outside the repository"></label><label>Gitleaks JSON<input id="gitleaks-report" type="text" placeholder="Optional redacted report path"></label><label>Trivy filesystem JSON<input id="trivy-report" type="text" placeholder="Optional report path"></label><label>Trivy image JSON<input id="trivy-image-report" type="text" placeholder="Optional local image report path"></label><label>Checkov JSON<input id="checkov-report" type="text" placeholder="Optional report path"></label></div></details>
       <p id="scan-message" class="muted"></p>
     </form>
 

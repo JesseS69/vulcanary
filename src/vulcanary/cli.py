@@ -29,6 +29,7 @@ def scan_parser() -> argparse.ArgumentParser:
     result.add_argument("--offline", action="store_true", help="Skip OSV dependency advisory queries")
     for scanner in ("semgrep", "gitleaks", "trivy", "checkov"):
         result.add_argument(f"--{scanner}-json", action="append", type=Path, default=[], help=f"Import a {scanner.title()} JSON report; repeat as needed")
+    result.add_argument("--trivy-image-json", action="append", type=Path, default=[], help="Import a local Trivy container-image JSON report; repeat as needed")
     return result
 
 
@@ -60,6 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     findings = scan(root, config)
     try:
         imported = [finding for scanner in ("semgrep", "gitleaks", "trivy", "checkov") for report in getattr(args, f"{scanner}_json") for finding in import_report(scanner, report, root)]
+        imported += [finding for report in args.trivy_image_json for finding in import_report("trivy-image", report, root)]
     except AdapterError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
