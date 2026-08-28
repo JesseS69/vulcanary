@@ -5,6 +5,7 @@ let appliedBatch = null;
 let sourceProposalFingerprint = null;
 
 const colors = {critical: '#ff4d6d', high: '#ff8359', medium: '#f8c15c', low: '#73b7ff', info: '#929aa5'};
+const MIN_THREAT_SCALE = 10;
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
 
 function render() {
@@ -66,7 +67,7 @@ function renderGovernance() {
 }
 
 function renderChart(counts) {
-  const max = Math.max(1, ...Object.values(counts));
+  const max = Math.max(MIN_THREAT_SCALE, ...Object.values(counts).map(Number).filter(Number.isFinite));
   $('#severity-chart').innerHTML = ['critical','high','medium','low','info'].map(level => `<div class="bar-row"><span>${level}</span><progress class="threat-progress ${level}" max="${max}" value="${counts[level] || 0}" aria-label="${level}: ${counts[level] || 0}"></progress><strong>${counts[level] || 0}</strong></div>`).join('');
 }
 

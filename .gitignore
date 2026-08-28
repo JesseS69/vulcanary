@@ -10,3 +10,4 @@ build/
 *-findings.json
 vulcanary.json
 .vulcanary-dashboard*.log
+.codex-dashboard*.log
