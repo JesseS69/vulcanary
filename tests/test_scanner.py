@@ -194,6 +194,14 @@ class ScannerTests(unittest.TestCase):
                 urlopen(Request(url, data=b"{}", method="POST", headers={"Content-Type": "application/json", "Origin": "https://attacker.invalid"}), timeout=5)
             self.assertEqual(cross_site.exception.code, 403)
             cross_site.exception.close()
+            with self.assertRaises(HTTPError) as invalid_host:
+                urlopen(Request(url, data=b"{}", method="POST", headers={"Content-Type": "application/json", "Host": "attacker.invalid"}), timeout=5)
+            self.assertEqual(invalid_host.exception.code, 400)
+            invalid_host.exception.close()
+            with self.assertRaises(HTTPError) as non_object:
+                urlopen(Request(url, data=b"[]", method="POST", headers={"Content-Type": "application/json"}), timeout=5)
+            self.assertEqual(non_object.exception.code, 400)
+            non_object.exception.close()
             response = urlopen(Request(
                 url, data=b"{}", method="POST",
                 headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{server.server_port}"},

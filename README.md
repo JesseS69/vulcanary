@@ -202,6 +202,8 @@ Vulcanary consumes OSV rather than maintaining a private vulnerability database,
 
 ## Security boundaries
 
+The dashboard is a loopback-only local service, not an authenticated multi-user control plane. It rejects non-loopback bind addresses and Host headers, cross-site actions, non-JSON or non-object request bodies, and negative or oversized content lengths. JSON responses disable caching, MIME sniffing, and referrer propagation.
+
 Treat scanned repositories as hostile input. Production workers should run without cloud credentials, with a read-only checkout, CPU/memory/time limits, no Docker socket, and network disabled unless an adapter explicitly needs allow-listed advisory endpoints. Never execute build scripts merely to discover dependencies.
 
 ## Public repository

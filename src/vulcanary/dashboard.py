@@ -321,8 +321,15 @@ def make_handler(state: DashboardState):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
             self.end_headers()
             self.wfile.write(body)
+
+        def _host_is_local(self) -> bool:
+            host = self.headers.get("Host", "")
+            port = self.server.server_address[1]
+            return host.lower() in {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
 
         def _download_json(self, payload: dict, filename: str) -> None:
             body = json.dumps(payload, indent=2).encode()
@@ -335,6 +342,9 @@ def make_handler(state: DashboardState):
             self.wfile.write(body)
 
         def do_GET(self) -> None:
+            if not self._host_is_local():
+                self.send_error(HTTPStatus.BAD_REQUEST, "Dashboard Host header must be loopback")
+                return
             parsed = urlparse(self.path)
             path = parsed.path
             if path == "/api/state":
@@ -403,6 +413,9 @@ def make_handler(state: DashboardState):
             self.wfile.write(body)
 
         def do_POST(self) -> None:
+            if not self._host_is_local():
+                self.send_error(HTTPStatus.BAD_REQUEST, "Dashboard Host header must be loopback")
+                return
             route = urlparse(self.path).path
             if route not in {"/api/scan", "/api/rescan", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/source/preview", "/api/source/apply", "/api/parents/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
@@ -422,9 +435,11 @@ def make_handler(state: DashboardState):
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if length > 16_384:
+                if length < 0 or length > 16_384:
                     raise ValueError("Request is too large")
                 payload = json.loads(self.rfile.read(length))
+                if not isinstance(payload, dict):
+                    raise ValueError("Request body must be a JSON object")
                 if route == "/api/rescan":
                     rescanned = state.rescan_all()
                     self._json({"scans": [result.to_dict() for result in rescanned], "state": state.snapshot()})
