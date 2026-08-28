@@ -166,6 +166,7 @@ class FixWorkflowTests(unittest.TestCase):
             self.assertEqual(receipt["selected_fingerprints"], ["finding-a", "finding-b"])
             state = DashboardState(history)
             state.record_remediation("verified", receipt)
+            self.assertEqual(list(history.parent.glob(f".{history.name}.*.tmp")), [])
             restored = DashboardState(history)
             self.assertEqual(restored.remediation_audit[0]["proof"], receipt["proof"])
             self.assertEqual(restored.snapshot()["remediation_audit"][0]["action"], "verified")

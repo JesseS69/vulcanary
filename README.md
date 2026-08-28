@@ -198,11 +198,10 @@ Every scan can export `--ruleset-manifest vulcanary-ruleset.json`. The canonical
 ## Roadmap
 
 1. **Source-recipe expansion:** add reviewed transformations for more SAST rules and an optional, explicitly configured AI drafting adapter without weakening deterministic validation gates.
-2. **Scanner expansion:** add container-image targets and a controlled process for reviewing external ruleset updates.
-3. **Exposure context:** correlate findings with routes, runtime assets, deploys, and internet reachability without using absence of evidence as proof of safety.
-4. **Team workflow:** add repository ownership, remediation SLAs, notifications, and ticket integrations.
-5. **Hosted control plane:** add authenticated workers, tenant isolation, RBAC, durable audit storage, and explicit source-retention controls without weakening the local-first mode.
-6. **Supply-chain controls:** add SPDX, signed attestations, container inventories, and merge/deploy policy enforcement.
+2. **Rule lifecycle:** add a review-and-promotion workflow for external rules while preserving the canonical manifest and digest boundary.
+3. **Team workflow:** add opt-in notifications and ticket exports without placing repository content or credentials in local history.
+4. **Supply-chain controls:** add keyless signing guidance and deploy-policy examples around the existing SPDX, CycloneDX, container-report, and unsigned provenance outputs.
+5. **Hosted control plane:** only if needed, add authenticated workers, tenant isolation, RBAC, durable audit storage, and explicit source-retention controls without weakening local-first mode.
 
 Vulcanary consumes OSV rather than maintaining a private vulnerability database, preserving advisory identifiers and fixed versions in its normalized findings. Exact Python pins in `requirements*.txt` can be upgraded locally when OSV identifies a same-major fix; the branch must still pass rescanning and configured project checks before commit. Yarn, pnpm, Poetry, uv, and PDM findings remain read-only until equivalent lockfile rollback and verification coverage is available.
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 import re
 import threading
 import webbrowser
@@ -88,6 +89,30 @@ class DashboardState:
                 self.suppression_audit = []
                 self.remediation_audit = []
                 self.finding_first_seen = {}
+
+    def _persist_history(self) -> None:
+        """Replace the local state file atomically so an interrupted write cannot truncate it."""
+        if not self.history_path:
+            return
+        temporary = self.history_path.with_name(
+            f".{self.history_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+        )
+        try:
+            self.history_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(json.dumps({
+                "history": self.history, "inventory_snapshots": self.inventory_snapshots,
+                "suppression_snapshots": self.suppression_snapshots, "suppression_audit": self.suppression_audit,
+                "remediation_audit": self.remediation_audit,
+                "finding_first_seen": self.finding_first_seen,
+                "verified_fixes": self.verified_fixes,
+            }, indent=2) + "\n", encoding="utf-8")
+            temporary.replace(self.history_path)
+        except OSError:
+            # Scanning and remediation must still work in restricted or read-only environments.
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def scan_repository(self, path: Path, external_reports: dict[str, list[Path]] | None = None) -> RepositoryScan:
         import time
@@ -198,19 +223,7 @@ class DashboardState:
                 "suppression_change_count": sum(len(suppression_change[key]) for key in ("added", "changed", "removed")),
             })
             self.history = self.history[-100:]
-            if self.history_path:
-                try:
-                    self.history_path.parent.mkdir(parents=True, exist_ok=True)
-                    self.history_path.write_text(json.dumps({
-                        "history": self.history, "inventory_snapshots": self.inventory_snapshots,
-                        "suppression_snapshots": self.suppression_snapshots, "suppression_audit": self.suppression_audit,
-                        "remediation_audit": self.remediation_audit,
-                        "finding_first_seen": self.finding_first_seen,
-                        "verified_fixes": self.verified_fixes,
-                    }, indent=2) + "\n", encoding="utf-8")
-                except OSError:
-                    # Scanning must still work in restricted or read-only environments.
-                    pass
+            self._persist_history()
         return result
 
     def snapshot(self) -> dict:
@@ -247,18 +260,14 @@ class DashboardState:
             "is_migration": bool(evaluation.get("is_migration")), "resolved": sorted(resolved),
             "repository": repository,
         }
+        proposals = {}
         for finding in self.snapshot()["findings"]:
             advisory = finding.get("metadata", {}).get("advisory")
             if finding["repository_path"] == repository and advisory in resolved:
-                self.verified_fixes[finding["fingerprint"]] = candidate
-        if self.history_path:
-            try:
-                self.history_path.parent.mkdir(parents=True, exist_ok=True)
-                payload = json.loads(self.history_path.read_text(encoding="utf-8")) if self.history_path.exists() else {}
-                payload["verified_fixes"] = self.verified_fixes
-                self.history_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-            except (OSError, ValueError, TypeError):
-                pass
+                proposals[finding["fingerprint"]] = candidate
+        with self._lock:
+            self.verified_fixes.update(proposals)
+            self._persist_history()
 
     def rescan_all(self) -> list[RepositoryScan]:
         with self._lock:
@@ -266,15 +275,10 @@ class DashboardState:
         return [self.scan_repository(repository) for repository in repositories]
 
     def record_remediation(self, action: str, receipt: dict) -> None:
-        self.remediation_audit.append({"action": action, **receipt})
-        self.remediation_audit = self.remediation_audit[-200:]
-        if self.history_path:
-            try:
-                payload = json.loads(self.history_path.read_text(encoding="utf-8")) if self.history_path.exists() else {}
-                payload["remediation_audit"] = self.remediation_audit
-                self.history_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-            except (OSError, ValueError, TypeError):
-                pass
+        with self._lock:
+            self.remediation_audit.append({"action": action, **receipt})
+            self.remediation_audit = self.remediation_audit[-200:]
+            self._persist_history()
 
 
 def remediation_receipt(applied: dict, selected: list[str]) -> dict:
