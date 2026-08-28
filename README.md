@@ -41,7 +41,7 @@ vulcanary dashboard `
   --repository C:\path\to\zirze-native
 ```
 
-The dashboard runs only on `127.0.0.1` by default. It provides repository summaries, live threat temperature, searchable findings, dependency inventory changes, governed exceptions, and guarded remediation. Reloading the page rescans every watched repository. Scanned source and findings remain on the local machine.
+The dashboard runs only on `127.0.0.1` by default. It provides repository summaries, live threat temperature, searchable findings, dependency inventory changes, a local scan ledger with per-repository finding deltas, governed exceptions, and guarded remediation. Reloading the page rescans every watched repository. Scanned source and findings remain on the local machine.
 
 ### Guarded fixes
 

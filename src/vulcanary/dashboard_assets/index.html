@@ -18,6 +18,7 @@
       <a class="active" href="#overview">The Forge</a>
       <a href="#findings">Remediation <span id="nav-count" class="nav-count">0</span></a>
       <a href="#repositories">Repository Watch</a>
+      <a href="#ledger">Forge Ledger</a>
       <a href="#governance">Risk Register <span id="governance-count" class="nav-count">0</span></a>
     </nav>
     <div class="sidebar-foot"><span class="status-dot"></span>Watch active · local</div>
@@ -49,6 +50,8 @@
       <article class="panel"><div class="panel-head"><div><p class="eyebrow">THREAT TEMPERATURE</p><h2>Exposure by severity</h2></div></div><div id="severity-chart" class="bars"></div></article>
       <article id="repositories" class="panel"><div class="panel-head"><div><p class="eyebrow">WATCH COVERAGE</p><h2>Repository watch</h2></div><span id="repo-count" class="pill">0 watched</span></div><div id="repo-list" class="repo-list empty-state">No repositories under watch.</div></article>
     </section>
+
+    <section id="ledger" class="panel"><div class="panel-head"><div><p class="eyebrow">LOCAL SCAN HISTORY</p><h2>Forge ledger</h2></div><span id="ledger-summary" class="pill">0 scans</span></div><p class="muted">A local record of successful scans. Finding deltas compare each repository with its previous scan.</p><div id="ledger-list" class="ledger-list"></div></section>
 
     <section id="governance" class="panel"><div class="panel-head"><div><p class="eyebrow">EXCEPTION GOVERNANCE</p><h2>Risk acceptance register</h2></div><span id="governance-summary" class="pill">0 exceptions</span></div><p class="muted">Exceptions require an owner, approved reason, justification, and expiration. Expired exceptions fail closed and restore the underlying finding.</p><div id="governance-register" class="fix-plan"></div><div class="panel-head"><div><p class="eyebrow">LOCAL AUDIT TRAIL</p><h3>Recent exception changes</h3></div></div><div id="governance-audit" class="fix-plan"></div></section>
 

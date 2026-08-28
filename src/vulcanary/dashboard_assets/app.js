@@ -17,9 +17,26 @@ function render() {
   $('#updated').textContent = state.repositories.length ? `Updated ${new Date(state.generated_at).toLocaleString()}` : 'Scan a repository to begin';
   renderChart(counts);
   renderRepositories();
+  renderLedger();
   renderGovernance();
   renderFilterOptions();
   renderFindings();
+}
+
+function renderLedger() {
+  const history = state.history || [];
+  $('#ledger-summary').textContent = `${history.length} scan${history.length === 1 ? '' : 's'} retained`;
+  const previousByRepository = new Map();
+  const entries = [...history].reverse().map(item => {
+    const previous = previousByRepository.get(item.repository);
+    previousByRepository.set(item.repository, item);
+    return {...item, delta: previous ? item.finding_count - previous.finding_count : null};
+  }).reverse().slice(0, 20);
+  $('#ledger-list').innerHTML = entries.map(item => {
+    const delta = item.delta === null ? 'BASELINE' : item.delta === 0 ? 'NO CHANGE' : item.delta > 0 ? `+${item.delta} OPEN` : `${Math.abs(item.delta)} CLEARED`;
+    const deltaClass = item.delta === null || item.delta === 0 ? 'steady' : item.delta > 0 ? 'worse' : 'better';
+    return `<div class="ledger-entry"><span class="ledger-mark ${deltaClass}" aria-hidden="true"></span><div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(new Date(item.scanned_at).toLocaleString())}</span></div><div class="ledger-result"><strong>${item.finding_count} findings</strong><span>${item.duration_ms} ms · ${item.suppression_count || 0} exceptions</span></div><span class="ledger-delta ${deltaClass}">${escapeHtml(delta)}</span></div>`;
+  }).join('') || '<p class="muted">The ledger begins after the first successful scan.</p>';
 }
 
 function renderFilterOptions() {

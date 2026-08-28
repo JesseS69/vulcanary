@@ -186,6 +186,23 @@ tbody tr:hover { background: #e8ff5b08; }
   letter-spacing: .08em;
 }
 
+.ledger-list { display: grid; gap: 1px; background: #292a22; }
+.ledger-entry { display: grid; grid-template-columns: 8px minmax(180px, 1fr) minmax(150px, .7fr) auto; gap: 16px; align-items: center; padding: 14px 16px; background: #11120f; }
+.ledger-entry > div { display: grid; gap: 4px; }
+.ledger-entry span { color: var(--muted); font-size: 12px; }
+.ledger-mark { align-self: stretch; background: #76786a; }
+.ledger-mark.better { background: var(--accent); box-shadow: 0 0 12px #e8ff5b55; }
+.ledger-mark.worse { background: var(--forge-orange); box-shadow: 0 0 12px #ff713d55; }
+.ledger-result { text-align: right; }
+.ledger-delta { min-width: 92px; padding: 6px 8px; border: 1px solid #3b3c31; color: #b9bba7 !important; text-align: center; font-size: 11px !important; font-weight: 800; letter-spacing: .08em; }
+.ledger-delta.better { border-color: #71802e; color: var(--accent) !important; }
+.ledger-delta.worse { border-color: #91482f; color: var(--forge-orange) !important; }
+
+@media(max-width:700px) {
+  .ledger-entry { grid-template-columns: 6px 1fr auto; }
+  .ledger-result { display: none !important; }
+}
+
 @media(max-width:1000px) {
   .metric-grid { grid-template-columns: repeat(2, 1fr); }
   .hero-metric { grid-column: span 2; }
