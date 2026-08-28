@@ -82,6 +82,8 @@ Verification commands are opt-in and executed directly without a shell after a p
 
 Repositories can declare `repository_owner`, `security_contact`, and severity-specific `remediation_sla_days` in `.vulcanary.json`. The dashboard records when each stable finding fingerprint was first seen, calculates its deadline, and labels it on track, due soon, or overdue. First-seen history remains local and survives rescans so unresolved findings cannot reset their deadline by moving lines.
 
+Normalized JSON and SARIF reports preserve the configured owner, security contact, and SLA durations. Absolute deadlines remain dashboard-only because CI jobs do not have the durable first-seen history required to calculate them honestly.
+
 ### Risk acceptance and expiration
 
 Structured `suppressions` are fingerprint-scoped and require a reason (`false_positive`, `mitigated`, `accepted_risk`, or `deferred`), owner, meaningful justification, and ISO expiration date. Active exceptions suppress only the matching finding. Exceptions expiring within 14 days are highlighted in the dashboard; expired exceptions stop suppressing the underlying finding and add a high-severity governance finding that fails the default CI policy. Invalid, duplicate, or incomplete entries fail configuration loading.
@@ -144,7 +146,13 @@ Export a CycloneDX 1.5 SBOM alongside scan results:
 vulcanary . --sbom vulcanary.cdx.json
 ```
 
-The local dashboard also provides **Download SBOM** for every watched repository. SBOMs contain package identities, versions, package-manager and direct/transitive properties, OSV advisory relationships, and Vulcanary reachability context. They exclude source content, absolute repository paths, credentials, and raw command output. The bundled GitHub Actions workflow uploads the SBOM with the normalized JSON and SARIF reports.
+Export the same inventory as SPDX 2.3 JSON when downstream tooling expects SPDX:
+
+```powershell
+vulcanary . --spdx vulcanary.spdx.json
+```
+
+The local dashboard provides **Download SBOM** and **Download SPDX** for every watched repository. Supply-chain documents contain package identities, versions, package-manager and direct/transitive properties, advisory relationships, and Vulcanary context. They exclude source content, absolute repository paths, credentials, and raw command output. The bundled GitHub Actions workflow uploads both formats with the normalized JSON and SARIF reports.
 
 The dashboard keeps a local dependency-inventory baseline in `~/.vulcanary/dashboard-history.json`. Every subsequent scan reports exact components added and removed since the previous successful scan, including version changes as one removal plus one addition. Use **Inventory changes** on a repository card to review the delta. This history stays on the local machine and is not included in GitHub artifacts or the public Vulcanary repository.
 

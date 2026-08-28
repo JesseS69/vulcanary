@@ -48,14 +48,16 @@ def render_github_annotations(findings: list[Finding]) -> str:
     return "\n".join(lines)
 
 
-def write_json(findings: list[Finding], destination: Path, exceptions: list[dict] | None = None) -> None:
+def write_json(findings: list[Finding], destination: Path, exceptions: list[dict] | None = None, policy: dict | None = None) -> None:
     document = {"version": 1, "findings": [f.to_dict() for f in findings]}
     if exceptions is not None:
         document["exceptions"] = exceptions
+    if policy is not None:
+        document["policy"] = policy
     destination.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 
 
-def write_sarif(findings: list[Finding], destination: Path) -> None:
+def write_sarif(findings: list[Finding], destination: Path, policy: dict | None = None) -> None:
     rules = {}
     results = []
     levels = {"info": "note", "low": "note", "medium": "warning", "high": "error", "critical": "error"}
@@ -74,7 +76,10 @@ def write_sarif(findings: list[Finding], destination: Path) -> None:
             "locations": [{"physicalLocation": {"artifactLocation": {"uri": finding.path}, "region": {"startLine": finding.line}}}],
             "partialFingerprints": {"vulcanaryFingerprint/v1": finding.fingerprint},
         })
-    document = {"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "runs": [{"tool": {"driver": {"name": "Vulcanary", "version": __version__, "rules": list(rules.values())}}, "results": results}]}
+    run = {"tool": {"driver": {"name": "Vulcanary", "version": __version__, "rules": list(rules.values())}}, "results": results}
+    if policy is not None:
+        run["properties"] = {"vulcanaryPolicy": policy}
+    document = {"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "runs": [run]}
     destination.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 
 

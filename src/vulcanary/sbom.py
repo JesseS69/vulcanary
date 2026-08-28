@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
@@ -91,4 +92,56 @@ def cyclonedx_document(repository_name: str, packages: list[Package], findings: 
 
 
 def write_cyclonedx(document: dict, destination: Path) -> None:
+    destination.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+
+
+def spdx_document(repository_name: str, packages: list[Package], findings: list[dict]) -> dict:
+    grouped = inventory_snapshot(packages)
+    root_id = "SPDXRef-Repository"
+    advisory_by_ref: dict[str, list[str]] = {}
+    for finding in findings:
+        if finding.get("category") != "dependency":
+            continue
+        metadata = finding.get("metadata", {})
+        package = Package(
+            str(metadata.get("package", "")), str(metadata.get("current_version", "")),
+            str(metadata.get("ecosystem", "npm")), "", bool(metadata.get("direct")), str(metadata.get("manager", "npm")),
+        )
+        advisory_by_ref.setdefault(_purl(package), []).append(str(metadata.get("advisory") or finding.get("rule_id", "unknown")))
+    document_packages = [{
+        "SPDXID": root_id, "name": repository_name, "versionInfo": "NOASSERTION",
+        "downloadLocation": "NOASSERTION", "filesAnalyzed": False,
+        "licenseConcluded": "NOASSERTION", "licenseDeclared": "NOASSERTION", "copyrightText": "NOASSERTION",
+        "primaryPackagePurpose": "APPLICATION",
+    }]
+    relationships = [{"spdxElementId": "SPDXRef-DOCUMENT", "relationshipType": "DESCRIBES", "relatedSpdxElement": root_id}]
+    for reference, inventory in grouped.items():
+        package_id = f"SPDXRef-Package-{hashlib.sha256(reference.encode()).hexdigest()[:16]}"
+        item = {
+            "SPDXID": package_id, "name": inventory["name"], "versionInfo": inventory["version"],
+            "downloadLocation": "NOASSERTION", "filesAnalyzed": False,
+            "licenseConcluded": "NOASSERTION", "licenseDeclared": "NOASSERTION", "copyrightText": "NOASSERTION",
+            "primaryPackagePurpose": "LIBRARY",
+            "externalRefs": [{"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": reference}],
+            "comment": f"Vulcanary managers: {','.join(inventory['managers'])}; direct: {str(inventory['direct']).lower()}",
+        }
+        advisories = sorted(set(advisory_by_ref.get(reference, [])))
+        if advisories:
+            item["annotations"] = [{
+                "annotationType": "OTHER", "annotator": f"Tool: Vulcanary-{__version__}",
+                "annotationDate": datetime.now(timezone.utc).isoformat(), "comment": f"OSV advisories: {', '.join(advisories)}",
+            }]
+        document_packages.append(item)
+        if inventory["direct"]:
+            relationships.append({"spdxElementId": root_id, "relationshipType": "DEPENDS_ON", "relatedSpdxElement": package_id})
+    return {
+        "spdxVersion": "SPDX-2.3", "dataLicense": "CC0-1.0", "SPDXID": "SPDXRef-DOCUMENT",
+        "name": f"{repository_name}-vulcanary-sbom",
+        "documentNamespace": f"https://vulcanary.dev/spdx/{quote(repository_name, safe='')}/{uuid4()}",
+        "creationInfo": {"created": datetime.now(timezone.utc).isoformat(), "creators": [f"Tool: Vulcanary-{__version__}"]},
+        "packages": document_packages, "relationships": relationships,
+    }
+
+
+def write_spdx(document: dict, destination: Path) -> None:
     destination.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")

@@ -10,7 +10,7 @@ from .reporters import baseline_identities, findings_new_since, render_console, 
 from .scanners import inline_suppression_register, scan
 from .dependencies import discover_packages, scan_dependencies
 from .reachability import analyze_reachability
-from .sbom import cyclonedx_document, write_cyclonedx
+from .sbom import cyclonedx_document, spdx_document, write_cyclonedx, write_spdx
 from .governance import suppression_findings
 from .adapters import AdapterError, import_report
 
@@ -22,6 +22,7 @@ def scan_parser() -> argparse.ArgumentParser:
     result.add_argument("--json", type=Path, dest="json_path", help="Write normalized JSON report")
     result.add_argument("--sarif", type=Path, help="Write SARIF 2.1 report")
     result.add_argument("--sbom", type=Path, help="Write a CycloneDX 1.5 SBOM")
+    result.add_argument("--spdx", type=Path, help="Write an SPDX 2.3 JSON SBOM")
     result.add_argument("--baseline-json", type=Path, help="Gate only findings absent from a prior normalized JSON report")
     result.add_argument("--github-annotations", action="store_true", help="Emit GitHub Actions workflow annotations for gated findings")
     result.add_argument("--no-fail", action="store_true", help="Always exit successfully")
@@ -74,12 +75,19 @@ def main(argv: list[str] | None = None) -> int:
     findings = analyze_reachability(root, findings, config)
     findings = sorted(findings + suppression_findings(config), key=lambda finding: (-int(finding.severity), finding.path, finding.line))
     print(render_console(findings))
+    report_policy = {
+        "repository_owner": config.repository_owner, "security_contact": config.security_contact,
+        "remediation_sla_days": config.remediation_sla_days,
+        "deadline_source": "Local dashboard first-seen history is required for absolute deadlines.",
+    }
     if args.json_path:
-        write_json(findings, args.json_path, config.suppression_register() + inline_suppression_register(root, config))
+        write_json(findings, args.json_path, config.suppression_register() + inline_suppression_register(root, config), report_policy)
     if args.sarif:
-        write_sarif(findings, args.sarif)
+        write_sarif(findings, args.sarif, report_policy)
     if args.sbom:
         write_cyclonedx(cyclonedx_document(root.name, discover_packages(root), [finding.to_dict() for finding in findings]), args.sbom)
+    if args.spdx:
+        write_spdx(spdx_document(root.name, discover_packages(root), [finding.to_dict() for finding in findings]), args.spdx)
     policy_findings = findings
     if args.baseline_json:
         try:

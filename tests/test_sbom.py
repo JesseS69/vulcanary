@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from vulcanary.dependencies import Package
-from vulcanary.sbom import cyclonedx_document, write_cyclonedx
+from vulcanary.sbom import cyclonedx_document, spdx_document, write_cyclonedx
 
 
 class SbomTests(unittest.TestCase):
@@ -40,6 +40,25 @@ class SbomTests(unittest.TestCase):
             write_cyclonedx(cyclonedx_document("empty", [], []), destination)
             self.assertEqual(json.loads(destination.read_text(encoding="utf-8"))["metadata"]["component"]["name"], "empty")
             self.assertTrue(destination.read_text(encoding="utf-8").endswith("\n"))
+
+    def test_generates_spdx_inventory_relationships_and_advisory_annotations(self) -> None:
+        packages = [
+            Package("direct", "1.0.0", "npm", "private/package-lock.json", True, "npm"),
+            Package("indirect", "2.0.0", "npm", "private/package-lock.json", False, "npm"),
+        ]
+        findings = [{
+            "rule_id": "SCA-GHSA-demo", "category": "dependency", "metadata": {
+                "package": "indirect", "current_version": "2.0.0", "ecosystem": "npm",
+                "manager": "npm", "direct": False, "advisory": "GHSA-demo",
+            },
+        }]
+        document = spdx_document("demo", packages, findings)
+        self.assertEqual(document["spdxVersion"], "SPDX-2.3")
+        direct = next(item for item in document["packages"] if item["name"] == "direct")
+        indirect = next(item for item in document["packages"] if item["name"] == "indirect")
+        self.assertIn({"spdxElementId": "SPDXRef-Repository", "relationshipType": "DEPENDS_ON", "relatedSpdxElement": direct["SPDXID"]}, document["relationships"])
+        self.assertIn("GHSA-demo", indirect["annotations"][0]["comment"])
+        self.assertNotIn("private", json.dumps(document))
 
 
 if __name__ == "__main__":

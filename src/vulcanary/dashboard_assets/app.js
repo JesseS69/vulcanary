@@ -106,13 +106,14 @@ function renderRepositories() {
     const evaluate = parentCount ? `<button class="parent-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Evaluate ${parentCount} upgrade path${parentCount === 1 ? '' : 's'}</button>` : '';
     const platform = repo.findings.some(f => f.metadata?.parent_packages?.includes('expo')) ? `<button class="platform-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Evaluate Expo platform set</button><button class="platform-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" data-migration="true" type="button">Evaluate next Expo SDK migration</button>` : '';
     const sbom = `<a class="secondary" href="/api/repositories/sbom?repository=${encodeURIComponent(repo.repository)}" download>Download SBOM</a>`;
+    const spdx = `<a class="secondary" href="/api/repositories/spdx?repository=${encodeURIComponent(repo.repository)}" download>Download SPDX</a>`;
     const changes = repo.inventory_change || {added:[],removed:[]};
     const inventoryLabel = changes.baseline ? `${changes.current_count || 0} components · baseline` : `${changes.current_count || 0} components · +${changes.added.length} / −${changes.removed.length}`;
     const inventoryButton = `<button class="inventory-change secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Inventory changes</button>`;
     const scanners = [...new Set(repo.findings.map(f => f.scanner))].sort().join(' · ');
     const owner = repo.policy?.owner || 'unassigned';
     const overdue = Number(repo.policy?.overdue_count) || 0;
-    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">Owner ${escapeHtml(owner)} · ${overdue} overdue · ${repo.duration_ms} ms · ${severe} high priority · ${reachable} import-observed · ${inventoryLabel} · ${escapeHtml(scanners || 'builtin')}</span><div class="repo-actions">${sbom}${inventoryButton}${evaluate}${platform}</div></div>`;
+    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">Owner ${escapeHtml(owner)} · ${overdue} overdue · ${repo.duration_ms} ms · ${severe} high priority · ${reachable} import-observed · ${inventoryLabel} · ${escapeHtml(scanners || 'builtin')}</span><div class="repo-actions">${sbom}${spdx}${inventoryButton}${evaluate}${platform}</div></div>`;
   }).join('');
   document.querySelectorAll('.parent-evaluate').forEach(button => button.addEventListener('click', () => evaluateParents(button)));
   document.querySelectorAll('.platform-evaluate').forEach(button => button.addEventListener('click', () => evaluatePlatform(button)));
