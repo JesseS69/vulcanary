@@ -10,7 +10,7 @@ from .models import Severity
 
 
 DEFAULT_EXCLUDES = [
-    ".git/**", ".venv/**", "venv/**", "node_modules/**", ".pnpm-store/**", ".expo/**",
+    ".git/**", ".venv/**", "venv/**", "node_modules/**", ".pnpm-store/**", ".uv-cache/**", ".expo/**",
     ".vercel/**", "dist/**", "build/**",
     "*.min.js", "*.map", "coverage/**", ".pytest_cache/**",
 ]

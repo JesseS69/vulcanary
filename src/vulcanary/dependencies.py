@@ -29,7 +29,7 @@ class Package:
     manager: str = "npm"
 
 
-_SKIPPED_PARTS = {"node_modules", ".git", ".expo", ".pnpm-store", ".venv", "venv", ".vercel", "dist", "build", "coverage"}
+_SKIPPED_PARTS = {"node_modules", ".git", ".expo", ".pnpm-store", ".uv-cache", ".venv", "venv", ".vercel", "dist", "build", "coverage"}
 
 
 def _dependency_files(root: Path, accepted: Callable[[str], bool]) -> list[Path]:
@@ -94,6 +94,29 @@ def _pnpm_packages(lock: Path, root: Path) -> list[Package]:
     return found
 
 
+def _python_toml_lock_packages(lock: Path, root: Path, manager: str) -> list[Package]:
+    """Read package name/version pairs from Poetry, uv, and PDM TOML lockfiles."""
+    found = []
+    name: str | None = None
+    version: str | None = None
+    in_package = False
+    for raw in lock.read_text(encoding="utf-8").splitlines() + ["[[package]]"]:
+        if raw.strip() == "[[package]]":
+            if in_package and name and version:
+                found.append(Package(name, version, "PyPI", relative_path(lock, root), False, manager))
+            in_package, name, version = True, None, None
+            continue
+        if not in_package:
+            continue
+        match = re.match(r'^\s*(name|version)\s*=\s*["\']([^"\']+)["\']\s*$', raw)
+        if match:
+            if match.group(1) == "name":
+                name = match.group(2)
+            else:
+                version = match.group(2)
+    return found
+
+
 def discover_packages(root: Path) -> list[Package]:
     packages: dict[tuple[str, str, str, str], Package] = {}
     for lock in _dependency_files(root, lambda name: name == "package-lock.json"):
@@ -119,6 +142,14 @@ def discover_packages(root: Path) -> list[Package]:
                 continue
             for package in discovered:
                 packages[(package.ecosystem, package.name, package.version, package.path)] = package
+    for filename, manager in (("poetry.lock", "poetry"), ("uv.lock", "uv"), ("pdm.lock", "pdm")):
+        for lock in _dependency_files(root, lambda name, expected=filename: name == expected):
+            try:
+                discovered = _python_toml_lock_packages(lock, root, manager)
+            except OSError:
+                continue
+            for package in discovered:
+                packages[(package.ecosystem, package.name.lower(), package.version, package.path)] = package
     requirement = re.compile(r"^\s*([A-Za-z0-9_.-]+)==([^\s;]+)")
     for lock in _dependency_files(root, lambda name: name.startswith("requirements") and name.endswith(".txt")):
         try:

@@ -12,6 +12,7 @@ from .dependencies import discover_packages, scan_dependencies
 from .reachability import analyze_reachability
 from .sbom import cyclonedx_document, spdx_document, write_cyclonedx, write_spdx
 from .governance import suppression_findings
+from .provenance import scan_provenance, write_provenance
 from .adapters import AdapterError, import_report
 
 
@@ -24,6 +25,7 @@ def scan_parser() -> argparse.ArgumentParser:
     result.add_argument("--sbom", type=Path, help="Write a CycloneDX 1.5 SBOM")
     result.add_argument("--spdx", type=Path, help="Write an SPDX 2.3 JSON SBOM")
     result.add_argument("--ruleset-manifest", type=Path, help="Write the canonical built-in ruleset manifest and SHA-256 digest")
+    result.add_argument("--provenance", type=Path, help="Write an unsigned in-toto scan provenance statement for generated artifacts")
     result.add_argument("--baseline-json", type=Path, help="Gate only findings absent from a prior normalized JSON report")
     result.add_argument("--github-annotations", action="store_true", help="Emit GitHub Actions workflow annotations for gated findings")
     result.add_argument("--no-fail", action="store_true", help="Always exit successfully")
@@ -95,6 +97,9 @@ def main(argv: list[str] | None = None) -> int:
         write_spdx(spdx_document(root.name, discover_packages(root), [finding.to_dict() for finding in findings]), args.spdx)
     if args.ruleset_manifest:
         args.ruleset_manifest.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    if args.provenance:
+        artifacts = [path for path in (args.json_path, args.sarif, args.sbom, args.spdx, args.ruleset_manifest) if path]
+        write_provenance(scan_provenance(root.name, artifacts, manifest["digest"]), args.provenance)
     policy_findings = findings
     if args.baseline_json:
         try:

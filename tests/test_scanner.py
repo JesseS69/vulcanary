@@ -26,6 +26,8 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(len(first["digest"]), 64)
         self.assertEqual(first["rules"], sorted(first["rules"], key=lambda item: item["id"]))
         self.assertIn("CODE-PY-EVAL", {item["id"] for item in first["rules"]})
+        self.assertTrue(all(item["pattern"] for item in first["rules"]))
+        self.assertTrue(all(isinstance(item["pattern_flags"], int) for item in first["rules"]))
 
     def test_detects_code_secret_and_iac(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -45,12 +47,20 @@ class ScannerTests(unittest.TestCase):
             (root / "storage.tf").write_text('resource "aws_s3_bucket_acl" "demo" {\n  acl = "public-read"\n}\n', encoding="utf-8")
             workflows = root / ".github" / "workflows"
             workflows.mkdir(parents=True)
-            (workflows / "unsafe.yml").write_text("name: unsafe\npermissions: write-all\n", encoding="utf-8")
+            (workflows / "unsafe.yml").write_text(
+                "name: unsafe\npermissions: write-all\nsteps:\n"
+                "  - uses: vendor/action@main\n"
+                "  - uses: ./local-action@main\n"
+                "  - uses: actions/checkout@0123456789abcdef\n"
+                "    with:\n      persist-credentials: true\n",
+                encoding="utf-8",
+            )
             (root / "ordinary.yml").write_text("permissions: write-all\n", encoding="utf-8")
             rules = {finding.rule_id for finding in scan(root, Config())}
             self.assertEqual(rules, {
                 "CODE-PY-PICKLE", "IAC-DOCKER-LATEST", "IAC-DOCKER-CURL-PIPE",
-                "IAC-TF-PUBLIC-ACL", "CI-GHA-WRITE-ALL",
+                "IAC-TF-PUBLIC-ACL", "CI-GHA-WRITE-ALL", "CI-GHA-MUTABLE-ACTION",
+                "CI-GHA-PERSIST-CREDENTIALS",
             })
 
     def test_exclusions_and_ignored_rules(self) -> None:
@@ -116,7 +126,8 @@ class ScannerTests(unittest.TestCase):
             json_path = root / "report.json"
             sarif_path = root / "report.sarif"
             ruleset_path = root / "ruleset.json"
-            self.assertEqual(main([str(root), "--json", str(json_path), "--sarif", str(sarif_path), "--ruleset-manifest", str(ruleset_path)]), 1)
+            provenance_path = root / "provenance.json"
+            self.assertEqual(main([str(root), "--json", str(json_path), "--sarif", str(sarif_path), "--ruleset-manifest", str(ruleset_path), "--provenance", str(provenance_path)]), 1)
             self.assertEqual(json.loads(json_path.read_text())["findings"][0]["severity"], "medium")
             self.assertEqual(json.loads(json_path.read_text())["policy"]["repository_owner"], "unassigned")
             sarif = json.loads(sarif_path.read_text())
@@ -126,6 +137,7 @@ class ScannerTests(unittest.TestCase):
             self.assertNotIn("primaryLocationLineHash", fingerprints)
             self.assertEqual(sarif["runs"][0]["properties"]["vulcanaryPolicy"]["remediation_sla_days"]["high"], 7)
             self.assertEqual(json.loads(ruleset_path.read_text(encoding="utf-8"))["digest"], json.loads(json_path.read_text(encoding="utf-8"))["policy"]["ruleset"]["digest"])
+            self.assertEqual({item["name"] for item in json.loads(provenance_path.read_text(encoding="utf-8"))["subject"]}, {"report.json", "report.sarif", "ruleset.json"})
 
     def test_default_threshold_allows_medium(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -329,6 +341,26 @@ class ScannerTests(unittest.TestCase):
                 ("@scope/demo", "2.1.0", "pnpm"), ("vite", "5.4.0", "pnpm"),
             ])
             self.assertTrue(next(item for item in packages if item.name == "vite").direct)
+
+    def test_discovers_modern_python_locks_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            content = (
+                'version = 1\n\n[[package]]\nname = "requests"\nversion = "2.32.0"\n'
+                '\n[[package]]\nname = "urllib3"\nversion = "2.2.2"\n'
+            )
+            (root / "uv.lock").write_text(content, encoding="utf-8")
+            nested = root / "service"
+            nested.mkdir()
+            (nested / "poetry.lock").write_text(content, encoding="utf-8")
+            packages = discover_packages(root)
+            self.assertEqual(
+                {(item.name, item.version, item.manager, item.direct) for item in packages},
+                {
+                    ("requests", "2.32.0", "uv", False), ("urllib3", "2.2.2", "uv", False),
+                    ("requests", "2.32.0", "poetry", False), ("urllib3", "2.2.2", "poetry", False),
+                },
+            )
 
     def test_normalizes_osv_advisories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

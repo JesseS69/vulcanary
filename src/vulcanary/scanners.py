@@ -40,13 +40,17 @@ RULES = [
     Rule("IAC-TF-PUBLIC-INGRESS", "Terraform allows ingress from the internet", re.compile(r'cidr_blocks\s*=\s*\[[^\]]*["\']0\.0\.0\.0/0["\']'), Severity.HIGH, "iac", "Restrict ingress CIDRs and ports to required sources."),
     Rule("IAC-TF-PUBLIC-ACL", "Terraform configures a public object-storage ACL", re.compile(r'\bacl\s*=\s*["\']public-(?:read|read-write)["\']'), Severity.HIGH, "iac", "Use a private ACL and grant narrowly scoped access through an explicit policy."),
     Rule("CI-GHA-WRITE-ALL", "GitHub Actions grants write-all permissions", re.compile(r"^\s*permissions\s*:\s*write-all\s*$", re.I | re.M), Severity.HIGH, "ci", "Declare the minimum required permissions and default unspecified scopes to none."),
+    Rule("CI-GHA-MUTABLE-ACTION", "GitHub Action uses a mutable branch reference", re.compile(r"^\s*-?\s*uses\s*:\s*(?!\./)[^\s#]+@(?:main|master)\s*(?:#.*)?$", re.I | re.M), Severity.HIGH, "ci", "Pin third-party actions to a reviewed full commit SHA and let dependency automation propose updates."),
+    Rule("CI-GHA-PERSIST-CREDENTIALS", "Checkout credentials remain available to later steps", re.compile(r"^\s*persist-credentials\s*:\s*true\s*(?:#.*)?$", re.I | re.M), Severity.MEDIUM, "ci", "Set persist-credentials to false unless later steps explicitly require GitHub token-backed pushes."),
 ]
 
 
 def ruleset_manifest() -> dict:
     rules = [{
         "id": rule.id, "title": rule.title, "severity": rule.severity.name.lower(),
-        "category": rule.category, "extensions": sorted(rule.extensions), "remediation": rule.remediation,
+        "category": rule.category, "extensions": sorted(rule.extensions),
+        "pattern": rule.pattern.pattern, "pattern_flags": rule.pattern.flags,
+        "remediation": rule.remediation,
     } for rule in sorted(RULES, key=lambda item: item.id)]
     canonical = json.dumps(rules, sort_keys=True, separators=(",", ":")).encode()
     return {"version": 1, "algorithm": "sha256", "digest": hashlib.sha256(canonical).hexdigest(), "rules": rules}

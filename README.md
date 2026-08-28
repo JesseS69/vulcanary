@@ -114,8 +114,8 @@ The rule ID, owner, ISO expiration date, and meaningful justification are mandat
 
 - Secret patterns: AWS access keys, GitHub tokens, and private keys
 - SAST patterns: selected Python and JavaScript execution/XSS sinks plus unsafe Python deserialization
-- IaC and CI patterns: root containers, floating base tags, download-to-shell builds, public Terraform ingress or storage ACLs, and GitHub Actions `write-all` permissions
-- Dependency advisories: pinned npm, Yarn Classic/Berry, pnpm, and Python dependencies queried against OSV
+- IaC and CI patterns: root containers, floating base tags, download-to-shell builds, public Terraform ingress or storage ACLs, GitHub Actions `write-all` permissions, mutable action branches, and persisted checkout credentials
+- Dependency advisories: npm, Yarn Classic/Berry, pnpm, pinned requirements, Poetry, uv, and PDM lockfile packages queried against OSV
 - Conservative reachability context: observed JavaScript/TypeScript and Python imports, including imported direct parents of vulnerable transitive npm packages
 - Shortest npm dependency chains with runtime/development parent scope and explicit tooling-path classification
 - Read-only remediation recommendations that prefer verified parent or platform upgrades over unscoped transitive overrides
@@ -191,7 +191,9 @@ Other public repositories can call `.github/workflows/security-scan.yml` as a re
 
 The included GitHub Actions workflow automatically runs pinned Semgrep Community Edition, Gitleaks, Trivy, and Checkov containers. Source is mounted read-only, temporary reports stay outside the checkout, Semgrep metrics are disabled, Gitleaks output is fully redacted, and no scanner receives the Docker socket. Vulcanary applies one policy gate to all four reports. No scanner account or API token is required.
 
-Every scan can export `--ruleset-manifest vulcanary-ruleset.json`. The canonical manifest lists each built-in rule's identifier, severity, category, supported extensions, and remediation text with a deterministic SHA-256 digest. JSON/SARIF metadata, the dashboard, and CI artifacts carry the same digest so rule changes are reviewable rather than silent.
+Every scan can export `--ruleset-manifest vulcanary-ruleset.json`. The canonical manifest lists each built-in rule's identifier, severity, category, supported extensions, detector pattern and flags, and remediation text with a deterministic SHA-256 digest. JSON/SARIF metadata, the dashboard, and CI artifacts carry the same digest so rule changes are reviewable rather than silent.
+
+`--provenance vulcanary-provenance.json` creates an in-toto Statement v1 containing SHA-256 subjects for the generated JSON, SARIF, CycloneDX, SPDX, and ruleset artifacts. The statement explicitly marks itself unsigned; a trusted CI identity or key-backed signer must sign it externally before it should be treated as an attestation. Vulcanary never invents or stores signing keys.
 
 ## Roadmap
 
@@ -202,7 +204,7 @@ Every scan can export `--ruleset-manifest vulcanary-ruleset.json`. The canonical
 5. **Hosted control plane:** add authenticated workers, tenant isolation, RBAC, durable audit storage, and explicit source-retention controls without weakening the local-first mode.
 6. **Supply-chain controls:** add SPDX, signed attestations, container inventories, and merge/deploy policy enforcement.
 
-Vulcanary consumes OSV rather than maintaining a private vulnerability database, preserving advisory identifiers and fixed versions in its normalized findings. Exact Python pins in `requirements*.txt` can be upgraded locally when OSV identifies a same-major fix; the branch must still pass rescanning and configured project checks before commit. Yarn and pnpm findings remain read-only until equivalent lockfile rollback and verification coverage is available.
+Vulcanary consumes OSV rather than maintaining a private vulnerability database, preserving advisory identifiers and fixed versions in its normalized findings. Exact Python pins in `requirements*.txt` can be upgraded locally when OSV identifies a same-major fix; the branch must still pass rescanning and configured project checks before commit. Yarn, pnpm, Poetry, uv, and PDM findings remain read-only until equivalent lockfile rollback and verification coverage is available.
 
 ## Security boundaries
 
