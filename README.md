@@ -80,6 +80,8 @@ Copy `.vulcanary.example.json` to `.vulcanary.json` in the repository being scan
 
 Verification commands are opt-in and executed directly without a shell after a proposed dependency fix passes its security rescan. Only configure commands you trust; scanned repositories are otherwise treated as hostile input. Command output is not returned to the dashboard, preventing accidental leakage of tokens or other build-log secrets.
 
+Repositories can declare `repository_owner`, `security_contact`, and severity-specific `remediation_sla_days` in `.vulcanary.json`. The dashboard records when each stable finding fingerprint was first seen, calculates its deadline, and labels it on track, due soon, or overdue. First-seen history remains local and survives rescans so unresolved findings cannot reset their deadline by moving lines.
+
 ### Risk acceptance and expiration
 
 Structured `suppressions` are fingerprint-scoped and require a reason (`false_positive`, `mitigated`, `accepted_risk`, or `deferred`), owner, meaningful justification, and ISO expiration date. Active exceptions suppress only the matching finding. Exceptions expiring within 14 days are highlighted in the dashboard; expired exceptions stop suppressing the underlying finding and add a high-severity governance finding that fails the default CI policy. Invalid, duplicate, or incomplete entries fail configuration loading.

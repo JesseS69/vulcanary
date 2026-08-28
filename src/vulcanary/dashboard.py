@@ -6,7 +6,7 @@ import re
 import threading
 import webbrowser
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files  # nosemgrep: python.lang.compatibility.python37.python37-compatibility-importlib2 -- requires Python 3.11+
@@ -42,6 +42,7 @@ class RepositoryScan:
     suppressions: list[dict]
     suppression_change: dict
     report_sources: list[dict]
+    policy: dict
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -63,6 +64,7 @@ class DashboardState:
         self.verified_fixes: dict[str, dict] = {}
         self.pending_source_fix: dict | None = None
         self.external_reports: dict[str, dict[str, list[Path]]] = {}
+        self.finding_first_seen: dict[str, str] = {}
         if history_path and history_path.exists():
             try:
                 payload = json.loads(history_path.read_text(encoding="utf-8"))
@@ -77,12 +79,15 @@ class DashboardState:
                 self.remediation_audit = list(remediation_audit)[-200:] if isinstance(remediation_audit, list) else []
                 verified = payload.get("verified_fixes", {})
                 self.verified_fixes = verified if isinstance(verified, dict) else {}
+                first_seen = payload.get("finding_first_seen", {})
+                self.finding_first_seen = first_seen if isinstance(first_seen, dict) else {}
             except (OSError, ValueError, TypeError):
                 self.history = []
                 self.inventory_snapshots = {}
                 self.suppression_snapshots = {}
                 self.suppression_audit = []
                 self.remediation_audit = []
+                self.finding_first_seen = {}
 
     def scan_repository(self, path: Path, external_reports: dict[str, list[Path]] | None = None) -> RepositoryScan:
         import time
@@ -139,6 +144,22 @@ class DashboardState:
                 "removed": [previous_suppressions[fingerprint] for fingerprint in removed_suppressions],
             }
             scanned_at = datetime.now(timezone.utc).isoformat()
+            governed_findings = []
+            overdue_count = 0
+            for finding in findings:
+                first_seen = self.finding_first_seen.setdefault(finding.fingerprint, scanned_at)
+                first_seen_at = datetime.fromisoformat(first_seen)
+                sla_days = config.remediation_sla_days[finding.severity.name.lower()]
+                deadline = first_seen_at + timedelta(days=sla_days)
+                remaining_days = (deadline - datetime.fromisoformat(scanned_at)).total_seconds() / 86400
+                status = "overdue" if remaining_days < 0 else "due_soon" if remaining_days <= 3 else "on_track"
+                overdue_count += status == "overdue"
+                policy = {
+                    "owner": config.repository_owner, "security_contact": config.security_contact,
+                    "first_seen": first_seen, "deadline": deadline.isoformat(), "sla_days": sla_days,
+                    "status": status, "days_remaining": max(0, int(remaining_days)),
+                }
+                governed_findings.append(finding.to_dict() | {"metadata": dict(finding.metadata, policy=policy)})
             for action, records in (("added", suppression_change["added"]), ("changed", suppression_change["changed"]), ("removed", suppression_change["removed"])):
                 for record in records:
                     self.suppression_audit.append({
@@ -152,11 +173,12 @@ class DashboardState:
                 name=root.name,
                 scanned_at=scanned_at,
                 duration_ms=round((time.perf_counter() - started) * 1000),
-                findings=[finding.to_dict() for finding in findings],
+                findings=governed_findings,
                 inventory_change=inventory_change,
                 suppressions=suppression_register,
                 suppression_change=suppression_change,
                 report_sources=report_sources,
+                policy={"owner": config.repository_owner, "security_contact": config.security_contact, "overdue_count": overdue_count, "sla_days": config.remediation_sla_days},
             )
             self.repositories[str(root)] = result
             current_fingerprints = {finding["fingerprint"] for finding in result.findings}
@@ -183,6 +205,7 @@ class DashboardState:
                         "history": self.history, "inventory_snapshots": self.inventory_snapshots,
                         "suppression_snapshots": self.suppression_snapshots, "suppression_audit": self.suppression_audit,
                         "remediation_audit": self.remediation_audit,
+                        "finding_first_seen": self.finding_first_seen,
                         "verified_fixes": self.verified_fixes,
                     }, indent=2) + "\n", encoding="utf-8")
                 except OSError:

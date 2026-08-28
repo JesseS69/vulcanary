@@ -15,6 +15,7 @@ DEFAULT_EXCLUDES = [
     "*.min.js", "*.map", "coverage/**", ".pytest_cache/**",
 ]
 SUPPRESSION_REASONS = {"false_positive", "mitigated", "accepted_risk", "deferred"}
+DEFAULT_REMEDIATION_SLA_DAYS = {"critical": 1, "high": 7, "medium": 30, "low": 90, "info": 180}
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,9 @@ class Config:
     max_file_bytes: int = 1_000_000
     verify_commands: list[list[str]] = field(default_factory=list)
     verify_timeout_seconds: int = 300
+    repository_owner: str = "unassigned"
+    security_contact: str | None = None
+    remediation_sla_days: dict[str, int] = field(default_factory=lambda: dict(DEFAULT_REMEDIATION_SLA_DAYS))
 
     def is_suppressed(self, fingerprint: str, today: date | None = None) -> bool:
         if fingerprint in self.ignored_fingerprints:
@@ -118,6 +122,17 @@ class Config:
         overlap = fingerprints & set(ignored_fingerprints)
         if overlap:
             raise ValueError(f"fingerprint {sorted(overlap)[0]} cannot appear in both suppressions and ignored_fingerprints")
+        repository_owner = data.get("repository_owner", "unassigned")
+        security_contact = data.get("security_contact")
+        if not isinstance(repository_owner, str) or len(repository_owner.strip()) < 2:
+            raise ValueError("repository_owner must be a non-empty owner name")
+        if security_contact is not None and (not isinstance(security_contact, str) or len(security_contact.strip()) < 3):
+            raise ValueError("security_contact must be a non-empty contact string")
+        sla_data = data.get("remediation_sla_days", {})
+        if not isinstance(sla_data, dict) or any(key not in DEFAULT_REMEDIATION_SLA_DAYS for key in sla_data):
+            raise ValueError("remediation_sla_days may contain only critical, high, medium, low, and info")
+        if any(not isinstance(value, int) or isinstance(value, bool) or value < 1 or value > 3650 for value in sla_data.values()):
+            raise ValueError("remediation_sla_days values must be integers from 1 to 3650")
         return cls(
             fail_on=Severity.parse(data.get("fail_on", "high")),
             exclude=DEFAULT_EXCLUDES + exclusions,
@@ -127,4 +142,7 @@ class Config:
             max_file_bytes=int(data.get("max_file_bytes", 1_000_000)),
             verify_commands=commands,
             verify_timeout_seconds=max(1, min(int(data.get("verify_timeout_seconds", 300)), 1800)),
+            repository_owner=repository_owner.strip(),
+            security_contact=security_contact.strip() if security_contact else None,
+            remediation_sla_days={**DEFAULT_REMEDIATION_SLA_DAYS, **sla_data},
         )

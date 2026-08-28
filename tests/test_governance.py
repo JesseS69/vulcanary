@@ -88,6 +88,21 @@ class GovernanceTests(unittest.TestCase):
         register = config.suppression_register()
         self.assertEqual({item["scope"] for item in register}, {"rule", "fingerprint"})
 
+    def test_repository_owner_and_sla_policy_are_validated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".vulcanary.json").write_text(json.dumps({
+                "repository_owner": "platform-team", "security_contact": "security@example.com",
+                "remediation_sla_days": {"critical": 2, "high": 10},
+            }), encoding="utf-8")
+            config = Config.load(root)
+            self.assertEqual(config.repository_owner, "platform-team")
+            self.assertEqual(config.remediation_sla_days["critical"], 2)
+            self.assertEqual(config.remediation_sla_days["medium"], 30)
+            (root / ".vulcanary.json").write_text(json.dumps({"remediation_sla_days": {"high": 0}}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "1 to 3650"):
+                Config.load(root)
+
     @staticmethod
     def _write_config(root: Path, fingerprint: str, owner: str = "security@example.com", expires: str = "2099-01-01") -> None:
         (root / ".vulcanary.json").write_text(json.dumps({

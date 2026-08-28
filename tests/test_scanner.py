@@ -145,6 +145,8 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(snapshot["summary"]["total"], 1)
             self.assertEqual(snapshot["summary"]["counts"]["medium"], 1)
             self.assertEqual(snapshot["findings"][0]["repository"], root.name)
+            self.assertEqual(snapshot["findings"][0]["metadata"]["policy"]["owner"], "unassigned")
+            self.assertEqual(snapshot["repositories"][0]["policy"]["sla_days"]["medium"], 30)
 
     def test_dashboard_rescan_all_refreshes_tracked_repositories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

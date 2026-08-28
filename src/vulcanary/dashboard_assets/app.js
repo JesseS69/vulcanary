@@ -110,7 +110,9 @@ function renderRepositories() {
     const inventoryLabel = changes.baseline ? `${changes.current_count || 0} components · baseline` : `${changes.current_count || 0} components · +${changes.added.length} / −${changes.removed.length}`;
     const inventoryButton = `<button class="inventory-change secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Inventory changes</button>`;
     const scanners = [...new Set(repo.findings.map(f => f.scanner))].sort().join(' · ');
-    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">${repo.duration_ms} ms · ${severe} high priority · ${reachable} import-observed · ${inventoryLabel} · ${escapeHtml(scanners || 'builtin')}</span><div class="repo-actions">${sbom}${inventoryButton}${evaluate}${platform}</div></div>`;
+    const owner = repo.policy?.owner || 'unassigned';
+    const overdue = Number(repo.policy?.overdue_count) || 0;
+    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">Owner ${escapeHtml(owner)} · ${overdue} overdue · ${repo.duration_ms} ms · ${severe} high priority · ${reachable} import-observed · ${inventoryLabel} · ${escapeHtml(scanners || 'builtin')}</span><div class="repo-actions">${sbom}${inventoryButton}${evaluate}${platform}</div></div>`;
   }).join('');
   document.querySelectorAll('.parent-evaluate').forEach(button => button.addEventListener('click', () => evaluateParents(button)));
   document.querySelectorAll('.platform-evaluate').forEach(button => button.addEventListener('click', () => evaluatePlatform(button)));
@@ -353,7 +355,9 @@ function openFinding(fingerprint) {
   $('#dialog-severity').className = `severity ${f.severity}`;
   $('#dialog-severity').textContent = f.severity;
   const priority = f.metadata?.priority;
-  $('#dialog-priority').textContent = priority ? `${priority.label} (${priority.score}/100). ${priority.reason}` : 'Not scored.';
+  const policy = f.metadata?.policy;
+  const deadline = policy ? ` Owner: ${policy.owner}. Deadline: ${new Date(policy.deadline).toLocaleDateString()} (${policy.status.replaceAll('_', ' ')}).` : '';
+  $('#dialog-priority').textContent = (priority ? `${priority.label} (${priority.score}/100). ${priority.reason}` : 'Not scored.') + deadline;
   $('#dialog-scanner').textContent = `${f.scanner} · ${f.category}`;
   $('#dialog-location').textContent = `${f.repository} · ${f.path}:${f.line}`;
   $('#dialog-description').textContent = f.description;
