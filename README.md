@@ -49,6 +49,8 @@ Eligible findings have checkboxes in the remediation queue. **Select all safe fi
 
 Select verified findings and choose **Preview fixes** to review the exact candidate and affected files. Vulcanary requires a clean Git worktree, creates a dedicated `vulcanary/fixes-*` or `vulcanary/fix-expo-*` branch, applies the evaluated change with lifecycle scripts disabled, rescans the repository, and runs explicitly configured project checks. **Commit verified fixes** appears only after every selected advisory is cleared and every check passes. A failed rescan or project check restores the original branch and working tree. Vulcanary never pushes or merges a fix branch automatically.
 
+Supported source findings expose **Draft fix** instead of a disabled checkbox. Source recipes are deliberately structural and fail closed when the source shape differs from the reviewed pattern. The dashboard displays a unified diff before application, creates a `vulcanary/source-fix-*` branch, and subjects the draft to the same project-check, rescan, rollback, and guarded-commit workflow. The first recipe replaces a narrowly recognized static `innerHTML` construction with explicit DOM nodes and `textContent`; dynamic HTML assignments remain review-only.
+
 ## Configuration
 
 Copy `.vulcanary.example.json` to `.vulcanary.json` in the repository being scanned:
@@ -107,7 +109,7 @@ Prefer fingerprint-scoped suppressions over blanket rule ignores. A single sourc
 - A GitHub Actions workflow that uploads results to code scanning
 - Multi-repository local dashboard with automatic rescans
 - Isolated parent-package and coordinated Expo upgrade evaluation
-- Verified fix branches with rollback, project checks, rescanning, and guarded commits
+- Verified dependency, platform, and supported source-fix branches with rollback, project checks, rescanning, and guarded commits
 - CycloneDX dependency inventory and change tracking
 - Fingerprint-scoped, owned, expiring security exceptions with a local audit trail
 
@@ -158,7 +160,7 @@ The included GitHub Actions workflow automatically runs pinned Semgrep Community
 
 ## Roadmap
 
-1. **Verified source patches:** generate contextual source-code diffs, display them before application, and subject them to the same branch, test, rescan, and rollback gates as dependency fixes.
+1. **Source-recipe expansion:** add reviewed transformations for more SAST rules and an optional, explicitly configured AI drafting adapter without weakening deterministic validation gates.
 2. **Scanner expansion:** add container-image targets and a controlled process for reviewing external ruleset updates.
 3. **Exposure context:** correlate findings with routes, runtime assets, deploys, and internet reachability without using absence of evidence as proof of safety.
 4. **Team workflow:** add repository ownership, remediation SLAs, notifications, and ticket integrations.

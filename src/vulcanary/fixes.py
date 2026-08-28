@@ -60,7 +60,7 @@ def _resolve_executable(command: list[str]) -> list[str]:
 def rollback_changes(repository: str, branch: str, original_branch: str) -> dict:
     root = Path(repository).resolve()
     current = _git(root, "branch", "--show-current").stdout.strip()
-    allowed = ("vulcanary/fixes-", "vulcanary/fix-expo-", "vulcanary/migrate-expo-")
+    allowed = ("vulcanary/fixes-", "vulcanary/fix-expo-", "vulcanary/migrate-expo-", "vulcanary/source-fix-")
     if current != branch or not branch.startswith(allowed):
         raise ValueError("Rollback refused: repository is not on the expected Vulcanary fix branch")
     restored = _git(root, "restore", "--source=HEAD", "--staged", "--worktree", "--", ".")
@@ -150,11 +150,11 @@ def apply_changes(plan: dict) -> dict:
 def commit_changes(repository: str, branch: str) -> dict:
     root = Path(repository).resolve()
     current = _git(root, "branch", "--show-current").stdout.strip()
-    allowed = ("vulcanary/fixes-", "vulcanary/fix-expo-", "vulcanary/migrate-expo-")
+    allowed = ("vulcanary/fixes-", "vulcanary/fix-expo-", "vulcanary/migrate-expo-", "vulcanary/source-fix-")
     if current != branch or not branch.startswith(allowed):
         raise ValueError("The repository is not on the expected Vulcanary fix branch")
     _git(root, "add", "-u")
-    message = "fix: apply verified Vulcanary remediation" if "expo-" in branch else "fix: apply verified Vulcanary dependency upgrades"
+    message = "fix: apply verified Vulcanary remediation" if "expo-" in branch or "source-fix-" in branch else "fix: apply verified Vulcanary dependency upgrades"
     committed = _git(root, "commit", "-m", message)
     if committed.returncode:
         raise ValueError(committed.stderr.strip() or "Could not commit fixes")

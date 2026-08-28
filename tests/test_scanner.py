@@ -183,6 +183,30 @@ class ScannerTests(unittest.TestCase):
                 self.assertEqual(restored.inventory_change["added"], [])
                 self.assertEqual(restored.inventory_change["removed"], [])
 
+    def test_dashboard_persists_and_invalidates_verified_fixes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repository"
+            root.mkdir()
+            source = root / "main.js"
+            source.write_text("element.innerHTML = input", encoding="utf-8")
+            history = Path(directory) / "dashboard-history.json"
+            with patch("vulcanary.dashboard.scan_dependencies", return_value=([], None)):
+                state = DashboardState(history)
+                state.scan_repository(root)
+                fingerprint = state.snapshot()["findings"][0]["fingerprint"]
+                state.verified_fixes[fingerprint] = {
+                    "strategy": "platform", "candidate_version": "1.2.3", "is_migration": False,
+                    "resolved": ["GHSA-demo"], "repository": str(root.resolve()),
+                }
+                state.scan_repository(root)
+                restored = DashboardState(history)
+                restored.scan_repository(root)
+                finding = restored.snapshot()["findings"][0]
+                self.assertTrue(finding["metadata"]["fix_eligible"])
+                source.write_text("element.textContent = input", encoding="utf-8")
+                restored.scan_repository(root)
+            self.assertEqual(restored.verified_fixes, {})
+
     def test_discovers_pinned_dependencies_and_skips_generated_copies(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

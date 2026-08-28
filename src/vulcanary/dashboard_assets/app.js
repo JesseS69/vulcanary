@@ -2,6 +2,7 @@ const $ = (selector) => document.querySelector(selector);
 let state = {repositories: [], findings: [], summary: {total: 0, counts: {}, categories: {}}};
 const selectedFixes = new Set();
 let appliedBatch = null;
+let sourceProposalFingerprint = null;
 
 const colors = {critical: '#ff4d6d', high: '#ff8359', medium: '#f8c15c', low: '#73b7ff', info: '#929aa5'};
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
@@ -190,8 +191,21 @@ async function evaluateFindingFix(button, fingerprint) {
   const finding = state.findings.find(item => item.fingerprint === fingerprint);
   if (!finding) return;
   if (button.dataset.mode === 'code') {
-    openFinding(fingerprint);
-    $('#dialog-remediation').textContent = `Draft required: ${finding.remediation || 'replace the unsafe source pattern with context-safe DOM or encoding APIs'}. Vulcanary will not apply an unverified source rewrite.`;
+    button.disabled = true;
+    button.textContent = 'Drafting…';
+    try {
+      const body = await postJson('/api/source/preview', {fingerprint});
+      const proposal = body.proposal;
+      sourceProposalFingerprint = fingerprint;
+      $('#fix-summary').textContent = `${proposal.recipe.replaceAll('-', ' ')} · ${proposal.file}:${proposal.line}`;
+      $('#fix-plan').innerHTML = `<div class="fix-item"><strong>Verified source recipe</strong><span>${escapeHtml(proposal.rule_id)}</span><pre class="source-diff">${escapeHtml(proposal.diff)}</pre></div>`;
+      $('#fix-message').textContent = 'Review the exact diff. Application occurs on an isolated source-fix branch and must pass project checks plus a rescan.';
+      $('#apply-fixes').disabled = false;
+      $('#apply-fixes').textContent = 'Apply source draft';
+      $('#commit-fixes').classList.add('hidden');
+      $('#fix-dialog').showModal();
+    } catch(error) { $('#scan-message').textContent = error.message; }
+    finally { button.disabled = false; button.textContent = 'Draft fix'; }
     return;
   }
   const proxy = {disabled:false, textContent:'Evaluate', dataset:{repository:finding.repository_path}};
@@ -310,6 +324,8 @@ $('#select-safe').addEventListener('click', () => { state.findings.filter(f => f
 $('#evaluate-all').addEventListener('click', evaluateAllBlocked);
 $('#preview-fixes').addEventListener('click', async () => {
   $('#fix-message').textContent = '';
+  sourceProposalFingerprint = null;
+  $('#apply-fixes').textContent = 'Apply to working tree';
   try { const body = await postJson('/api/fixes/preview', {fingerprints:[...selectedFixes]}); renderFixPlan(body.plan); $('#fix-dialog').showModal(); }
   catch(error) { $('#fix-message').textContent = error.message; }
 });
@@ -331,12 +347,15 @@ $('#create-migration-branch').addEventListener('click', async () => {
 $('#apply-fixes').addEventListener('click', async () => {
   const button = $('#apply-fixes'); button.disabled = true; button.textContent = 'Applying and rescanning…'; $('#fix-message').textContent = '';
   try {
-    const body = await postJson('/api/fixes/apply', {fingerprints:[...selectedFixes]}); appliedBatch = body.applied;
+    const body = sourceProposalFingerprint
+      ? await postJson('/api/source/apply', {fingerprint:sourceProposalFingerprint})
+      : await postJson('/api/fixes/apply', {fingerprints:[...selectedFixes]});
+    appliedBatch = body.applied;
     if (!appliedBatch.validation.passed) throw new Error(appliedBatch.diagnostic || `Validation failed and the fix was rolled back.`);
     $('#fix-message').textContent = `Applied on ${appliedBatch.branch}. Rescan passed with ${appliedBatch.validation.finding_count} remaining findings.`;
     $('#commit-fixes').classList.remove('hidden'); await refresh();
   } catch(error) { $('#fix-message').textContent = error.message; }
-  finally { button.disabled = false; button.textContent = 'Apply to working tree'; }
+  finally { button.disabled = false; button.textContent = sourceProposalFingerprint ? 'Apply source draft' : 'Apply to working tree'; }
 });
 $('#commit-fixes').addEventListener('click', async () => {
   const button = $('#commit-fixes'); button.disabled = true; button.textContent = 'Committing…';

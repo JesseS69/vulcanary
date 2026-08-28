@@ -20,6 +20,7 @@ from .governance import suppression_findings
 from .fixes import apply_changes, commit_changes, preview as preview_fixes, rollback_changes, run_verification
 from .evaluator import create_expo_candidate_branch, evaluate_expo_platform, evaluate_parent_upgrades
 from .adapters import PARSERS, import_report
+from .source_fixes import apply_source_fix, preview_source_fix
 
 
 @dataclass
@@ -51,6 +52,7 @@ class DashboardState:
         self.last_platform_evaluation: dict | None = None
         self.last_platform_repository: str | None = None
         self.verified_fixes: dict[str, dict] = {}
+        self.pending_source_fix: dict | None = None
         self.external_reports: dict[str, dict[str, list[Path]]] = {}
         if history_path and history_path.exists():
             try:
@@ -62,6 +64,8 @@ class DashboardState:
                 self.suppression_snapshots = suppression_snapshots if isinstance(suppression_snapshots, dict) else {}
                 audit = payload.get("suppression_audit", [])
                 self.suppression_audit = list(audit)[-500:] if isinstance(audit, list) else []
+                verified = payload.get("verified_fixes", {})
+                self.verified_fixes = verified if isinstance(verified, dict) else {}
             except (OSError, ValueError, TypeError):
                 self.history = []
                 self.inventory_snapshots = {}
@@ -143,6 +147,11 @@ class DashboardState:
                 report_sources=report_sources,
             )
             self.repositories[str(root)] = result
+            current_fingerprints = {finding["fingerprint"] for finding in result.findings}
+            self.verified_fixes = {
+                fingerprint: proposal for fingerprint, proposal in self.verified_fixes.items()
+                if proposal.get("repository") != str(root) or fingerprint in current_fingerprints
+            }
             self.inventory_snapshots[str(root)] = current_inventory
             self.suppression_snapshots[str(root)] = current_suppressions
             self.history.append({
@@ -161,6 +170,7 @@ class DashboardState:
                     self.history_path.write_text(json.dumps({
                         "history": self.history, "inventory_snapshots": self.inventory_snapshots,
                         "suppression_snapshots": self.suppression_snapshots, "suppression_audit": self.suppression_audit,
+                        "verified_fixes": self.verified_fixes,
                     }, indent=2) + "\n", encoding="utf-8")
                 except OSError:
                     # Scanning must still work in restricted or read-only environments.
@@ -198,11 +208,20 @@ class DashboardState:
         candidate = {
             "strategy": "platform", "candidate_version": evaluation["candidate_version"],
             "is_migration": bool(evaluation.get("is_migration")), "resolved": sorted(resolved),
+            "repository": repository,
         }
         for finding in self.snapshot()["findings"]:
             advisory = finding.get("metadata", {}).get("advisory")
             if finding["repository_path"] == repository and advisory in resolved:
                 self.verified_fixes[finding["fingerprint"]] = candidate
+        if self.history_path:
+            try:
+                self.history_path.parent.mkdir(parents=True, exist_ok=True)
+                payload = json.loads(self.history_path.read_text(encoding="utf-8")) if self.history_path.exists() else {}
+                payload["verified_fixes"] = self.verified_fixes
+                self.history_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            except (OSError, ValueError, TypeError):
+                pass
 
     def rescan_all(self) -> list[RepositoryScan]:
         with self._lock:
@@ -293,7 +312,7 @@ def make_handler(state: DashboardState):
 
         def do_POST(self) -> None:
             route = urlparse(self.path).path
-            if route not in {"/api/scan", "/api/rescan", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/parents/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
+            if route not in {"/api/scan", "/api/rescan", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/source/preview", "/api/source/apply", "/api/parents/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             try:
@@ -321,6 +340,37 @@ def make_handler(state: DashboardState):
                     self._json({"scan": result.to_dict(), "state": state.snapshot()})
                 elif route == "/api/fixes/preview":
                     self._json({"plan": preview_fixes(state.snapshot()["findings"], payload.get("fingerprints", []))})
+                elif route == "/api/source/preview":
+                    fingerprint = payload.get("fingerprint")
+                    matches = [finding for finding in state.snapshot()["findings"] if finding["fingerprint"] == fingerprint]
+                    if len(matches) != 1:
+                        raise ValueError("Select one current source finding")
+                    proposal = preview_source_fix(matches[0])
+                    state.pending_source_fix = proposal
+                    self._json({"proposal": {key: proposal[key] for key in ("fingerprint", "repository", "file", "files", "line", "rule_id", "recipe", "diff")}})
+                elif route == "/api/source/apply":
+                    proposal = state.pending_source_fix
+                    if not proposal or proposal["fingerprint"] != payload.get("fingerprint"):
+                        raise ValueError("Preview the current source fix before applying it")
+                    applied = apply_source_fix(proposal)
+                    result = state.scan_repository(Path(applied["repository"]))
+                    remaining = [finding for finding in result.findings if finding["rule_id"] == proposal["rule_id"] and finding["path"] == proposal["file"]]
+                    config = Config.load(Path(applied["repository"]))
+                    applied["validation"] = {"passed": not remaining, "remaining": [finding["fingerprint"] for finding in remaining], "finding_count": len(result.findings)}
+                    applied["verification"] = run_verification(
+                        applied["repository"], config.verify_commands, config.verify_timeout_seconds,
+                    ) if not remaining else {"passed": False, "skipped": True, "results": []}
+                    if remaining or not applied["verification"]["passed"]:
+                        applied["rollback"] = rollback_changes(applied["repository"], applied["branch"], applied["original_branch"])
+                        restored = state.scan_repository(Path(applied["repository"]))
+                        applied["validation"]["finding_count"] = len(restored.findings)
+                        applied["validation"]["passed"] = False
+                        applied["diagnostic"] = "The source draft failed validation; the original branch and clean working tree were restored."
+                        state.pending_fix = None
+                    else:
+                        state.pending_fix = applied
+                    state.pending_source_fix = None
+                    self._json({"applied": applied})
                 elif route == "/api/fixes/apply":
                     plan = preview_fixes(state.snapshot()["findings"], payload.get("fingerprints", []))
                     strategies = {item.get("strategy") for item in plan["changes"]}
