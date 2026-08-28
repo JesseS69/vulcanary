@@ -75,13 +75,14 @@ function renderGovernance() {
 function renderRemediationHistory() {
   const records = state.remediation_audit || [];
   const invalid = records.filter(item => !item.receipt_valid).length;
+  const rolledBack = records.filter(item => item.action === 'rolled_back').length;
   $('#receipt-count').textContent = records.length;
-  $('#receipt-summary').textContent = `${records.length} receipt${records.length === 1 ? '' : 's'} · ${invalid} invalid`;
+  $('#receipt-summary').textContent = `${records.length} receipt${records.length === 1 ? '' : 's'} · ${rolledBack} rolled back · ${invalid} invalid`;
   // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Receipt fields are escaped, numeric counts are normalized, and download URLs contain validated proof hashes only.
   $('#receipt-list').innerHTML = records.slice(0, 20).map(item => {
-    const status = item.receipt_valid ? (item.action === 'committed' ? 'COMMITTED' : 'VERIFIED') : 'INVALID PROOF';
-    const blocked = item.receipt_valid ? '' : 'blocked';
-    const checks = item.checks_skipped ? 'checks not configured' : `${Number(item.checks?.length) || 0} checks passed`;
+    const status = item.receipt_valid ? (item.action === 'committed' ? 'COMMITTED' : item.action === 'rolled_back' ? 'ROLLED BACK' : 'VERIFIED') : 'INVALID PROOF';
+    const blocked = item.receipt_valid && item.action !== 'rolled_back' ? '' : 'blocked';
+    const checks = item.checks_skipped ? 'checks skipped' : item.checks_passed ? `${Number(item.checks?.length) || 0} checks passed` : 'project checks failed';
     const download = item.receipt_valid ? `<a class="secondary" href="/api/remediation/receipt.json?proof=${encodeURIComponent(item.proof)}" download>Download receipt</a>` : '';
     return `<div class="fix-item ${blocked}"><strong>${escapeHtml(item.repository)} · ${escapeHtml(status)}</strong><span>${escapeHtml(new Date(item.created_at).toLocaleString())} · ${escapeHtml(checks)} · ${Number(item.finding_count) || 0} findings remain</span><span>${escapeHtml((item.changed_files || []).join(' · ') || 'No tracked files')}</span><span class="mono">SHA-256 ${escapeHtml(item.proof || 'missing')}</span><div class="fix-actions">${download}</div></div>`;
   }).join('') || '<p class="muted">No remediation receipts yet. A receipt appears after a dashboard fix passes its rescan and project checks.</p>';

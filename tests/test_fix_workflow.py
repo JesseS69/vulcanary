@@ -147,6 +147,9 @@ class FixWorkflowTests(unittest.TestCase):
             self.assertEqual(restored.remediation_audit[0]["proof"], receipt["proof"])
             self.assertEqual(restored.snapshot()["remediation_audit"][0]["action"], "verified")
             self.assertTrue(restored.snapshot()["remediation_audit"][0]["receipt_valid"])
+            failed = remediation_receipt({**applied, "validation": {"passed": False, "remaining": ["finding-a"], "finding_count": 3}, "verification": {"passed": False, "skipped": True, "results": []}}, ["finding-a"])
+            self.assertTrue(remediation_receipt_valid(failed))
+            self.assertFalse(failed["rescan_passed"])
 
 
 if __name__ == "__main__":

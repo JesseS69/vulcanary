@@ -486,6 +486,8 @@ def make_handler(state: DashboardState):
                         applied["validation"]["finding_count"] = len(restored.findings)
                         applied["validation"]["passed"] = False
                         applied["diagnostic"] = "The source draft failed validation; the original branch and clean working tree were restored."
+                        applied["receipt"] = remediation_receipt(applied, [proposal["fingerprint"]])
+                        state.record_remediation("rolled_back", applied["receipt"])
                         state.pending_fix = None
                     else:
                         applied["receipt"] = remediation_receipt(applied, [proposal["fingerprint"]])
@@ -526,6 +528,9 @@ def make_handler(state: DashboardState):
                         else:
                             applied["validation"]["passed"] = False
                             applied["diagnostic"] = f"Project verification failed at {applied['verification']['failed_command']}; npm files and branch were restored."
+                        selected = [item for item in payload.get("fingerprints", []) if isinstance(item, str)]
+                        applied["receipt"] = remediation_receipt(applied, selected)
+                        state.record_remediation("rolled_back", applied["receipt"])
                         state.pending_fix = None
                     else:
                         selected = [item for item in payload.get("fingerprints", []) if isinstance(item, str)]
