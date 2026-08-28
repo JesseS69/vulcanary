@@ -64,14 +64,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     imported = [finding for finding in imported if finding.rule_id not in config.ignored_rules and not config.is_suppressed(finding.fingerprint)]
     imported = list({finding.fingerprint: finding for finding in imported}.values())
-    findings = sorted(findings + imported, key=lambda f: (-int(f.severity), f.path, f.line))
+    findings = findings + imported
     if not args.offline:
         dependency_findings, warning = scan_dependencies(root)
-        dependency_findings = analyze_reachability(root, dependency_findings, config)
         dependency_findings = [finding for finding in dependency_findings if not config.is_suppressed(finding.fingerprint)]
-        findings = sorted(findings + dependency_findings, key=lambda f: (-int(f.severity), f.path, f.line))
+        findings += dependency_findings
         if warning:
             print(f"warning: {warning}", file=sys.stderr)
+    findings = analyze_reachability(root, findings, config)
     findings = sorted(findings + suppression_findings(config), key=lambda finding: (-int(finding.severity), finding.path, finding.line))
     print(render_console(findings))
     if args.json_path:

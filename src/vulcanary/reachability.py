@@ -20,6 +20,7 @@ _TOOLING_PACKAGES = {
     "jest", "eslint", "typescript", "metro", "webpack", "vite", "rollup",
     "@expo/config", "@expo/config-plugins", "@expo/cli",
 }
+_SEVERITY_PRIORITY = {"critical": 90, "high": 70, "medium": 45, "low": 20, "info": 5}
 
 
 def _npm_root(specifier: str) -> str | None:
@@ -40,6 +41,40 @@ def _path_contains_tooling(paths: list[list[str]]) -> bool:
             if name.lower() in _TOOLING_PACKAGES:
                 return True
     return False
+
+
+def remediation_priority(finding: Finding, metadata: dict) -> dict:
+    score = _SEVERITY_PRIORITY[finding.severity.name.lower()]
+    usage = metadata.get("usage", {}).get("classification", "unknown")
+    factors = [f"{finding.severity.name.lower()} advisory severity"]
+    adjustments = {
+        "source_observed": (15, "scanner matched repository source"),
+        "direct_application_import_observed": (15, "direct application import observed"),
+        "runtime_parent_observed": (10, "runtime parent import observed"),
+        "tooling_path_via_runtime_parent": (-25, "build or test tooling path"),
+        "development_observed": (-20, "development dependency path"),
+        "development_not_observed": (-25, "development-only path not statically observed"),
+        "runtime_not_observed": (-5, "runtime path not statically observed"),
+    }
+    adjustment, factor = adjustments.get(usage, (0, "execution context remains unknown"))
+    score += adjustment
+    factors.append(factor)
+    if metadata.get("fix_eligible"):
+        score += 5
+        factors.append("safe automatic fix available")
+    if finding.category == "dependency" and not metadata.get("fixed_version"):
+        score -= 5
+        factors.append("no patched release identified")
+    score = max(0, min(100, score))
+    level = "urgent" if score >= 85 else "high_priority" if score >= 65 else "planned" if score >= 35 else "monitor_upstream"
+    labels = {"urgent": "Urgent", "high_priority": "High priority", "planned": "Planned", "monitor_upstream": "Monitor upstream"}
+    return {
+        "level": level,
+        "label": labels[level],
+        "score": score,
+        "reason": "; ".join(factors) + ". Severity remains unchanged.",
+        "factors": factors,
+    }
 
 
 def observed_imports(root: Path, config: Config) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
@@ -73,7 +108,17 @@ def analyze_reachability(root: Path, findings: list[Finding], config: Config) ->
     analyzed = []
     for finding in findings:
         if finding.category != "dependency":
-            analyzed.append(finding)
+            metadata = dict(finding.metadata)
+            metadata["usage"] = {
+                "classification": "source_observed",
+                "reason": "The scanner matched repository source or configuration directly.",
+            }
+            metadata["recommendation"] = {
+                "action": "review_source_fix",
+                "reason": finding.remediation or "Review the matched source in context, apply the narrowest safe fix, run project checks, and rescan.",
+            }
+            metadata["priority"] = remediation_priority(finding, metadata)
+            analyzed.append(replace(finding, metadata=metadata))
             continue
         metadata = dict(finding.metadata)
         package = str(metadata.get("package", ""))
@@ -152,5 +197,6 @@ def analyze_reachability(root: Path, findings: list[Finding], config: Config) ->
             action = "trace_upstream"
             recommendation = "Trace the introducing package and prefer an upstream upgrade over a global transitive override."
         metadata["recommendation"] = {"action": action, "reason": recommendation}
+        metadata["priority"] = remediation_priority(finding, metadata)
         analyzed.append(replace(finding, metadata=metadata))
     return analyzed

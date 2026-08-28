@@ -187,6 +187,12 @@ function dependencyPathStatus(finding) {
   return `<div class="fix-unavailable" title="${escapeHtml(paths.map(path => path.join(' → ')).join('\n'))}"><span>DEPENDENCY PATH</span> ${escapeHtml(first + additional)}</div>`;
 }
 
+function priorityBadge(finding) {
+  const priority = finding.metadata?.priority;
+  if (!priority) return '<span class="priority unknown">Unscored</span>';
+  return `<span class="priority ${escapeHtml(priority.level)}" title="${escapeHtml(priority.reason)}">${escapeHtml(priority.label)}</span><span class="priority-score">${priority.score}</span>`;
+}
+
 function renderFindings() {
   const findings = filteredFindings();
   $('#findings-empty').classList.toggle('hidden', findings.length > 0);
@@ -203,7 +209,7 @@ function renderFindings() {
       : noPatchedRelease
         ? `<button class="fix-path secondary" type="button" disabled title="No patched release is available">No patch</button>`
         : `<button class="fix-path secondary" type="button" data-mode="${hasParents ? (f.metadata.parent_packages.includes('expo') ? 'platform' : 'parent') : 'code'}">${hasParents ? 'Evaluate' : 'Draft fix'}</button>`;
-    return `<tr data-fingerprint="${escapeHtml(f.fingerprint)}"><td class="check-cell">${control}</td><td><span class="severity ${f.severity}">${f.severity}</span></td><td><strong>${escapeHtml(f.title)}</strong><div class="muted">${escapeHtml(f.rule_id)}</div>${dependencyPathStatus(f)}${reachabilityStatus(f)}${manualStatus}</td><td>${escapeHtml(f.repository)}</td><td class="location">${escapeHtml(f.path)}:${f.line}</td><td><span class="pill">${escapeHtml(f.scanner)}</span></td><td>${escapeHtml(f.category)}</td></tr>`;
+    return `<tr data-fingerprint="${escapeHtml(f.fingerprint)}"><td class="check-cell">${control}</td><td><span class="severity ${f.severity}">${f.severity}</span></td><td>${priorityBadge(f)}</td><td><strong>${escapeHtml(f.title)}</strong><div class="muted">${escapeHtml(f.rule_id)}</div>${dependencyPathStatus(f)}${reachabilityStatus(f)}${manualStatus}</td><td>${escapeHtml(f.repository)}</td><td class="location">${escapeHtml(f.path)}:${f.line}</td><td><span class="pill">${escapeHtml(f.scanner)}</span></td><td>${escapeHtml(f.category)}</td></tr>`;
   }).join('');
   document.querySelectorAll('#finding-rows tr').forEach(row => {
     row.addEventListener('click', event => { if (!event.target.classList.contains('fix-check') && !event.target.classList.contains('fix-path')) openFinding(row.dataset.fingerprint); });
@@ -307,6 +313,8 @@ function openFinding(fingerprint) {
   $('#dialog-title').textContent = f.title;
   $('#dialog-severity').className = `severity ${f.severity}`;
   $('#dialog-severity').textContent = f.severity;
+  const priority = f.metadata?.priority;
+  $('#dialog-priority').textContent = priority ? `${priority.label} (${priority.score}/100). ${priority.reason}` : 'Not scored.';
   $('#dialog-scanner').textContent = `${f.scanner} · ${f.category}`;
   $('#dialog-location').textContent = `${f.repository} · ${f.path}:${f.line}`;
   $('#dialog-description').textContent = f.description;

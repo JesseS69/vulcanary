@@ -178,6 +178,13 @@ tbody tr:hover { background: #e8ff5b08; }
 .threat-progress.low::-moz-progress-bar { background: var(--low); }
 .threat-progress.info::-webkit-progress-value { background: #929aa5; }
 .threat-progress.info::-moz-progress-bar { background: #929aa5; }
+.priority { display: inline-block; padding: 4px 7px; border: 1px solid #555; font-size: 10px; font-weight: 900; letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
+.priority.urgent { border-color: var(--critical); color: var(--critical); }
+.priority.high_priority { border-color: var(--high); color: var(--high); }
+.priority.planned { border-color: var(--medium); color: var(--medium); }
+.priority.monitor_upstream { border-color: var(--low); color: var(--low); }
+.priority.unknown { color: #929aa5; }
+.priority-score { display: block; margin-top: 4px; color: #929aa5; font: 10px var(--mono); text-align: center; }
 
 .sidebar-foot {
   border-top: 1px solid #292a22;

@@ -15,6 +15,16 @@ def dependency(package: str, ecosystem: str = "npm", direct: bool = True, parent
 
 
 class ReachabilityTests(unittest.TestCase):
+    def test_scores_non_dependency_source_findings(self) -> None:
+        finding = Finding(
+            "CODE-test", "Unsafe source", "test", Severity.HIGH, "code", "app.py", 1,
+            remediation="Replace the unsafe operation.",
+        )
+        analyzed = analyze_reachability(Path("."), [finding], Config())[0]
+        self.assertEqual(analyzed.metadata["usage"]["classification"], "source_observed")
+        self.assertEqual(analyzed.metadata["priority"]["level"], "urgent")
+        self.assertEqual(analyzed.metadata["recommendation"]["action"], "review_source_fix")
+
     def test_collects_static_javascript_and_python_imports(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -40,6 +50,8 @@ class ReachabilityTests(unittest.TestCase):
             self.assertEqual(reachability[1]["matched_packages"], ["express"])
             self.assertEqual(analyzed[1].metadata["usage"]["classification"], "runtime_parent_observed")
             self.assertEqual(analyzed[1].metadata["recommendation"]["action"], "evaluate_parent_upgrade")
+            self.assertEqual(analyzed[0].metadata["priority"]["level"], "urgent")
+            self.assertEqual(analyzed[1].metadata["priority"]["level"], "high_priority")
             self.assertEqual(reachability[2]["status"], "not_observed")
             self.assertIn("may still be reachable", reachability[2]["reason"])
 
@@ -52,6 +64,9 @@ class ReachabilityTests(unittest.TestCase):
             analyzed = analyze_reachability(root, [finding], Config())[0]
             self.assertEqual(analyzed.metadata["usage"]["classification"], "tooling_path_via_runtime_parent")
             self.assertIn("production execution is not established", analyzed.metadata["usage"]["reason"])
+            self.assertEqual(analyzed.metadata["priority"]["level"], "planned")
+            self.assertEqual(analyzed.metadata["priority"]["score"], 45)
+            self.assertIn("Severity remains unchanged", analyzed.metadata["priority"]["reason"])
 
 
 if __name__ == "__main__":

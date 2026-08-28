@@ -96,9 +96,9 @@ class DashboardState:
         if external_reports is not None:
             self.external_reports[repository_key] = external_reports
         dependency_findings, dependency_warning = scan_dependencies(root)
-        dependency_findings = analyze_reachability(root, dependency_findings, config)
         dependency_findings = [finding for finding in dependency_findings if not config.is_suppressed(finding.fingerprint)]
-        findings = sorted(findings + dependency_findings + imported + suppression_findings(config), key=lambda f: (-int(f.severity), f.path, f.line))
+        findings = analyze_reachability(root, findings + dependency_findings + imported, config)
+        findings = sorted(findings + suppression_findings(config), key=lambda f: (-int(f.severity), f.path, f.line))
         current_inventory = inventory_snapshot(discover_packages(root))
         suppression_register = config.suppression_register()
         current_suppressions = {item["fingerprint"]: item for item in suppression_register}

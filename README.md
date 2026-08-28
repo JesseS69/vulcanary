@@ -105,6 +105,7 @@ Prefer fingerprint-scoped suppressions over blanket rule ignores. A single sourc
 - Conservative reachability context: observed JavaScript/TypeScript and Python imports, including imported direct parents of vulnerable transitive npm packages
 - Shortest npm dependency chains with runtime/development parent scope and explicit tooling-path classification
 - Read-only remediation recommendations that prefer verified parent or platform upgrades over unscoped transitive overrides
+- Contextual remediation priority that keeps advisory severity intact while separating urgent runtime exposure from planned or upstream-monitored tooling findings
 - Stable fingerprints and deduplication
 - Configurable exclusions and severity gates
 - Console, normalized JSON, and SARIF 2.1 output
@@ -120,6 +121,8 @@ Dependency scanning sends only package names, ecosystems, and pinned versions to
 Reachability is local static context, not proof of safety. **Import observed** means Vulcanary found an application import of the vulnerable package or an introducing direct parent. **Import not observed** never suppresses or lowers a finding because dynamic imports, build tooling, plugins, and runtime entry points may still execute it.
 
 For transitive npm findings, Vulcanary records the shortest chain from each introducing direct dependency to the vulnerable version. Usage labels distinguish direct application imports, observed runtime parents, development-only parents, and recognizable build/test tooling paths. These labels add context without changing severity or claiming that missing static evidence proves safety.
+
+Remediation priority is a deterministic operational score, separate from advisory severity. It combines severity with direct/import evidence, runtime versus tooling context, patched-release availability, and automatic-fix eligibility. The dashboard reports **Urgent**, **High priority**, **Planned**, or **Monitor upstream** while always retaining the scanner's original severity.
 
 ## Software bill of materials
 
