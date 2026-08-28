@@ -20,6 +20,7 @@ function render() {
   renderRepositories();
   renderLedger();
   renderGovernance();
+  renderRemediationHistory();
   renderFilterOptions();
   renderFindings();
 }
@@ -69,6 +70,21 @@ function renderGovernance() {
   const audit = state.suppression_audit || [];
   // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Every audit field is escaped and fallback markup is static.
   $('#governance-audit').innerHTML = audit.slice(0, 12).map(item => `<div class="fix-item"><strong>${escapeHtml(item.repository)} · ${escapeHtml(item.action)} exception</strong><span>${escapeHtml(item.owner)} · ${escapeHtml(item.reason)} · ${escapeHtml(item.expires || 'no expiration')}</span><span class="mono">${escapeHtml(item.fingerprint)} · ${escapeHtml(new Date(item.scanned_at).toLocaleString())}</span></div>`).join('') || '<p class="muted">No exception changes have been recorded yet.</p>';
+}
+
+function renderRemediationHistory() {
+  const records = state.remediation_audit || [];
+  const invalid = records.filter(item => !item.receipt_valid).length;
+  $('#receipt-count').textContent = records.length;
+  $('#receipt-summary').textContent = `${records.length} receipt${records.length === 1 ? '' : 's'} · ${invalid} invalid`;
+  // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Receipt fields are escaped, numeric counts are normalized, and download URLs contain validated proof hashes only.
+  $('#receipt-list').innerHTML = records.slice(0, 20).map(item => {
+    const status = item.receipt_valid ? (item.action === 'committed' ? 'COMMITTED' : 'VERIFIED') : 'INVALID PROOF';
+    const blocked = item.receipt_valid ? '' : 'blocked';
+    const checks = item.checks_skipped ? 'checks not configured' : `${Number(item.checks?.length) || 0} checks passed`;
+    const download = item.receipt_valid ? `<a class="secondary" href="/api/remediation/receipt.json?proof=${encodeURIComponent(item.proof)}" download>Download receipt</a>` : '';
+    return `<div class="fix-item ${blocked}"><strong>${escapeHtml(item.repository)} · ${escapeHtml(status)}</strong><span>${escapeHtml(new Date(item.created_at).toLocaleString())} · ${escapeHtml(checks)} · ${Number(item.finding_count) || 0} findings remain</span><span>${escapeHtml((item.changed_files || []).join(' · ') || 'No tracked files')}</span><span class="mono">SHA-256 ${escapeHtml(item.proof || 'missing')}</span><div class="fix-actions">${download}</div></div>`;
+  }).join('') || '<p class="muted">No remediation receipts yet. A receipt appears after a dashboard fix passes its rescan and project checks.</p>';
 }
 
 function renderChart(counts) {

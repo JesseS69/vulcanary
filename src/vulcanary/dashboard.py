@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import re
 import threading
 import webbrowser
 from dataclasses import asdict, dataclass
@@ -22,6 +23,12 @@ from .fixes import apply_changes, commit_changes, preview as preview_fixes, roll
 from .evaluator import create_expo_candidate_branch, evaluate_expo_platform, evaluate_parent_upgrades
 from .adapters import PARSERS, import_report
 from .source_fixes import apply_source_fix, preview_source_fix
+
+
+REMEDIATION_RECEIPT_FIELDS = (
+    "repository", "branch", "created_at", "selected_fingerprints", "changed_files",
+    "rescan_passed", "remaining_selected", "finding_count", "checks_passed", "checks_skipped", "checks",
+)
 
 
 @dataclass
@@ -203,7 +210,7 @@ class DashboardState:
             "findings": findings,
             "history": list(reversed(self.history)),
             "suppression_audit": list(reversed(self.suppression_audit)),
-            "remediation_audit": list(reversed(self.remediation_audit)),
+            "remediation_audit": [dict(item, receipt_valid=remediation_receipt_valid(item)) for item in reversed(self.remediation_audit)],
             "summary": {"total": len(findings), "counts": counts, "categories": categories, "scanners": scanners},
         }
 
@@ -267,6 +274,15 @@ def remediation_receipt(applied: dict, selected: list[str]) -> dict:
     return {**receipt, "proof": hashlib.sha256(canonical).hexdigest()}
 
 
+def remediation_receipt_valid(record: dict) -> bool:
+    try:
+        receipt = {field: record[field] for field in REMEDIATION_RECEIPT_FIELDS}
+        canonical = json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()
+        return isinstance(record.get("proof"), str) and hashlib.sha256(canonical).hexdigest() == record["proof"]
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 def _assets() -> Path:
     return Path(str(files("vulcanary").joinpath("dashboard_assets")))
 
@@ -311,6 +327,17 @@ def make_handler(state: DashboardState):
                 document = cyclonedx_document(scan_result.name, discover_packages(Path(repository)), scan_result.findings)
                 safe_name = "".join(character if character.isalnum() or character in {"-", "_"} else "-" for character in scan_result.name)
                 self._download_json(document, f"{safe_name}-vulcanary.cdx.json")
+                return
+            if path == "/api/remediation/receipt.json":
+                proof = parse_qs(parsed.query).get("proof", [""])[0]
+                if not re.fullmatch(r"[0-9a-f]{64}", proof):
+                    self.send_error(HTTPStatus.BAD_REQUEST, "A valid remediation proof is required")
+                    return
+                record = next((item for item in reversed(state.remediation_audit) if item.get("proof") == proof), None)
+                if not record:
+                    self.send_error(HTTPStatus.NOT_FOUND, "Remediation receipt not found")
+                    return
+                self._download_json({"version": 1, "receipt_valid": remediation_receipt_valid(record), "receipt": record}, f"vulcanary-remediation-{proof[:12]}.json")
                 return
             if path in {"/api/platform/report.json", "/api/platform/report.sarif"}:
                 if not state.last_platform_evaluation:

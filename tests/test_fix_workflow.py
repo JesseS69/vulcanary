@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from vulcanary.dashboard import DashboardState, remediation_receipt
+from vulcanary.dashboard import DashboardState, remediation_receipt, remediation_receipt_valid
 from vulcanary.fixes import apply_changes, commit_changes, preview, run_verification
 
 
@@ -138,12 +138,15 @@ class FixWorkflowTests(unittest.TestCase):
             }
             receipt = remediation_receipt(applied, ["finding-b", "finding-a"])
             self.assertEqual(len(receipt["proof"]), 64)
+            self.assertTrue(remediation_receipt_valid(receipt))
+            self.assertFalse(remediation_receipt_valid(dict(receipt, finding_count=3)))
             self.assertEqual(receipt["selected_fingerprints"], ["finding-a", "finding-b"])
             state = DashboardState(history)
             state.record_remediation("verified", receipt)
             restored = DashboardState(history)
             self.assertEqual(restored.remediation_audit[0]["proof"], receipt["proof"])
             self.assertEqual(restored.snapshot()["remediation_audit"][0]["action"], "verified")
+            self.assertTrue(restored.snapshot()["remediation_audit"][0]["receipt_valid"])
 
 
 if __name__ == "__main__":
