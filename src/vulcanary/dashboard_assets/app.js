@@ -33,7 +33,7 @@ function renderLedger() {
     previousByRepository.set(item.repository, item);
     return {...item, delta: previous ? item.finding_count - previous.finding_count : null};
   }).reverse().slice(0, 20);
-  // vulcanary:ignore CODE-JS-INNERHTML -- external ledger strings are escaped; remaining values are numeric or fixed labels.
+  // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- External ledger strings are escaped; remaining values are numeric or fixed labels.
   $('#ledger-list').innerHTML = entries.map(item => {
     const delta = item.delta === null ? 'BASELINE' : item.delta === 0 ? 'NO CHANGE' : item.delta > 0 ? `+${item.delta} OPEN` : `${Math.abs(item.delta)} CLEARED`;
     const deltaClass = item.delta === null || item.delta === 0 ? 'steady' : item.delta > 0 ? 'worse' : 'better';
@@ -44,7 +44,7 @@ function renderLedger() {
 function renderFilterOptions() {
   const update = (selector, values, label) => {
     const target = $(selector); const selected = target.value;
-    // vulcanary:ignore CODE-JS-INNERHTML -- option values are escaped and label is a fixed caller-owned noun.
+    // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Option values are escaped and label is a fixed caller-owned noun.
     target.innerHTML = `<option value="all">All ${label}</option>` + values.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join('');
     target.value = values.includes(selected) ? selected : 'all';
   };
@@ -56,24 +56,25 @@ function renderGovernance() {
   const records = state.repositories.flatMap(repo => (repo.suppressions || []).map(item => ({...item, repository:repo.name})));
   const expiring = records.filter(item => item.status === 'expiring').length;
   const expired = records.filter(item => item.status === 'expired').length;
-  const legacy = records.filter(item => item.status === 'legacy').length;
+  const invalid = records.filter(item => ['invalid','legacy'].includes(item.status)).length;
   $('#governance-count').textContent = records.length;
-  $('#governance-summary').textContent = `${records.length} exceptions · ${expiring} expiring · ${expired} expired`;
-  // vulcanary:ignore CODE-JS-INNERHTML -- every exception field is escaped; CSS state is selected from a fixed allowlist.
+  $('#governance-summary').textContent = `${records.length} exceptions · ${expiring} expiring · ${expired} expired · ${invalid} invalid`;
+  // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Every exception field is escaped; CSS state is selected from a fixed allowlist.
   $('#governance-register').innerHTML = records.map(item => {
-    const blocked = ['expired','legacy'].includes(item.status) ? 'blocked' : '';
+    const blocked = ['expired','legacy','invalid'].includes(item.status) ? 'blocked' : '';
     const expiry = item.expires ? `expires ${item.expires}` : 'no expiration';
-    return `<div class="fix-item ${blocked}"><strong>${escapeHtml(item.repository)} · ${escapeHtml(item.reason.replaceAll('_', ' '))}</strong><span>${escapeHtml(item.status.toUpperCase())} · ${escapeHtml(item.owner)} · ${escapeHtml(expiry)}</span><span>${escapeHtml(item.justification)}</span><span class="mono">${escapeHtml(item.fingerprint)}</span></div>`;
+    const source = item.path ? `${item.path}:${item.line} · ${item.rule_id}` : item.fingerprint;
+    return `<div class="fix-item ${blocked}"><strong>${escapeHtml(item.repository)} · ${escapeHtml(item.reason.replaceAll('_', ' '))}</strong><span>${escapeHtml(item.status.toUpperCase())} · ${escapeHtml(item.owner)} · ${escapeHtml(expiry)}</span><span>${escapeHtml(item.justification)}</span><span class="mono">${escapeHtml(source)} · ${escapeHtml(item.fingerprint)}</span></div>`;
   }).join('') || '<p class="muted">No security exceptions are active. Findings follow normal remediation policy.</p>';
   const audit = state.suppression_audit || [];
-  // vulcanary:ignore CODE-JS-INNERHTML -- every audit field is escaped and fallback markup is static.
+  // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Every audit field is escaped and fallback markup is static.
   $('#governance-audit').innerHTML = audit.slice(0, 12).map(item => `<div class="fix-item"><strong>${escapeHtml(item.repository)} · ${escapeHtml(item.action)} exception</strong><span>${escapeHtml(item.owner)} · ${escapeHtml(item.reason)} · ${escapeHtml(item.expires || 'no expiration')}</span><span class="mono">${escapeHtml(item.fingerprint)} · ${escapeHtml(new Date(item.scanned_at).toLocaleString())}</span></div>`).join('') || '<p class="muted">No exception changes have been recorded yet.</p>';
 }
 
 function renderChart(counts) {
   const normalized = Object.fromEntries(['critical','high','medium','low','info'].map(level => [level, Math.max(0, Number(counts[level]) || 0)]));
   const max = Math.max(MIN_THREAT_SCALE, ...Object.values(normalized));
-  // vulcanary:ignore CODE-JS-INNERHTML -- severity names are fixed and all count values are normalized finite numbers.
+  // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Severity names are fixed and all count values are normalized finite numbers.
   $('#severity-chart').innerHTML = ['critical','high','medium','low','info'].map(level => `<div class="bar-row"><span>${level}</span><progress class="threat-progress ${level}" max="${max}" value="${normalized[level]}" aria-label="${level}: ${normalized[level]}"></progress><strong>${normalized[level]}</strong></div>`).join('');
 }
 
@@ -81,7 +82,7 @@ function renderRepositories() {
   const target = $('#repo-list');
   if (!state.repositories.length) { target.className = 'repo-list empty-state'; target.textContent = 'No repositories under watch.'; return; }
   target.className = 'repo-list';
-  // vulcanary:ignore CODE-JS-INNERHTML -- repository strings are escaped or URL-encoded; counts and timing are backend numbers.
+  // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Repository strings are escaped or URL-encoded; counts and timing are backend numbers.
   target.innerHTML = state.repositories.map(repo => {
     const severe = repo.findings.filter(f => ['critical','high'].includes(f.severity)).length;
     const reachable = repo.findings.filter(f => ['direct_import_observed','parent_import_observed'].includes(f.metadata?.reachability?.status)).length;
@@ -107,7 +108,7 @@ function showInventoryChange(repository) {
   $('#inventory-title').textContent = `${repo.name} dependency inventory`;
   $('#inventory-summary').textContent = change.baseline ? `Baseline established with ${change.current_count} components. Future scans will be compared with this snapshot.` : `${change.previous_count} → ${change.current_count} components · ${change.added.length} added · ${change.removed.length} removed`;
   const renderItems = (items, label, className) => items.map(item => `<div class="fix-item ${className}"><strong>${escapeHtml(item.name)} ${escapeHtml(item.version)}</strong><span>${label} · ${escapeHtml(item.ecosystem)} · ${item.direct ? 'direct' : 'transitive'}</span><span class="mono">${escapeHtml(item.ref)}</span></div>`).join('');
-  // vulcanary:ignore CODE-JS-INNERHTML -- inventory fields are escaped and labels/classes are fixed call-site constants.
+  // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Inventory fields are escaped and labels/classes are fixed call-site constants.
   $('#inventory-results').innerHTML = renderItems(change.added, 'ADDED', '') + renderItems(change.removed, 'REMOVED', 'blocked') || '<p class="muted">No dependency inventory changes since the previous scan.</p>';
   $('#inventory-dialog').showModal();
 }
@@ -124,7 +125,7 @@ async function evaluatePlatform(button) {
     const outcome = item.resolved?.length ? `Clears ${item.resolved.length} of ${item.advisories.length} targeted advisories.${checks}` : checks;
     const migration = !item.is_migration && item.migration_candidate ? ` Expo ${item.migration_candidate} is available only as an explicit SDK migration.` : '';
     const mode = item.is_migration ? 'Explicit SDK migration' : 'Current SDK line';
-    // vulcanary:ignore CODE-JS-INNERHTML -- all evaluation response strings are escaped; class selection is boolean.
+    // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- All evaluation response strings are escaped; class selection is boolean.
     $('#parent-results').innerHTML = `<div class="fix-item ${item.status === 'safe_candidate' ? '' : 'blocked'}"><strong>Expo SDK set → ${escapeHtml(item.candidate_version || '—')}</strong><span>${escapeHtml(mode)} · ${escapeHtml(labels[item.status] || item.status)}</span><span class="mono">${escapeHtml(outcome + migration)} · ${escapeHtml((item.changed_files || []).join(' · '))}</span></div>`;
     $('#platform-downloads').classList.remove('hidden');
     $('#create-migration-branch').classList.toggle('hidden', !item.is_migration);
@@ -141,7 +142,7 @@ async function evaluateParents(button) {
   try {
     const body = await postJson('/api/parents/evaluate', {repository:button.dataset.repository});
     const labels = {safe_candidate:'Safe candidate',verification_skipped:'Security pass · checks not configured',verification_failed:'Project checks failed',partial_improvement:'Partial improvement',still_vulnerable:'Still vulnerable',install_failed:'Dependency conflict or migration required',worktree_failed:'Worktree failed',no_candidate:'No compatible candidate'};
-    // vulcanary:ignore CODE-JS-INNERHTML -- all parent evaluation strings are escaped; class selection is boolean.
+    // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- All parent evaluation strings are escaped; class selection is boolean.
     $('#parent-results').innerHTML = body.evaluation.results.map(item => { const outcome = item.resolved?.length ? ` · clears ${item.resolved.length} of ${item.advisories.length}` : ''; return `<div class="fix-item ${item.status === 'safe_candidate' ? '' : 'blocked'}"><strong>${escapeHtml(item.package)} ${escapeHtml(item.specification)} → ${escapeHtml(item.candidate_version || '—')}</strong><span>${escapeHtml(labels[item.status] || item.status)}${escapeHtml(outcome)}</span><span class="mono">Affects ${escapeHtml(item.vulnerable_packages.join(', '))} · ${escapeHtml(item.advisories.join(', '))}</span></div>`; }).join('') || '<p class="muted">No direct parent candidates were found.</p>';
     $('#platform-downloads').classList.add('hidden');
     $('#create-migration-branch').classList.add('hidden');
@@ -206,7 +207,7 @@ function priorityBadge(finding) {
 function renderFindings() {
   const findings = filteredFindings();
   $('#findings-empty').classList.toggle('hidden', findings.length > 0);
-  // vulcanary:ignore CODE-JS-INNERHTML -- finding/API strings pass through escapeHtml; severity and control modes are fixed scanner enums.
+  // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Finding/API strings pass through escapeHtml; severity and control modes are fixed scanner enums.
   $('#finding-rows').innerHTML = findings.map(f => {
     const eligible = Boolean(f.metadata?.fix_eligible);
     const checked = selectedFixes.has(f.fingerprint) ? 'checked' : '';
@@ -242,7 +243,7 @@ async function evaluateFindingFix(button, fingerprint) {
       const proposal = body.proposal;
       sourceProposalFingerprint = fingerprint;
       $('#fix-summary').textContent = `${proposal.recipe.replaceAll('-', ' ')} · ${proposal.file}:${proposal.line}`;
-      // vulcanary:ignore CODE-JS-INNERHTML -- proposal rule and diff are escaped before rendering.
+      // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Proposal rule and diff are escaped before rendering.
       $('#fix-plan').innerHTML = `<div class="fix-item"><strong>Verified source recipe</strong><span>${escapeHtml(proposal.rule_id)}</span><pre class="source-diff">${escapeHtml(proposal.diff)}</pre></div>`;
       $('#fix-message').textContent = 'Review the exact diff. Application occurs on an isolated source-fix branch and must pass project checks plus a rescan.';
       $('#apply-fixes').disabled = false;
@@ -286,7 +287,7 @@ async function evaluateAllBlocked() {
       if (source.length) results.push({title:`${repoFindings[0].repository} · source drafts`, status:'draft_required', detail:`${source.length} contextual code fix${source.length === 1 ? '' : 'es'} require a verified patch`});
     }
     const safeStatuses = new Set(['safe_candidate']);
-    // vulcanary:ignore CODE-JS-INNERHTML -- all aggregate evaluation strings are escaped; class selection uses a fixed status set.
+    // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- All aggregate evaluation strings are escaped; class selection uses a fixed status set.
     $('#parent-results').innerHTML = results.map(item => `<div class="fix-item ${safeStatuses.has(item.status) ? '' : 'blocked'}"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.status.replaceAll('_', ' ').toUpperCase())}</span><span class="mono">${escapeHtml(item.detail)}</span></div>`).join('') || '<p class="muted">No blocked findings need evaluation.</p>';
     $('#platform-downloads').classList.add('hidden');
     $('#create-migration-branch').classList.add('hidden');
@@ -315,7 +316,7 @@ async function postJson(url, payload = {}) {
 
 function renderFixPlan(plan) {
   $('#fix-summary').textContent = `${plan.changes.length} safe upgrade${plan.changes.length === 1 ? '' : 's'} · ${plan.blocked.length} manual review`;
-  // vulcanary:ignore CODE-JS-INNERHTML -- every fix-plan field is escaped and structural labels are static.
+  // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Every fix-plan field is escaped and structural labels are static.
   $('#fix-plan').innerHTML = [...plan.changes.map(item => `<div class="fix-item"><strong>${escapeHtml(item.package)} ${escapeHtml(item.from)} → ${escapeHtml(item.to)}</strong><span>${escapeHtml(item.strategy === 'override' ? 'TRANSITIVE OVERRIDE' : 'DIRECT UPGRADE')}</span><span class="mono">${escapeHtml(item.advisories.join(', '))} · ${escapeHtml(item.files.join(' · '))}</span></div>`), ...plan.blocked.map(item => `<div class="fix-item blocked"><strong>${escapeHtml(item.title)}</strong><span>Manual</span><span class="mono">${escapeHtml(item.reason)}</span></div>`)].join('');
   $('#apply-fixes').disabled = plan.changes.length === 0;
 }
@@ -394,7 +395,7 @@ $('#create-migration-branch').addEventListener('click', async () => {
     const body = await postJson('/api/platform/create-branch', {});
     const created = body.created;
     const files = created.changed_files?.length ? created.changed_files.join(' · ') : 'No tracked files changed';
-    // vulcanary:ignore CODE-JS-INNERHTML -- every branch-creation response string is escaped.
+    // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Every branch-creation response string is escaped.
     $('#parent-results').innerHTML = `<div class="fix-item"><strong>${escapeHtml(created.branch)}</strong><span>Draft created from ${escapeHtml(created.original_branch)} · Expo ${escapeHtml(created.candidate_version)}</span><span class="mono">Review with git diff · ${escapeHtml(files)}</span></div>`;
     $('#platform-message').textContent = 'Changes are uncommitted and have not been pushed. Review and repair project checks before committing.';
     button.classList.add('hidden');

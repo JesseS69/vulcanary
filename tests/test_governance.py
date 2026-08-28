@@ -71,6 +71,16 @@ class GovernanceTests(unittest.TestCase):
                 self.assertEqual(restored.suppression_audit[-1]["action"], "changed")
                 self.assertEqual(restored.suppression_audit[-1]["owner"], "bob@example.com")
 
+    def test_dashboard_registers_governed_inline_exception(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "main.js").write_text("// vulcanary:ignore CODE-JS-EVAL owner=alice@example.com expires=2099-01-01 -- Input is a reviewed static expression.\neval(input)\n", encoding="utf-8")
+            with patch("vulcanary.dashboard.scan_dependencies", return_value=([], None)):
+                result = DashboardState().scan_repository(root)
+            self.assertEqual(result.findings, [])
+            self.assertEqual(result.suppressions[0]["scope"], "inline")
+            self.assertEqual(result.suppressions[0]["path"], "main.js")
+
     def test_legacy_rule_and_fingerprint_ignores_are_visible(self) -> None:
         config = Config(ignored_rules={"CODE-JS-EVAL"}, ignored_fingerprints={"a" * 20})
         findings = suppression_findings(config)

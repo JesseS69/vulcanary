@@ -62,8 +62,27 @@ class ScannerTests(unittest.TestCase):
     def test_inline_rule_suppression(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "main.js").write_text("// vulcanary:ignore CODE-JS-EVAL\neval(input)\n", encoding="utf-8")
+            (root / "main.js").write_text("// vulcanary:ignore CODE-JS-EVAL owner=security@example.com expires=2099-01-01 -- Reviewed safe parser input only.\neval(input)\n", encoding="utf-8")
             self.assertEqual(scan(root, Config()), [])
+
+    def test_normalized_report_preserves_inline_exception(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "main.js").write_text("// vulcanary:ignore CODE-JS-EVAL owner=security@example.com expires=2099-01-01 -- Reviewed safe parser input only.\neval(input)\n", encoding="utf-8")
+            report = root / "report.json"
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(main([str(root), "--json", str(report), "--offline"]), 0)
+            record = json.loads(report.read_text(encoding="utf-8"))["exceptions"][0]
+            self.assertEqual((record["scope"], record["rule_id"], record["status"]), ("inline", "CODE-JS-EVAL", "active"))
+
+    def test_incomplete_and_expired_inline_suppressions_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "main.js"
+            source.write_text("// vulcanary:ignore CODE-JS-EVAL\neval(input)\n", encoding="utf-8")
+            self.assertEqual({item.rule_id for item in scan(root, Config())}, {"CODE-JS-EVAL", "GOV-INLINE-IGNORE-INVALID"})
+            source.write_text("// vulcanary:ignore CODE-JS-EVAL owner=security@example.com expires=2000-01-01 -- Previously accepted risk.\neval(input)\n", encoding="utf-8")
+            self.assertEqual({item.rule_id for item in scan(root, Config())}, {"CODE-JS-EVAL", "GOV-INLINE-IGNORE-EXPIRED"})
 
     def test_cli_policy_and_reports(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .config import Config
-from .scanners import scan
+from .scanners import inline_suppression_register, scan
 from .dependencies import discover_packages, scan_dependencies
 from .reachability import analyze_reachability
 from .sbom import cyclonedx_document, inventory_snapshot
@@ -100,7 +100,7 @@ class DashboardState:
         findings = analyze_reachability(root, findings + dependency_findings + imported, config)
         findings = sorted(findings + suppression_findings(config), key=lambda f: (-int(f.severity), f.path, f.line))
         current_inventory = inventory_snapshot(discover_packages(root))
-        suppression_register = config.suppression_register()
+        suppression_register = config.suppression_register() + inline_suppression_register(root, config)
         current_suppressions = {item["fingerprint"]: item for item in suppression_register}
         with self._lock:
             previous_inventory = self.inventory_snapshots.get(str(root))

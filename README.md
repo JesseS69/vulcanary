@@ -94,7 +94,13 @@ After a platform evaluation, the dashboard offers JSON and SARIF migration repor
 
 An explicit migration evaluation can also enable **Create draft migration branch**. This action is limited to the exact candidate Vulcanary just evaluated, requires a clean Git working tree and a named current branch, and creates a timestamped `vulcanary/migrate-expo-*` branch. It reapplies Expo's coordinated package alignment, then reports the original branch and changed files while deliberately leaving the result uncommitted for review. Vulcanary restores the repository and deletes the draft branch if setup fails; it never pushes or merges the branch automatically.
 
-Prefer fingerprint-scoped suppressions over blanket rule ignores. A single source finding can also be suppressed on its own line or the preceding line with `// vulcanary:ignore RULE-ID`.
+Prefer fingerprint-scoped suppressions over blanket rule ignores. A single source finding can use a governed inline exception on its own line or the preceding line:
+
+```javascript
+// vulcanary:ignore CODE-JS-INNERHTML owner=security@example.com expires=2027-01-31 -- Values are escaped by the shared renderer.
+```
+
+The rule ID, owner, ISO expiration date, and meaningful justification are mandatory. Valid exceptions appear in the dashboard Risk Acceptance Register and audit trail. Vulcanary warns during the final 14 days; incomplete or expired annotations fail closed and restore the underlying finding.
 
 ## Current capabilities
 

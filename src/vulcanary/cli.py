@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .config import Config
 from .reporters import baseline_identities, findings_new_since, render_console, render_github_annotations, write_json, write_sarif
-from .scanners import scan
+from .scanners import inline_suppression_register, scan
 from .dependencies import discover_packages, scan_dependencies
 from .reachability import analyze_reachability
 from .sbom import cyclonedx_document, write_cyclonedx
@@ -75,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
     findings = sorted(findings + suppression_findings(config), key=lambda finding: (-int(finding.severity), finding.path, finding.line))
     print(render_console(findings))
     if args.json_path:
-        write_json(findings, args.json_path)
+        write_json(findings, args.json_path, config.suppression_register() + inline_suppression_register(root, config))
     if args.sarif:
         write_sarif(findings, args.sarif)
     if args.sbom:

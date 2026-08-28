@@ -48,8 +48,11 @@ def render_github_annotations(findings: list[Finding]) -> str:
     return "\n".join(lines)
 
 
-def write_json(findings: list[Finding], destination: Path) -> None:
-    destination.write_text(json.dumps({"version": 1, "findings": [f.to_dict() for f in findings]}, indent=2) + "\n", encoding="utf-8")
+def write_json(findings: list[Finding], destination: Path, exceptions: list[dict] | None = None) -> None:
+    document = {"version": 1, "findings": [f.to_dict() for f in findings]}
+    if exceptions is not None:
+        document["exceptions"] = exceptions
+    destination.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 
 
 def write_sarif(findings: list[Finding], destination: Path) -> None:

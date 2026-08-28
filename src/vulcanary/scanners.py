@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import os
 import re
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Iterable
 
@@ -33,6 +35,73 @@ RULES = [
     Rule("IAC-DOCKER-ROOT", "Container runs as root", re.compile(r"^\s*USER\s+(?:root|0)\s*$", re.I | re.M), Severity.MEDIUM, "iac", "Create and switch to an unprivileged user."),
     Rule("IAC-TF-PUBLIC-INGRESS", "Terraform allows ingress from the internet", re.compile(r'cidr_blocks\s*=\s*\[[^\]]*["\']0\.0\.0\.0/0["\']'), Severity.HIGH, "iac", "Restrict ingress CIDRs and ports to required sources."),
 ]
+
+INLINE_IGNORE_PATTERN = re.compile(
+    r"^\s*(?://|#|<!--)\s*vulcanary:ignore\s+(?P<rule>[A-Z0-9-]+)\s+owner=(?P<owner>\S+)\s+expires=(?P<expires>\d{4}-\d{2}-\d{2})\s+--\s+(?P<justification>.+?)(?:\s*-->)?$"
+)
+INLINE_IGNORE_MARKER = re.compile(r"^\s*(?://|#|<!--)\s*vulcanary:ignore\b")
+
+
+@dataclass(frozen=True)
+class InlineSuppression:
+    rule_id: str
+    owner: str
+    justification: str
+    expires: str | None
+    path: str
+    line: int
+    status: str
+    error: str | None = None
+
+    @property
+    def fingerprint(self) -> str:
+        value = f"inline\0{self.path}\0{self.line}\0{self.rule_id}".encode()
+        return hashlib.sha256(value).hexdigest()[:20]
+
+    def to_dict(self) -> dict:
+        return {
+            "fingerprint": self.fingerprint, "reason": "inline_ignore", "owner": self.owner,
+            "justification": self.justification, "expires": self.expires, "status": self.status,
+            "scope": "inline", "rule_id": self.rule_id, "path": self.path, "line": self.line,
+        }
+
+
+def _parse_inline_suppression(line_text: str, path: str, line: int, today: date | None = None) -> InlineSuppression | None:
+    if not INLINE_IGNORE_MARKER.search(line_text):
+        return None
+    match = INLINE_IGNORE_PATTERN.search(line_text.strip())
+    if not match:
+        return InlineSuppression("unknown", "unmanaged", "Invalid inline exception annotation.", None, path, line, "invalid", "Required format is incomplete")
+    values = match.groupdict()
+    owner = values["owner"].strip()
+    justification = values["justification"].strip()
+    if len(owner) < 2 or len(justification) < 10:
+        return InlineSuppression(values["rule"], owner or "unmanaged", justification or "Missing justification.", values["expires"], path, line, "invalid", "Owner and a justification of at least 10 characters are required")
+    try:
+        expiry = date.fromisoformat(values["expires"])
+    except ValueError:
+        return InlineSuppression(values["rule"], owner, justification, values["expires"], path, line, "invalid", "Expiration must be a valid ISO date")
+    current = today or date.today()
+    status = "expired" if expiry < current else "expiring" if (expiry - current).days <= 14 else "active"
+    return InlineSuppression(values["rule"], owner, justification, values["expires"], path, line, status)
+
+
+def _supports_inline_suppressions(path: Path) -> bool:
+    return path.suffix.lower() in {".py", ".js", ".jsx", ".ts", ".tsx", ".tf"} or path.name.lower() in {"dockerfile", "containerfile"}
+
+
+def inline_suppression_register(root: Path, config: Config, today: date | None = None) -> list[dict]:
+    records = []
+    for path in iter_files(root, config):
+        if not _supports_inline_suppressions(path):
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (UnicodeDecodeError, OSError):
+            continue
+        rel = relative_path(path, root)
+        records.extend(record.to_dict() for number, text in enumerate(lines, 1) if (record := _parse_inline_suppression(text, rel, number, today)))
+    return records
 
 
 def iter_files(root: Path, config: Config) -> Iterable[Path]:
@@ -71,6 +140,22 @@ def scan(root: Path, config: Config) -> list[Finding]:
             continue
         rel = relative_path(path, root)
         lines = text.splitlines()
+        annotations = {
+            number: record for number, line_text in enumerate(lines, 1)
+            if (record := _parse_inline_suppression(line_text, rel, number))
+        } if _supports_inline_suppressions(path) else {}
+        for record in annotations.values():
+            if record.status not in {"invalid", "expired", "expiring"}:
+                continue
+            severity = Severity.HIGH if record.status in {"invalid", "expired"} else Severity.MEDIUM
+            title = {"invalid": "Invalid inline security exception", "expired": "Inline security exception has expired", "expiring": "Inline security exception expires soon"}[record.status]
+            findings.append(Finding(
+                f"GOV-INLINE-IGNORE-{record.status.upper()}", title,
+                record.error or f"The inline exception for {record.rule_id} is {record.status}.", severity,
+                "governance", rel, record.line, record.rule_id,
+                "Complete or renew the exception after review, or remediate the underlying finding.",
+                "vulcanary-governance", record.to_dict(),
+            ))
         for rule in RULES:
             if rule.id in config.ignored_rules:
                 continue
@@ -82,8 +167,8 @@ def scan(root: Path, config: Config) -> list[Finding]:
                 continue
             for match in rule.pattern.finditer(text):
                 line = text.count("\n", 0, match.start()) + 1
-                nearby = " ".join(lines[max(0, line - 2):line])
-                if "vulcanary:ignore" in nearby and (rule.id in nearby or "vulcanary:ignore all" in nearby):
+                candidates = [annotations[number] for number in (line - 1, line) if number in annotations]
+                if any(record.rule_id == rule.id and record.status in {"active", "expiring"} for record in candidates):
                     continue
                 evidence = match.group(0).replace("\n", " ")[:120]
                 if rule.category == "secret":
