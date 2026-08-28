@@ -191,6 +191,8 @@ Other public repositories can call `.github/workflows/security-scan.yml` as a re
 
 The included GitHub Actions workflow automatically runs pinned Semgrep Community Edition, Gitleaks, Trivy, and Checkov containers. Source is mounted read-only, temporary reports stay outside the checkout, Semgrep metrics are disabled, Gitleaks output is fully redacted, and no scanner receives the Docker socket. Vulcanary applies one policy gate to all four reports. No scanner account or API token is required.
 
+Every scan can export `--ruleset-manifest vulcanary-ruleset.json`. The canonical manifest lists each built-in rule's identifier, severity, category, supported extensions, and remediation text with a deterministic SHA-256 digest. JSON/SARIF metadata, the dashboard, and CI artifacts carry the same digest so rule changes are reviewable rather than silent.
+
 ## Roadmap
 
 1. **Source-recipe expansion:** add reviewed transformations for more SAST rules and an optional, explicitly configured AI drafting adapter without weakening deterministic validation gates.

@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .config import Config
-from .scanners import inline_suppression_register, scan
+from .scanners import inline_suppression_register, ruleset_manifest, scan
 from .dependencies import discover_packages, scan_dependencies
 from .reachability import analyze_reachability
 from .sbom import cyclonedx_document, inventory_snapshot, spdx_document
@@ -234,7 +234,7 @@ class DashboardState:
             "history": list(reversed(self.history)),
             "suppression_audit": list(reversed(self.suppression_audit)),
             "remediation_audit": [dict(item, receipt_valid=remediation_receipt_valid(item)) for item in reversed(self.remediation_audit)],
-            "summary": {"total": len(findings), "counts": counts, "categories": categories, "scanners": scanners},
+            "summary": {"total": len(findings), "counts": counts, "categories": categories, "scanners": scanners, "ruleset": {"digest": ruleset_manifest()["digest"], "rule_count": len(ruleset_manifest()["rules"])}},
         }
 
     def register_platform_evaluation(self, repository: str, evaluation: dict) -> None:
@@ -375,6 +375,9 @@ def make_handler(state: DashboardState):
                     self.send_error(HTTPStatus.NOT_FOUND, "Remediation receipt not found")
                     return
                 self._download_json({"version": 1, "receipt_valid": remediation_receipt_valid(record), "receipt": record}, f"vulcanary-remediation-{proof[:12]}.json")
+                return
+            if path == "/api/ruleset.json":
+                self._download_json(ruleset_manifest(), "vulcanary-ruleset.json")
                 return
             if path in {"/api/platform/report.json", "/api/platform/report.sarif"}:
                 if not state.last_platform_evaluation:

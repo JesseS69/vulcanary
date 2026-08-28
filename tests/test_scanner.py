@@ -16,10 +16,17 @@ from vulcanary.dashboard import DashboardState, make_handler
 from vulcanary.dependencies import discover_packages, scan_dependencies
 from vulcanary.fixes import preview
 from vulcanary.models import Severity
-from vulcanary.scanners import scan
+from vulcanary.scanners import ruleset_manifest, scan
 
 
 class ScannerTests(unittest.TestCase):
+    def test_ruleset_manifest_is_canonical_and_complete(self) -> None:
+        first = ruleset_manifest()
+        self.assertEqual(first["digest"], ruleset_manifest()["digest"])
+        self.assertEqual(len(first["digest"]), 64)
+        self.assertEqual(first["rules"], sorted(first["rules"], key=lambda item: item["id"]))
+        self.assertIn("CODE-PY-EVAL", {item["id"] for item in first["rules"]})
+
     def test_detects_code_secret_and_iac(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -108,7 +115,8 @@ class ScannerTests(unittest.TestCase):
             config.write_text(json.dumps({"fail_on": "medium"}), encoding="utf-8")
             json_path = root / "report.json"
             sarif_path = root / "report.sarif"
-            self.assertEqual(main([str(root), "--json", str(json_path), "--sarif", str(sarif_path)]), 1)
+            ruleset_path = root / "ruleset.json"
+            self.assertEqual(main([str(root), "--json", str(json_path), "--sarif", str(sarif_path), "--ruleset-manifest", str(ruleset_path)]), 1)
             self.assertEqual(json.loads(json_path.read_text())["findings"][0]["severity"], "medium")
             self.assertEqual(json.loads(json_path.read_text())["policy"]["repository_owner"], "unassigned")
             sarif = json.loads(sarif_path.read_text())
@@ -117,6 +125,7 @@ class ScannerTests(unittest.TestCase):
             self.assertIn("vulcanaryFingerprint/v1", fingerprints)
             self.assertNotIn("primaryLocationLineHash", fingerprints)
             self.assertEqual(sarif["runs"][0]["properties"]["vulcanaryPolicy"]["remediation_sla_days"]["high"], 7)
+            self.assertEqual(json.loads(ruleset_path.read_text(encoding="utf-8"))["digest"], json.loads(json_path.read_text(encoding="utf-8"))["policy"]["ruleset"]["digest"])
 
     def test_default_threshold_allows_medium(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

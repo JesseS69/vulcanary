@@ -16,6 +16,8 @@ function render() {
   $('#repo-count').textContent = `${state.repositories.length} watched`;
   $('#risk-label').textContent = counts.critical ? 'Forge at critical heat' : counts.high ? 'High heat detected' : state.summary.total ? 'Work the remediation queue' : 'Forge clear';
   $('#updated').textContent = state.repositories.length ? `Updated ${new Date(state.generated_at).toLocaleString()}` : 'Scan a repository to begin';
+  const ruleset = state.summary.ruleset;
+  $('#ruleset-info').textContent = ruleset ? `${ruleset.rule_count} rules · ${ruleset.digest.slice(0, 10)}` : 'Ruleset unavailable';
   renderChart(counts);
   renderRepositories();
   renderLedger();

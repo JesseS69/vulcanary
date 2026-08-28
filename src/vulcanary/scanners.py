@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -40,6 +41,19 @@ RULES = [
     Rule("IAC-TF-PUBLIC-ACL", "Terraform configures a public object-storage ACL", re.compile(r'\bacl\s*=\s*["\']public-(?:read|read-write)["\']'), Severity.HIGH, "iac", "Use a private ACL and grant narrowly scoped access through an explicit policy."),
     Rule("CI-GHA-WRITE-ALL", "GitHub Actions grants write-all permissions", re.compile(r"^\s*permissions\s*:\s*write-all\s*$", re.I | re.M), Severity.HIGH, "ci", "Declare the minimum required permissions and default unspecified scopes to none."),
 ]
+
+
+def ruleset_manifest() -> dict:
+    rules = [{
+        "id": rule.id, "title": rule.title, "severity": rule.severity.name.lower(),
+        "category": rule.category, "extensions": sorted(rule.extensions), "remediation": rule.remediation,
+    } for rule in sorted(RULES, key=lambda item: item.id)]
+    canonical = json.dumps(rules, sort_keys=True, separators=(",", ":")).encode()
+    return {"version": 1, "algorithm": "sha256", "digest": hashlib.sha256(canonical).hexdigest(), "rules": rules}
+
+
+def ruleset_digest() -> str:
+    return ruleset_manifest()["digest"]
 
 INLINE_IGNORE_PATTERN = re.compile(
     r"^\s*(?://|#|<!--)\s*vulcanary:ignore\s+(?P<rule>[A-Z0-9-]+)\s+owner=(?P<owner>\S+)\s+expires=(?P<expires>\d{4}-\d{2}-\d{2})\s+--\s+(?P<justification>.+?)(?:\s*-->)?$"
