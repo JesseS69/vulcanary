@@ -22,7 +22,10 @@ def preview(findings: list[dict], fingerprints: list[str]) -> dict:
             "to": meta.get("fixed_version"), "advisory": meta.get("advisory"),
             "files": ["package.json", "package-lock.json"],
             "strategy": meta.get("fix_strategy"),
+            "manager": meta.get("manager"), "dependency_file": meta.get("dependency_file"),
         }
+        if item["strategy"] == "pip":
+            item["files"] = [item["dependency_file"]]
         verified = meta.get("verified_fix")
         if verified and verified.get("strategy") == "platform":
             item.update(
@@ -30,7 +33,7 @@ def preview(findings: list[dict], fingerprints: list[str]) -> dict:
                 is_migration=bool(verified.get("is_migration")), files=["package.json", "package-lock.json"],
             )
         if meta.get("fix_eligible"):
-            key = (item["repository_path"], item["package"])
+            key = (item["repository_path"], item["package"], item.get("manager"))
             existing = changes_by_package.get(key)
             item["advisories"] = [item["advisory"]]
             if existing:
@@ -123,6 +126,29 @@ def apply_changes(plan: dict) -> dict:
     switched = _git(root, "switch", "-c", branch)
     if switched.returncode:
         raise ValueError(switched.stderr.strip() or "Could not create fix branch")
+    strategies = {item.get("strategy") for item in plan["changes"]}
+    if "pip" in strategies:
+        if strategies != {"pip"}:
+            rollback_changes(str(root), branch, original_branch)
+            raise ValueError("Apply Python and npm dependency fixes in separate verified batches")
+        changed_files = []
+        for item in plan["changes"]:
+            relative = Path(item["dependency_file"])
+            target = (root / relative).resolve()
+            try:
+                target.relative_to(root)
+            except ValueError as error:
+                rollback_changes(str(root), branch, original_branch)
+                raise ValueError("Python dependency file escapes the repository") from error
+            text = target.read_text(encoding="utf-8")
+            pattern = re.compile(rf"(?mi)^(\s*{re.escape(item['package'])}==){re.escape(item['from'])}(\s*(?:;[^#\n]*)?(?:#.*)?)$")
+            revised, count = pattern.subn(rf"\g<1>{item['to']}\g<2>", text, count=1)
+            if count != 1:
+                rollback_changes(str(root), branch, original_branch)
+                raise ValueError("Pinned Python dependency changed after preview; all changes were rolled back")
+            target.write_text(revised, encoding="utf-8")
+            changed_files.append(relative.as_posix())
+        return {"repository": str(root), "branch": branch, "original_branch": original_branch, "files": sorted(set(changed_files))}
     package_path = root / "package.json"
     package = json.loads(package_path.read_text(encoding="utf-8"))
     for item in plan["changes"]:

@@ -324,10 +324,8 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
             fixed = _fixed_version(record, package)
             same_major = _same_major(package.version, fixed)
             parent_packages, dependency_paths, parent_scopes = dependency_context(root, package) if package.manager == "npm" and not package.direct else ([], [], {})
-            fix_eligible = bool(package.manager == "npm" and package.direct and same_major)
-            if package.ecosystem != "npm":
-                fix_block_reason = f"Automatic upgrades do not yet support {package.ecosystem}"
-            elif package.manager != "npm":
+            fix_eligible = bool(package.direct and same_major and package.manager in {"npm", "pip"})
+            if package.manager not in {"npm", "pip"}:
                 fix_block_reason = f"Vulcanary scans {package.manager} locks read-only; automatic upgrades are not enabled yet"
             elif not fixed:
                 fix_block_reason = "The advisory does not identify a patched release yet"
@@ -354,7 +352,8 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
                     "parent_packages": parent_packages,
                     "dependency_paths": dependency_paths,
                     "parent_scopes": parent_scopes,
-                    "fix_strategy": "dependency" if package.direct else "override",
+                    "fix_strategy": "pip" if package.manager == "pip" else "dependency" if package.direct else "override",
+                    "dependency_file": package.path,
                     "advisory": summary["id"],
                 },
             ))

@@ -332,6 +332,8 @@ class ScannerTests(unittest.TestCase):
             self.assertIsNone(warning)
             self.assertEqual(findings[0].severity, Severity.CRITICAL)
             self.assertIn("1.1.0", findings[0].remediation)
+            self.assertTrue(findings[0].metadata["fix_eligible"])
+            self.assertEqual(findings[0].metadata["fix_strategy"], "pip")
 
     def test_reuses_sanitized_osv_cache_without_network(self) -> None:
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as cache_directory:

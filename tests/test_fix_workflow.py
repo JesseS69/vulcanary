@@ -127,6 +127,29 @@ class FixWorkflowTests(unittest.TestCase):
         self.assertEqual(failed["diagnostics"], [{"path": "src/app.ts", "line": 12, "column": 4, "code": "TS2322"}])
         self.assertNotIn("secret-value", json.dumps(failed))
 
+    def test_pinned_python_dependency_fix_is_local_and_reviewable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "requirements.txt").write_text("requests==2.31.0  # reviewed pin\n", encoding="utf-8")
+            self._git(root, "init", "-b", "main")
+            self._git(root, "config", "user.name", "Vulcanary Test")
+            self._git(root, "config", "user.email", "vulcanary-test@example.invalid")
+            self._git(root, "add", "requirements.txt")
+            self._git(root, "commit", "-m", "fixture")
+            finding = {
+                "fingerprint": "pip-fix", "title": "requests advisory", "repository": root.name,
+                "repository_path": str(root), "metadata": {
+                    "fix_eligible": True, "fix_strategy": "pip", "manager": "pip", "package": "requests",
+                    "current_version": "2.31.0", "fixed_version": "2.32.0", "advisory": "GHSA-pip",
+                    "dependency_file": "requirements.txt",
+                },
+            }
+            plan = preview([finding], ["pip-fix"])
+            applied = apply_changes(plan)
+            self.assertEqual(applied["files"], ["requirements.txt"])
+            self.assertEqual((root / "requirements.txt").read_text(encoding="utf-8"), "requests==2.32.0  # reviewed pin\n")
+            self.assertTrue(applied["branch"].startswith("vulcanary/fixes-"))
+
     def test_remediation_receipt_is_hashed_and_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             history = Path(directory) / "history.json"

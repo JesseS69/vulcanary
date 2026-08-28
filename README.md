@@ -200,7 +200,7 @@ The included GitHub Actions workflow automatically runs pinned Semgrep Community
 5. **Hosted control plane:** add authenticated workers, tenant isolation, RBAC, durable audit storage, and explicit source-retention controls without weakening the local-first mode.
 6. **Supply-chain controls:** add SPDX, signed attestations, container inventories, and merge/deploy policy enforcement.
 
-Vulcanary consumes OSV rather than maintaining a private vulnerability database, preserving advisory identifiers and fixed versions in its normalized findings. Yarn and pnpm findings are currently read-only; automatic lockfile rewriting remains limited to npm until equivalent rollback and verification coverage is available.
+Vulcanary consumes OSV rather than maintaining a private vulnerability database, preserving advisory identifiers and fixed versions in its normalized findings. Exact Python pins in `requirements*.txt` can be upgraded locally when OSV identifies a same-major fix; the branch must still pass rescanning and configured project checks before commit. Yarn and pnpm findings remain read-only until equivalent lockfile rollback and verification coverage is available.
 
 ## Security boundaries
 
