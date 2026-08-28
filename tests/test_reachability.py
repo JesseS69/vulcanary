@@ -68,6 +68,26 @@ class ReachabilityTests(unittest.TestCase):
             self.assertEqual(analyzed.metadata["priority"]["score"], 45)
             self.assertIn("Severity remains unchanged", analyzed.metadata["priority"]["reason"])
 
+    def test_correlates_route_and_deploy_evidence_without_claiming_reachability(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            route = root / "app" / "api" / "users"
+            route.mkdir(parents=True)
+            (route / "route.ts").write_text("import express from 'express';\n", encoding="utf-8")
+            (root / "vercel.json").write_text("{}\n", encoding="utf-8")
+            analyzed = analyze_reachability(root, [dependency("express")], Config())[0]
+            exposure = analyzed.metadata["exposure"]
+            self.assertEqual(exposure["classification"], "route_candidate_with_deploy_config")
+            self.assertEqual(exposure["route_paths"], ["app/api/users/route.ts"])
+            self.assertEqual(exposure["deployment_assets"], ["vercel.json"])
+            self.assertIn("does not prove", exposure["reason"])
+
+    def test_missing_exposure_evidence_never_claims_safety(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            analyzed = analyze_reachability(Path(directory), [dependency("unseen")], Config())[0]
+            self.assertEqual(analyzed.metadata["exposure"]["classification"], "unknown")
+            self.assertIn("not evidence", analyzed.metadata["exposure"]["reason"])
+
 
 if __name__ == "__main__":
     unittest.main()

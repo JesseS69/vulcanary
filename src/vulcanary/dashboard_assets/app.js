@@ -385,6 +385,8 @@ function openFinding(fingerprint) {
   $('#dialog-usage').textContent = usage ? `${usage.classification.replaceAll('_', ' ')}. ${usage.reason}` : 'Not classified.';
   const reachability = f.metadata?.reachability;
   $('#dialog-reachability').textContent = reachability ? `${reachability.status.replaceAll('_', ' ')}. ${reachability.reason}${reachability.evidence_paths?.length ? ` Evidence: ${reachability.evidence_paths.join(', ')}` : ''}` : 'Not applicable to this finding.';
+  const exposure = f.metadata?.exposure;
+  $('#dialog-exposure').textContent = exposure ? `${exposure.classification.replaceAll('_', ' ')}. ${exposure.reason}${exposure.route_paths?.length ? ` Route candidates: ${exposure.route_paths.join(', ')}.` : ''}${exposure.deployment_assets?.length ? ` Deploy assets: ${exposure.deployment_assets.join(', ')}.` : ''}` : 'Exposure remains unknown.';
   const recommendation = f.metadata?.recommendation;
   $('#dialog-recommendation').textContent = recommendation ? `${recommendation.action.replaceAll('_', ' ')}. ${recommendation.reason}` : 'Review the finding and choose the least disruptive verified remediation.';
   $('#dialog-fingerprint').textContent = f.fingerprint;

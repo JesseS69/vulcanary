@@ -21,6 +21,8 @@ _TOOLING_PACKAGES = {
     "@expo/config", "@expo/config-plugins", "@expo/cli",
 }
 _SEVERITY_PRIORITY = {"critical": 90, "high": 70, "medium": 45, "low": 20, "info": 5}
+_DEPLOYMENT_FILES = {"vercel.json", "netlify.toml", "fly.toml", "render.yaml", "render.yml", "app.yaml", "serverless.yml", "serverless.yaml", "dockerfile", "containerfile"}
+_ROUTE_PATH = re.compile(r"(?:^|/)(?:api|routes?|pages/api|app/api|server|functions?)(?:/|$)", re.I)
 
 
 def _npm_root(specifier: str) -> str | None:
@@ -65,6 +67,13 @@ def remediation_priority(finding: Finding, metadata: dict) -> dict:
     if finding.category == "dependency" and not metadata.get("fixed_version"):
         score -= 5
         factors.append("no patched release identified")
+    exposure = metadata.get("exposure", {}).get("classification")
+    if exposure == "route_candidate_with_deploy_config":
+        score += 10
+        factors.append("route-like source and deployment configuration observed")
+    elif exposure == "route_candidate":
+        score += 5
+        factors.append("route-like source path observed")
     score = max(0, min(100, score))
     level = "urgent" if score >= 85 else "high_priority" if score >= 65 else "planned" if score >= 35 else "monitor_upstream"
     labels = {"urgent": "Urgent", "high_priority": "High priority", "planned": "Planned", "monitor_upstream": "Monitor upstream"}
@@ -75,6 +84,33 @@ def remediation_priority(finding: Finding, metadata: dict) -> dict:
         "reason": "; ".join(factors) + ". Severity remains unchanged.",
         "factors": factors,
     }
+
+
+def _deployment_context(root: Path, config: Config) -> list[str]:
+    assets = []
+    for path in iter_files(root, config):
+        relative = path.resolve().relative_to(root.resolve()).as_posix()
+        if path.name.lower() in _DEPLOYMENT_FILES or path.suffix.lower() == ".tf" or relative.startswith(".github/workflows/"):
+            assets.append(relative)
+    return sorted(set(assets))[:30]
+
+
+def _exposure_context(finding: Finding, metadata: dict, deployment_assets: list[str]) -> dict:
+    evidence_paths = list(metadata.get("reachability", {}).get("evidence_paths", [])) or [finding.path]
+    route_paths = sorted(path for path in evidence_paths if _ROUTE_PATH.search(path))[:20]
+    if route_paths and deployment_assets:
+        classification = "route_candidate_with_deploy_config"
+        reason = "Route-like source and deployment configuration were observed. This raises exposure priority but does not prove the route is publicly reachable."
+    elif route_paths:
+        classification = "route_candidate"
+        reason = "A route-like source path was observed. Public deployment and reachability are not established."
+    elif deployment_assets:
+        classification = "deployment_context_only"
+        reason = "Deployment configuration exists, but this finding was not correlated with a route-like source path. Exposure remains unknown."
+    else:
+        classification = "unknown"
+        reason = "No reliable route or deployment evidence was correlated. Absence of evidence is not evidence that the finding is unreachable."
+    return {"classification": classification, "reason": reason, "route_paths": route_paths, "deployment_assets": deployment_assets}
 
 
 def observed_imports(root: Path, config: Config) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
@@ -105,6 +141,7 @@ def observed_imports(root: Path, config: Config) -> tuple[dict[str, set[str]], d
 
 def analyze_reachability(root: Path, findings: list[Finding], config: Config) -> list[Finding]:
     npm_imports, python_imports = observed_imports(root, config)
+    deployment_assets = _deployment_context(root, config)
     analyzed = []
     for finding in findings:
         if finding.category == "container":
@@ -117,6 +154,7 @@ def analyze_reachability(root: Path, findings: list[Finding], config: Config) ->
                 "action": "rebuild_container",
                 "reason": "Update the affected package or reviewed base image, rebuild without privileged Docker access from Vulcanary, and rescan the resulting image.",
             }
+            metadata["exposure"] = _exposure_context(finding, metadata, deployment_assets)
             metadata["priority"] = remediation_priority(finding, metadata)
             analyzed.append(replace(finding, metadata=metadata))
             continue
@@ -130,6 +168,7 @@ def analyze_reachability(root: Path, findings: list[Finding], config: Config) ->
                 "action": "review_source_fix",
                 "reason": finding.remediation or "Review the matched source in context, apply the narrowest safe fix, run project checks, and rescan.",
             }
+            metadata["exposure"] = _exposure_context(finding, metadata, deployment_assets)
             metadata["priority"] = remediation_priority(finding, metadata)
             analyzed.append(replace(finding, metadata=metadata))
             continue
@@ -210,6 +249,7 @@ def analyze_reachability(root: Path, findings: list[Finding], config: Config) ->
             action = "trace_upstream"
             recommendation = "Trace the introducing package and prefer an upstream upgrade over a global transitive override."
         metadata["recommendation"] = {"action": action, "reason": recommendation}
+        metadata["exposure"] = _exposure_context(finding, metadata, deployment_assets)
         metadata["priority"] = remediation_priority(finding, metadata)
         analyzed.append(replace(finding, metadata=metadata))
     return analyzed

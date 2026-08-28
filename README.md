@@ -134,6 +134,8 @@ Dependency scanning sends only package names, ecosystems, and pinned versions to
 
 Reachability is local static context, not proof of safety. **Import observed** means Vulcanary found an application import of the vulnerable package or an introducing direct parent. **Import not observed** never suppresses or lowers a finding because dynamic imports, build tooling, plugins, and runtime entry points may still execute it.
 
+Exposure context separately correlates findings with route-like source paths and local deployment assets such as Vercel, Netlify, Fly, Serverless, Docker, Terraform, and GitHub Actions configuration. Route-plus-deploy evidence raises remediation priority; missing or partial evidence never labels a finding private, unreachable, or safe.
+
 For transitive npm findings, Vulcanary records the shortest chain from each introducing direct dependency to the vulnerable version. Usage labels distinguish direct application imports, observed runtime parents, development-only parents, and recognizable build/test tooling paths. These labels add context without changing severity or claiming that missing static evidence proves safety.
 
 Remediation priority is a deterministic operational score, separate from advisory severity. It combines severity with direct/import evidence, runtime versus tooling context, patched-release availability, and automatic-fix eligibility. The dashboard reports **Urgent**, **High priority**, **Planned**, or **Monitor upstream** while always retaining the scanner's original severity.
