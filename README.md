@@ -51,7 +51,7 @@ Select verified findings and choose **Preview fixes** to review the exact candid
 
 Every passing batch receives a tamper-evident remediation receipt containing the selected finding fingerprints, changed files, rescan result, sanitized project-check results, branch, timestamp, and SHA-256 proof. The receipt is shown before commit and retained in the local remediation audit; the dashboard refuses to commit a batch without a passing receipt.
 
-Supported source findings expose **Draft fix** instead of a disabled checkbox. Source recipes are deliberately structural and fail closed when the source shape differs from the reviewed pattern. The dashboard displays a unified diff before application, creates a `vulcanary/source-fix-*` branch, and subjects the draft to the same project-check, rescan, rollback, and guarded-commit workflow. The first recipe replaces a narrowly recognized static `innerHTML` construction with explicit DOM nodes and `textContent`; dynamic HTML assignments remain review-only.
+Supported source findings expose **Draft fix** instead of a disabled checkbox. Source recipes are deliberately structural and fail closed when the source shape differs from the reviewed pattern. The dashboard displays a unified diff before application, creates a `vulcanary/source-fix-*` branch, and subjects the draft to the same project-check, rescan, rollback, guarded-commit, and remediation-receipt workflow. Reviewed recipes replace a narrowly recognized static `innerHTML` construction with explicit DOM nodes and `textContent`, and convert standalone Python `eval` calls over simple data values to `ast.literal_eval` with safe import placement. Dynamic HTML, nested calls, and executable Python expressions remain review-only.
 
 ## Configuration
 

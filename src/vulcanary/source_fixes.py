@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import difflib
 import re
 import subprocess
@@ -12,6 +13,10 @@ _STATIC_INNER_HTML = re.compile(
     r"<span aria-hidden=\"true\" style=\"(?P<style>[^\"]*)\">(?P<icon>[^<]*)</span>"
     r"\$\{(?P<condition>[A-Za-z_$][\w$]*) \? '<span>(?P<label>[^<]*)</span>' : ''\}`;$"
 )
+_PYTHON_LITERAL_EVAL = re.compile(
+    r"^(?P<indent>\s*)(?P<prefix>(?:(?:return|yield)\s+|[A-Za-z_]\w*\s*=\s*)?)"
+    r"eval\((?P<argument>[^()]+)\)(?P<suffix>\s*(?:#.*)?)$"
+)
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -20,9 +25,7 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["git", *safe, "-C", str(root), *args], text=True, capture_output=True, timeout=30)
 
 
-def preview_source_fix(finding: dict) -> dict:
-    if finding.get("rule_id") != "CODE-JS-INNERHTML":
-        raise ValueError("No verified source-fix recipe exists for this rule")
+def _preview_static_innerhtml(finding: dict) -> dict:
     root = Path(finding["repository_path"]).resolve()
     relative = Path(finding["path"])
     target = (root / relative).resolve()
@@ -97,6 +100,69 @@ def preview_source_fix(finding: dict) -> dict:
         "line": line_number, "rule_id": finding["rule_id"], "recipe": "static-innerhtml-to-dom",
         "diff": diff, "changes": changes, "files": [change["file"] for change in changes],
     }
+
+
+def _preview_python_literal_eval(finding: dict) -> dict:
+    root = Path(finding["repository_path"]).resolve()
+    relative = Path(finding["path"])
+    target = (root / relative).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as error:
+        raise ValueError("Finding path escapes the repository") from error
+    text = target.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    line_number = int(finding["line"])
+    if line_number < 1 or line_number > len(lines):
+        raise ValueError("Finding line is outside the source file")
+    original_line = lines[line_number - 1].rstrip("\r\n")
+    match = _PYTHON_LITERAL_EVAL.fullmatch(original_line)
+    if not match:
+        raise ValueError("This eval shape needs contextual review; only a standalone literal-data expression can use the deterministic recipe")
+    argument = match.group("argument").strip()
+    if not re.fullmatch(r"[A-Za-z_]\w*(?:\[[^\]]+\]|\.\w+)*", argument):
+        raise ValueError("This eval argument is not a simple data value; contextual review is required")
+    newline = "\r\n" if lines[line_number - 1].endswith("\r\n") else "\n"
+    replacement_line = (
+        f"{match.group('indent')}{match.group('prefix')}ast.literal_eval({argument}){match.group('suffix')}"
+    )
+    revised_lines = list(lines)
+    revised_lines[line_number - 1] = replacement_line + newline
+    if not re.search(r"(?m)^\s*import\s+ast(?:\s|$)", text):
+        try:
+            module = ast.parse(text)
+        except SyntaxError as error:
+            raise ValueError("Python source must parse before Vulcanary can draft a fix") from error
+        insertion = 1 if lines and lines[0].startswith("#!") else 0
+        if insertion < len(lines) and re.match(r"^#.*coding[:=]\s*[-\w.]+", lines[insertion]):
+            insertion += 1
+        if module.body and isinstance(module.body[0], ast.Expr) and isinstance(module.body[0].value, ast.Constant) and isinstance(module.body[0].value.value, str):
+            insertion = max(insertion, int(module.body[0].end_lineno or module.body[0].lineno))
+        while insertion < len(lines) and re.match(r"^\s*from\s+__future__\s+import\b", lines[insertion]):
+            insertion += 1
+        revised_lines.insert(insertion, f"import ast{newline}")
+    revised = "".join(revised_lines)
+    diff = "".join(difflib.unified_diff(
+        text.splitlines(keepends=True), revised.splitlines(keepends=True),
+        fromfile=f"a/{relative.as_posix()}", tofile=f"b/{relative.as_posix()}",
+    ))
+    return {
+        "fingerprint": finding["fingerprint"], "repository": str(root), "file": relative.as_posix(),
+        "line": line_number, "rule_id": finding["rule_id"], "recipe": "python-eval-to-literal-eval",
+        "diff": diff, "changes": [{"file": relative.as_posix(), "original": text, "replacement": revised}],
+        "files": [relative.as_posix()],
+    }
+
+
+def preview_source_fix(finding: dict) -> dict:
+    recipes = {
+        "CODE-JS-INNERHTML": _preview_static_innerhtml,
+        "CODE-PY-EVAL": _preview_python_literal_eval,
+    }
+    recipe = recipes.get(finding.get("rule_id"))
+    if not recipe:
+        raise ValueError("No verified source-fix recipe exists for this rule")
+    return recipe(finding)
 
 
 def apply_source_fix(proposal: dict) -> dict:

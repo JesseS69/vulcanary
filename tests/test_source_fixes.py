@@ -67,6 +67,38 @@ class SourceFixTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "contextual review"):
                 preview_source_fix(finding)
 
+    def test_python_eval_recipe_adds_ast_import_and_applies(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "parser.py"
+            source.write_text('"""Literal settings parser."""\nfrom __future__ import annotations\n\ndef parse(value):\n    return eval(value)\n', encoding="utf-8")
+            self._git(root, "init", "-b", "main")
+            self._git(root, "add", "parser.py")
+            self._git(root, "commit", "-m", "initial")
+            finding = {
+                "rule_id": "CODE-PY-EVAL", "repository_path": str(root), "path": "parser.py",
+                "line": 5, "fingerprint": "python-eval-fingerprint",
+            }
+            proposal = preview_source_fix(finding)
+            self.assertEqual(proposal["recipe"], "python-eval-to-literal-eval")
+            self.assertIn("import ast", proposal["diff"])
+            self.assertIn("ast.literal_eval(value)", proposal["diff"])
+            apply_source_fix(proposal)
+            revised = source.read_text(encoding="utf-8")
+            self.assertLess(revised.index("from __future__ import annotations"), revised.index("import ast"))
+            self.assertIn("return ast.literal_eval(value)", revised)
+
+    def test_python_eval_recipe_refuses_executable_expression(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "parser.py").write_text("result = eval(build_expression())\n", encoding="utf-8")
+            finding = {
+                "rule_id": "CODE-PY-EVAL", "repository_path": str(root), "path": "parser.py",
+                "line": 1, "fingerprint": "dynamic-python-eval",
+            }
+            with self.assertRaisesRegex(ValueError, "contextual review"):
+                preview_source_fix(finding)
+
 
 if __name__ == "__main__":
     unittest.main()
