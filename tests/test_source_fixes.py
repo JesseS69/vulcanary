@@ -9,6 +9,20 @@ from vulcanary.source_fixes import apply_source_fix, preview_source_fix
 
 
 class SourceFixTests(unittest.TestCase):
+    def test_disables_persisted_checkout_credentials_in_workflow(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workflow = root / ".github" / "workflows" / "ci.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text("steps:\n  - uses: actions/checkout@sha\n    with:\n      persist-credentials: true\n", encoding="utf-8")
+            finding = {
+                "repository_path": str(root), "path": ".github/workflows/ci.yml", "line": 4,
+                "rule_id": "CI-GHA-PERSIST-CREDENTIALS", "fingerprint": "a" * 20,
+            }
+            proposal = preview_source_fix(finding)
+            self.assertIn("persist-credentials: false", proposal["diff"])
+            self.assertEqual(proposal["recipe"], "github-checkout-disable-persisted-credentials")
+
     def _git(self, root: Path, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["git", "-c", "user.name=Vulcanary Test", "-c", "user.email=test@example.invalid", "-C", str(root), *args],

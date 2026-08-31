@@ -355,9 +355,12 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
             fixed = _fixed_version(record, package)
             same_major = _same_major(package.version, fixed)
             parent_packages, dependency_paths, parent_scopes = dependency_context(root, package) if package.manager == "npm" and not package.direct else ([], [], {})
-            fix_eligible = bool(package.direct and same_major and package.manager in {"npm", "pip"})
-            if package.manager not in {"npm", "pip"}:
+            root_pnpm = package.manager == "pnpm" and package.path == "pnpm-lock.yaml"
+            fix_eligible = bool(package.direct and same_major and (package.manager in {"npm", "pip"} or root_pnpm))
+            if package.manager not in {"npm", "pip", "pnpm"}:
                 fix_block_reason = f"Vulcanary scans {package.manager} locks read-only; automatic upgrades are not enabled yet"
+            elif package.manager == "pnpm" and not root_pnpm:
+                fix_block_reason = "Nested pnpm workspace upgrades require an explicit workspace target"
             elif not fixed:
                 fix_block_reason = "The advisory does not identify a patched release yet"
             elif not same_major:

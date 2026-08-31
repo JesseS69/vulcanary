@@ -26,6 +26,8 @@ def preview(findings: list[dict], fingerprints: list[str]) -> dict:
         }
         if item["strategy"] == "pip":
             item["files"] = [item["dependency_file"]]
+        elif item["manager"] == "pnpm":
+            item["files"] = ["package.json", "pnpm-lock.yaml"]
         verified = meta.get("verified_fix")
         if verified and verified.get("strategy") == "platform":
             item.update(
@@ -161,16 +163,25 @@ def apply_changes(plan: dict) -> dict:
                     prefix = "^" if str(old).startswith("^") else "~" if str(old).startswith("~") else ""
                     package[section][item["package"]] = prefix + item["to"]
     package_path.write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
-    command = _resolve_executable(["npm", "install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"])
+    managers = {item.get("manager") or "npm" for item in plan["changes"]}
+    if len(managers) != 1 or not managers <= {"npm", "pnpm"}:
+        rollback_changes(str(root), branch, original_branch)
+        raise ValueError("Apply npm and pnpm dependency fixes in separate verified batches")
+    manager = managers.pop()
+    command = _resolve_executable(
+        ["pnpm", "install", "--lockfile-only", "--ignore-scripts"] if manager == "pnpm"
+        else ["npm", "install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"]
+    )
     try:
         completed = subprocess.run(command, cwd=root, text=True, capture_output=True, timeout=180)
     except (subprocess.TimeoutExpired, OSError) as error:
         rollback_changes(str(root), branch, original_branch)
-        raise ValueError(f"npm could not refresh the lockfile; all changes were rolled back ({type(error).__name__})") from error
+        raise ValueError(f"{manager} could not refresh the lockfile; all changes were rolled back ({type(error).__name__})") from error
     if completed.returncode:
         rollback_changes(str(root), branch, original_branch)
-        raise ValueError("npm could not refresh the lockfile; all changes were rolled back")
-    return {"repository": str(root), "branch": branch, "original_branch": original_branch, "files": ["package.json", "package-lock.json"]}
+        raise ValueError(f"{manager} could not refresh the lockfile; all changes were rolled back")
+    lockfile = "pnpm-lock.yaml" if manager == "pnpm" else "package-lock.json"
+    return {"repository": str(root), "branch": branch, "original_branch": original_branch, "files": ["package.json", lockfile]}
 
 
 def commit_changes(repository: str, branch: str) -> dict:

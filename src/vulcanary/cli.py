@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         "remediation_sla_days": config.remediation_sla_days,
         "deadline_source": "Local dashboard first-seen history is required for absolute deadlines.",
     }
-    manifest = ruleset_manifest()
+    manifest = ruleset_manifest(config)
     report_policy["ruleset"] = {"digest": manifest["digest"], "rule_count": len(manifest["rules"])}
     if args.json_path:
         write_json(findings, args.json_path, config.suppression_register() + inline_suppression_register(root, config), report_policy)

@@ -73,6 +73,38 @@ class ScannerTests(unittest.TestCase):
             config = Config(exclude=["vendor/**"], ignored_rules={"CODE-JS-EVAL"})
             self.assertEqual(scan(root, config), [])
 
+    def test_only_reviewed_custom_rules_are_promoted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text("dangerous_call(user_input)\n", encoding="utf-8")
+            custom = {
+                "id": "CUSTOM-DANGEROUS-CALL", "title": "Reviewed dangerous call",
+                "pattern": r"dangerous_call\s*\(", "severity": "high", "category": "sast",
+                "remediation": "Replace the dangerous call with a validated API.", "extensions": [".py"],
+                "status": "approved", "tests": {
+                    "matching": ["dangerous_call(value)"], "nonmatching": ["safe_call(value)"],
+                },
+            }
+            (root / ".vulcanary.json").write_text(json.dumps({"custom_rules": [custom]}), encoding="utf-8")
+            config = Config.load(root)
+            self.assertEqual([item.rule_id for item in scan(root, config)], ["CUSTOM-DANGEROUS-CALL"])
+            self.assertIn("CUSTOM-DANGEROUS-CALL", {item["id"] for item in ruleset_manifest(config)["rules"]})
+            custom["status"] = "draft"
+            (root / ".vulcanary.json").write_text(json.dumps({"custom_rules": [custom]}), encoding="utf-8")
+            self.assertEqual(scan(root, Config.load(root)), [])
+
+    def test_approved_custom_rule_fails_closed_without_review_fixtures(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rule = {
+                "id": "CUSTOM-UNTESTED", "title": "Untested", "pattern": "unsafe",
+                "severity": "medium", "category": "sast", "remediation": "Review it.",
+                "status": "approved", "tests": {"matching": [], "nonmatching": []},
+            }
+            (root / ".vulcanary.json").write_text(json.dumps({"custom_rules": [rule]}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "requires matching and nonmatching"):
+                Config.load(root)
+
     def test_excluded_directories_are_not_traversed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

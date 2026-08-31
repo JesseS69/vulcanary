@@ -195,15 +195,42 @@ Every scan can export `--ruleset-manifest vulcanary-ruleset.json`. The canonical
 
 `--provenance vulcanary-provenance.json` creates an in-toto Statement v1 containing SHA-256 subjects for the generated JSON, SARIF, CycloneDX, SPDX, and ruleset artifacts. The statement explicitly marks itself unsigned; a trusted CI identity or key-backed signer must sign it externally before it should be treated as an attestation. Vulcanary never invents or stores signing keys.
 
+The bundled public-repository workflow follows that boundary by creating a separate, least-privilege attestation job only for pushes to `main`. It downloads the completed scan artifacts and uses GitHub's OIDC-backed `actions/attest` flow to create a keyless Sigstore attestation. Pull-request code never runs in the job holding `id-token` or `attestations` write permissions. Verify a downloaded report with `gh attestation verify <file> --repo OWNER/REPOSITORY`.
+
+## Reviewed custom rules
+
+Repositories can place `custom_rules` in `.vulcanary.json`. Custom identifiers must start with `CUSTOM-`; each rule declares a regex pattern, severity, category, remediation, optional dot-prefixed extensions, status, and review fixtures. Draft rules are recorded but never execute. An approved rule must contain at least one matching and one nonmatching fixture, and configuration loading fails closed if the pattern does not satisfy every fixture. Approved rules become part of that repository's canonical ruleset digest.
+
+```json
+{
+  "custom_rules": [{
+    "id": "CUSTOM-UNSAFE-API",
+    "title": "Unsafe internal API",
+    "pattern": "unsafe_api\\s*\\(",
+    "severity": "high",
+    "category": "sast",
+    "remediation": "Use the validated API wrapper.",
+    "extensions": [".py"],
+    "status": "approved",
+    "tests": {
+      "matching": ["unsafe_api(value)"],
+      "nonmatching": ["safe_api(value)"]
+    }
+  }]
+}
+```
+
+Finding details show deterministic confidence, redacted evidence, reachability, exposure, ownership, deadline, and the recommended remediation path. **Export Markdown ticket** and **Export JSON ticket** create local handoff records that deliberately exclude source content, evidence, credentials, command output, and absolute paths.
+
 ## Roadmap
 
-1. **Source-recipe expansion:** add reviewed transformations for more SAST rules and an optional, explicitly configured AI drafting adapter without weakening deterministic validation gates.
-2. **Rule lifecycle:** add a review-and-promotion workflow for external rules while preserving the canonical manifest and digest boundary.
-3. **Team workflow:** add opt-in notifications and ticket exports without placing repository content or credentials in local history.
-4. **Supply-chain controls:** add keyless signing guidance and deploy-policy examples around the existing SPDX, CycloneDX, container-report, and unsigned provenance outputs.
+1. **Source-recipe expansion:** add more narrowly reviewed transformations and an optional, explicitly configured AI drafting adapter without weakening deterministic validation gates.
+2. **Rule sharing:** add signed, versioned community rule packs on top of the repository-local review fixtures and canonical digest boundary.
+3. **Team workflow:** add opt-in notification delivery around the existing source-free Markdown and JSON ticket exports.
+4. **Dependency remediation:** add rollback-proven lockfile updates for Yarn, nested pnpm workspaces, Poetry, uv, and PDM.
 5. **Hosted control plane:** only if needed, add authenticated workers, tenant isolation, RBAC, durable audit storage, and explicit source-retention controls without weakening local-first mode.
 
-Vulcanary consumes OSV rather than maintaining a private vulnerability database, preserving advisory identifiers and fixed versions in its normalized findings. Exact Python pins in `requirements*.txt` can be upgraded locally when OSV identifies a same-major fix; the branch must still pass rescanning and configured project checks before commit. Yarn, pnpm, Poetry, uv, and PDM findings remain read-only until equivalent lockfile rollback and verification coverage is available.
+Vulcanary consumes OSV rather than maintaining a private vulnerability database, preserving advisory identifiers and fixed versions in its normalized findings. Exact Python pins in `requirements*.txt`, direct npm dependencies, and direct root-workspace pnpm dependencies can be upgraded locally when OSV identifies a same-major fix. pnpm uses `--lockfile-only --ignore-scripts`; every manager still requires an isolated branch, security rescan, configured project checks, and an explicit commit. Yarn, nested pnpm workspaces, Poetry, uv, and PDM findings remain read-only until equivalent lockfile rollback and verification coverage is available.
 
 ## Security boundaries
 

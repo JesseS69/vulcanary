@@ -24,6 +24,7 @@ from .fixes import apply_changes, commit_changes, preview as preview_fixes, roll
 from .evaluator import create_expo_candidate_branch, evaluate_expo_platform, evaluate_parent_upgrades
 from .adapters import PARSERS, import_report
 from .source_fixes import apply_source_fix, preview_source_fix
+from .tickets import finding_ticket, ticket_markdown
 
 
 REMEDIATION_RECEIPT_FIELDS = (
@@ -203,7 +204,15 @@ class DashboardState:
                 suppressions=suppression_register,
                 suppression_change=suppression_change,
                 report_sources=report_sources,
-                policy={"owner": config.repository_owner, "security_contact": config.security_contact, "overdue_count": overdue_count, "sla_days": config.remediation_sla_days},
+                policy={
+                    "owner": config.repository_owner, "security_contact": config.security_contact,
+                    "overdue_count": overdue_count, "sla_days": config.remediation_sla_days,
+                    "ruleset": {"digest": ruleset_manifest(config)["digest"], "rule_count": len(ruleset_manifest(config)["rules"])},
+                    "custom_rules": {
+                        "approved": sum(item["status"] == "approved" for item in config.custom_rules),
+                        "draft": sum(item["status"] == "draft" for item in config.custom_rules),
+                    },
+                },
             )
             self.repositories[str(root)] = result
             current_fingerprints = {finding["fingerprint"] for finding in result.findings}
@@ -345,6 +354,18 @@ def make_handler(state: DashboardState):
             self.end_headers()
             self.wfile.write(body)
 
+        def _download_text(self, body_text: str, filename: str) -> None:
+            body = body_text.encode()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_GET(self) -> None:
             if not self._host_is_local():
                 self.send_error(HTTPStatus.BAD_REQUEST, "Dashboard Host header must be loopback")
@@ -382,6 +403,22 @@ def make_handler(state: DashboardState):
                 return
             if path == "/api/ruleset.json":
                 self._download_json(ruleset_manifest(), "vulcanary-ruleset.json")
+                return
+            if path in {"/api/ticket.json", "/api/ticket.md"}:
+                fingerprint = parse_qs(parsed.query).get("fingerprint", [""])[0]
+                if not re.fullmatch(r"[0-9a-f]{20}", fingerprint):
+                    self.send_error(HTTPStatus.BAD_REQUEST, "A valid finding fingerprint is required")
+                    return
+                finding = next((item for item in state.snapshot()["findings"] if item["fingerprint"] == fingerprint), None)
+                if not finding:
+                    self.send_error(HTTPStatus.NOT_FOUND, "Finding not found")
+                    return
+                ticket = finding_ticket(finding)
+                safe_name = f"vulcanary-{finding['rule_id'].lower()}-{fingerprint[:8]}"
+                if path.endswith(".md"):
+                    self._download_text(ticket_markdown(ticket), f"{safe_name}.md")
+                else:
+                    self._download_json(ticket, f"{safe_name}.json")
                 return
             if path in {"/api/platform/report.json", "/api/platform/report.sarif"}:
                 if not state.last_platform_evaluation:

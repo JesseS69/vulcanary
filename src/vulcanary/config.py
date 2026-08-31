@@ -54,6 +54,7 @@ class Config:
     repository_owner: str = "unassigned"
     security_contact: str | None = None
     remediation_sla_days: dict[str, int] = field(default_factory=lambda: dict(DEFAULT_REMEDIATION_SLA_DAYS))
+    custom_rules: tuple[dict, ...] = ()
 
     def is_suppressed(self, fingerprint: str, today: date | None = None) -> bool:
         if fingerprint in self.ignored_fingerprints:
@@ -133,6 +134,40 @@ class Config:
             raise ValueError("remediation_sla_days may contain only critical, high, medium, low, and info")
         if any(not isinstance(value, int) or isinstance(value, bool) or value < 1 or value > 3650 for value in sla_data.values()):
             raise ValueError("remediation_sla_days values must be integers from 1 to 3650")
+        custom_rules_data = data.get("custom_rules", [])
+        if not isinstance(custom_rules_data, list):
+            raise ValueError("custom_rules must be an array")
+        custom_rules = []
+        seen_custom_ids = set()
+        for index, rule in enumerate(custom_rules_data, start=1):
+            if not isinstance(rule, dict):
+                raise ValueError(f"custom rule {index} must be an object")
+            required = ("id", "title", "pattern", "severity", "category", "remediation", "status", "tests")
+            if any(not isinstance(rule.get(key), str if key != "tests" else dict) for key in required):
+                raise ValueError(f"custom rule {index} is missing a valid required field")
+            rule_id = rule["id"]
+            if not re.fullmatch(r"CUSTOM-[A-Z0-9-]+", rule_id) or rule_id in seen_custom_ids:
+                raise ValueError(f"custom rule {index} id must be a unique CUSTOM-* identifier")
+            try:
+                compiled = re.compile(rule["pattern"], re.MULTILINE)
+                Severity.parse(rule["severity"])
+            except (re.error, KeyError) as error:
+                raise ValueError(f"custom rule {rule_id} has an invalid pattern or severity") from error
+            if rule["status"] not in {"draft", "approved"}:
+                raise ValueError(f"custom rule {rule_id} status must be draft or approved")
+            tests = rule["tests"]
+            matching, nonmatching = tests.get("matching", []), tests.get("nonmatching", [])
+            if not isinstance(matching, list) or not isinstance(nonmatching, list) or not all(isinstance(item, str) for item in matching + nonmatching):
+                raise ValueError(f"custom rule {rule_id} tests must contain string arrays")
+            if rule["status"] == "approved" and (not matching or not nonmatching):
+                raise ValueError(f"approved custom rule {rule_id} requires matching and nonmatching tests")
+            if any(not compiled.search(item) for item in matching) or any(compiled.search(item) for item in nonmatching):
+                raise ValueError(f"custom rule {rule_id} does not pass its review tests")
+            extensions = rule.get("extensions", [])
+            if not isinstance(extensions, list) or any(not isinstance(item, str) or not item.startswith(".") for item in extensions):
+                raise ValueError(f"custom rule {rule_id} extensions must be dot-prefixed strings")
+            seen_custom_ids.add(rule_id)
+            custom_rules.append({**rule, "extensions": extensions})
         return cls(
             fail_on=Severity.parse(data.get("fail_on", "high")),
             exclude=DEFAULT_EXCLUDES + exclusions,
@@ -145,4 +180,5 @@ class Config:
             repository_owner=repository_owner.strip(),
             security_contact=security_contact.strip() if security_contact else None,
             remediation_sla_days={**DEFAULT_REMEDIATION_SLA_DAYS, **sla_data},
+            custom_rules=tuple(custom_rules),
         )

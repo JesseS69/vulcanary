@@ -150,6 +150,39 @@ class FixWorkflowTests(unittest.TestCase):
             self.assertEqual((root / "requirements.txt").read_text(encoding="utf-8"), "requests==2.32.0  # reviewed pin\n")
             self.assertTrue(applied["branch"].startswith("vulcanary/fixes-"))
 
+    def test_pnpm_fix_refreshes_only_manifest_and_lockfile(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "package.json").write_text(json.dumps({"dependencies": {"demo": "^1.0.0"}}), encoding="utf-8")
+            (root / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\npackages:\n  demo@1.0.0:\n    resolution: {}\n", encoding="utf-8")
+            self._git(root, "init", "-b", "main")
+            self._git(root, "config", "user.name", "Vulcanary Test")
+            self._git(root, "config", "user.email", "vulcanary-test@example.invalid")
+            self._git(root, "add", "package.json", "pnpm-lock.yaml")
+            self._git(root, "commit", "-m", "fixture")
+            finding = {
+                "fingerprint": "pnpm-fix", "title": "demo advisory", "repository": root.name,
+                "repository_path": str(root), "metadata": {
+                    "fix_eligible": True, "fix_strategy": "dependency", "manager": "pnpm", "package": "demo",
+                    "current_version": "1.0.0", "fixed_version": "1.1.0", "advisory": "GHSA-pnpm",
+                    "dependency_file": "pnpm-lock.yaml",
+                },
+            }
+            plan = preview([finding], ["pnpm-fix"])
+            real_run = subprocess.run
+
+            def run_without_network(command, **kwargs):
+                if Path(command[0]).stem.lower() != "pnpm":
+                    return real_run(command, **kwargs)
+                self.assertIn("--lockfile-only", command)
+                (root / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\npackages:\n  demo@1.1.0:\n    resolution: {}\n", encoding="utf-8")
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            with patch("vulcanary.fixes.subprocess.run", side_effect=run_without_network):
+                applied = apply_changes(plan)
+            self.assertEqual(applied["files"], ["package.json", "pnpm-lock.yaml"])
+            self.assertEqual(json.loads((root / "package.json").read_text())["dependencies"]["demo"], "^1.1.0")
+
     def test_remediation_receipt_is_hashed_and_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             history = Path(directory) / "history.json"

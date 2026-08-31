@@ -379,8 +379,11 @@ function openFinding(fingerprint) {
   const deadline = policy ? ` Owner: ${policy.owner}. Deadline: ${new Date(policy.deadline).toLocaleDateString()} (${policy.status.replaceAll('_', ' ')}).` : '';
   $('#dialog-priority').textContent = (priority ? `${priority.label} (${priority.score}/100). ${priority.reason}` : 'Not scored.') + deadline;
   $('#dialog-scanner').textContent = `${f.scanner} · ${f.category}`;
+  const confidence = f.metadata?.confidence || (f.scanner === 'builtin' ? 'high — deterministic local pattern' : 'scanner-reported');
+  $('#dialog-confidence').textContent = confidence;
   $('#dialog-location').textContent = `${f.repository} · ${f.path}:${f.line}`;
   $('#dialog-description').textContent = f.description;
+  $('#dialog-evidence').textContent = f.evidence || 'Evidence is unavailable or intentionally excluded.';
   $('#dialog-remediation').textContent = f.remediation || 'Review the affected code and remove the unsafe pattern.';
   const dependencyPaths = f.metadata?.dependency_paths || [];
   $('#dialog-dependency-path').textContent = dependencyPaths.length ? dependencyPaths.map(path => path.join(' → ')).join('\n') : f.category === 'dependency' ? 'Direct dependency or path unavailable.' : 'Not applicable.';
@@ -393,6 +396,8 @@ function openFinding(fingerprint) {
   const recommendation = f.metadata?.recommendation;
   $('#dialog-recommendation').textContent = recommendation ? `${recommendation.action.replaceAll('_', ' ')}. ${recommendation.reason}` : 'Review the finding and choose the least disruptive verified remediation.';
   $('#dialog-fingerprint').textContent = f.fingerprint;
+  $('#ticket-markdown').href = `/api/ticket.md?fingerprint=${encodeURIComponent(f.fingerprint)}`;
+  $('#ticket-json').href = `/api/ticket.json?fingerprint=${encodeURIComponent(f.fingerprint)}`;
   $('#finding-dialog').showModal();
 }
 

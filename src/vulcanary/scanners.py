@@ -45,13 +45,25 @@ RULES = [
 ]
 
 
-def ruleset_manifest() -> dict:
+def rules_for(config: Config | None = None) -> list[Rule]:
+    custom = [] if config is None else [
+        Rule(
+            item["id"], item["title"], re.compile(item["pattern"], re.MULTILINE),
+            Severity.parse(item["severity"]), item["category"], item["remediation"],
+            frozenset(extension.lower() for extension in item.get("extensions", [])),
+        )
+        for item in config.custom_rules if item["status"] == "approved"
+    ]
+    return RULES + custom
+
+
+def ruleset_manifest(config: Config | None = None) -> dict:
     rules = [{
         "id": rule.id, "title": rule.title, "severity": rule.severity.name.lower(),
         "category": rule.category, "extensions": sorted(rule.extensions),
         "pattern": rule.pattern.pattern, "pattern_flags": rule.pattern.flags,
         "remediation": rule.remediation,
-    } for rule in sorted(RULES, key=lambda item: item.id)]
+    } for rule in sorted(rules_for(config), key=lambda item: item.id)]
     canonical = json.dumps(rules, sort_keys=True, separators=(",", ":")).encode()
     return {"version": 1, "algorithm": "sha256", "digest": hashlib.sha256(canonical).hexdigest(), "rules": rules}
 
@@ -179,7 +191,7 @@ def scan(root: Path, config: Config) -> list[Finding]:
                 "Complete or renew the exception after review, or remediate the underlying finding.",
                 "vulcanary-governance", record.to_dict(),
             ))
-        for rule in RULES:
+        for rule in rules_for(config):
             if rule.id in config.ignored_rules:
                 continue
             if rule.extensions and path.suffix.lower() not in rule.extensions:
