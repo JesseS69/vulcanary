@@ -42,6 +42,7 @@ def dashboard_parser() -> argparse.ArgumentParser:
     result.add_argument("--host", default="127.0.0.1", help="Dashboard bind address")
     result.add_argument("--port", type=int, default=8765, help="Dashboard port")
     result.add_argument("--no-open", action="store_true", help="Do not open a browser automatically")
+    result.add_argument("--monitor-interval", type=int, help="Automatic rescan interval in seconds (30-86400); use 0 to start paused")
     return result
 
 
@@ -50,7 +51,9 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "dashboard":
         args = dashboard_parser().parse_args(argv[1:])
         from .dashboard import serve
-        return serve(args.host, args.port, args.repository, open_browser=not args.no_open)
+        if args.monitor_interval is not None and args.monitor_interval != 0 and not 30 <= args.monitor_interval <= 86_400:
+            dashboard_parser().error("--monitor-interval must be 0 or between 30 and 86400")
+        return serve(args.host, args.port, args.repository, open_browser=not args.no_open, monitor_interval=args.monitor_interval)
     args = scan_parser().parse_args(argv)
     root = Path(args.path).resolve()
     if not root.is_dir():

@@ -24,8 +24,36 @@ function render() {
   renderGovernance();
   renderRemediationHistory();
   renderResolvedFindings();
+  renderMonitor();
   renderFilterOptions();
   renderFindings();
+}
+
+function renderMonitor() {
+  const monitor = state.monitor || {enabled:false, interval_seconds:300};
+  const strip = document.querySelector('.monitor-strip');
+  strip.classList.toggle('paused', !monitor.enabled);
+  strip.classList.toggle('error', Boolean(monitor.error));
+  $('#monitor-status').textContent = monitor.error ? 'Monitor needs attention' : monitor.scanning ? 'Scanning repositories' : monitor.enabled ? 'Continuous watch active' : 'Continuous watch paused';
+  const timing = monitor.error
+    ? monitor.error
+    : monitor.next_scan && monitor.enabled ? `Next scan ${new Date(monitor.next_scan).toLocaleTimeString()}`
+    : monitor.last_scan ? `Last automatic scan ${new Date(monitor.last_scan).toLocaleString()}` : 'Waiting for its first automatic cycle';
+  $('#monitor-next').textContent = `· ${timing}`;
+  const interval = String(monitor.interval_seconds || 300);
+  if (![...$('#monitor-interval').options].some(option => option.value === interval)) {
+    $('#monitor-interval').add(new Option(`${interval} seconds`, interval));
+  }
+  $('#monitor-interval').value = interval;
+  $('#monitor-toggle').textContent = monitor.enabled ? 'Pause' : 'Resume';
+  const events = state.monitor_events || [];
+  $('#monitor-alert-count').textContent = `${events.length} alert${events.length === 1 ? '' : 's'}`;
+  // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-31 -- Monitor event strings are escaped and numeric/timestamp values are normalized.
+  $('#monitor-alert-list').innerHTML = events.slice(0, 30).map(item => {
+    const previous = item.previous_severity ? ` · previously ${item.previous_severity}` : '';
+    const commit = item.commit ? ` · commit ${item.commit.slice(0, 10)}` : '';
+    return `<div class="fix-item"><strong>${escapeHtml(item.repository)} · ${escapeHtml(String(item.event).replaceAll('_', ' '))}</strong><span>${escapeHtml(item.severity)}${escapeHtml(previous)} · ${escapeHtml(new Date(item.observed_at).toLocaleString())}${escapeHtml(commit)}</span><span>${escapeHtml(item.title)} · ${escapeHtml(item.path)}</span><span class="mono">${escapeHtml(item.fingerprint)}</span></div>`;
+  }).join('') || '<p class="muted">No monitor alerts. Baseline scans do not generate noise.</p>';
 }
 
 function renderLedger() {
@@ -443,6 +471,21 @@ async function refresh({rescan = false} = {}) {
 }
 
 $('#scan-toggle').addEventListener('click', () => $('#scan-form').classList.toggle('hidden'));
+$('#monitor-toggle').addEventListener('click', async () => {
+  const monitor = state.monitor || {};
+  const body = await postJson('/api/monitor', {enabled:!monitor.enabled, interval_seconds:Number($('#monitor-interval').value)});
+  state = body.state; render();
+});
+$('#monitor-interval').addEventListener('change', async () => {
+  const body = await postJson('/api/monitor', {enabled:state.monitor?.enabled !== false, interval_seconds:Number($('#monitor-interval').value)});
+  state = body.state; render();
+});
+$('#scan-now').addEventListener('click', async () => {
+  const button = $('#scan-now'); button.disabled = true; button.textContent = 'Scanning…';
+  try { await refresh({rescan:true}); }
+  catch (error) { $('#scan-message').textContent = error.message; }
+  finally { button.disabled = false; button.textContent = 'Scan now'; }
+});
 $('#scan-form').addEventListener('submit', async event => {
   event.preventDefault();
   const button = event.currentTarget.querySelector('button');
@@ -512,3 +555,4 @@ $('#commit-fixes').addEventListener('click', async () => {
   catch(error) { $('#fix-message').textContent = error.message; button.disabled = false; button.textContent = 'Commit verified fixes'; }
 });
 refresh({rescan: true}).catch(error => { $('#updated').textContent = `Dashboard error: ${error.message}`; });
+setInterval(() => refresh().catch(error => { $('#updated').textContent = `Dashboard error: ${error.message}`; }), 10000);

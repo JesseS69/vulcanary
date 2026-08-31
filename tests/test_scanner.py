@@ -348,6 +348,10 @@ class ScannerTests(unittest.TestCase):
                 self.assertEqual(reopened["status"], "reopened")
                 self.assertIsNotNone(reopened["reopened_at"])
                 self.assertTrue(reopened["proof_valid"])
+                alert = restored.snapshot()["monitor_events"][0]
+                self.assertEqual(alert["event"], "reopened")
+                self.assertEqual(alert["fingerprint"], fingerprint)
+                self.assertNotIn("evidence", alert)
 
                 restored.scan_repository(root)
                 self.assertEqual(len(restored.resolved_findings), 1)
@@ -357,6 +361,19 @@ class ScannerTests(unittest.TestCase):
                 latest = restored.snapshot()["resolved_findings"][0]
                 self.assertEqual(latest["recurrence_index"], 1)
                 self.assertEqual(len(restored.resolved_findings), 2)
+
+    def test_monitor_configuration_is_validated_and_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            history = Path(directory) / "dashboard-history.json"
+            state = DashboardState(history)
+            state.configure_monitor(False, 900)
+            restored = DashboardState(history)
+            self.assertFalse(restored.monitor_enabled)
+            self.assertEqual(restored.monitor_interval_seconds, 900)
+            with self.assertRaisesRegex(ValueError, "between 30 and 86400"):
+                restored.configure_monitor(True, 5)
+            with self.assertRaisesRegex(ValueError, "boolean"):
+                restored.configure_monitor("yes", 300)  # type: ignore[arg-type]
 
     def test_dashboard_persists_and_invalidates_verified_fixes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
