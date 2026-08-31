@@ -10,17 +10,31 @@ The canary detects trouble; the forge proves the repair. Vulcanary evaluates dep
 
 Python 3.11 or newer is required.
 
+Install a tagged Windows release by downloading `install-windows.ps1` from that release, reviewing it, and running:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
+```
+
+The installer downloads the release wheel and checksum manifest, refuses a checksum mismatch, installs for the current user, and opens guided setup. To install from a local checkout instead:
+
 ```powershell
 cd vulcanary
-python -m vulcanary ..\CabinScout
+py -3 -m pip install --user .
+vulcanary setup
 ```
 
-For an installed command:
+Setup accepts one or more repository paths and stores them only in `~/.vulcanary/app.json`. Then manage the loopback service without remembering dashboard arguments:
 
 ```powershell
-python -m pip install -e .
-vulcanary path\to\repository --json findings.json --sarif findings.sarif
+vulcanary start
+vulcanary status
+vulcanary stop
 ```
+
+`start` restores the watched repositories and monitoring interval, launches in the background, and opens the dashboard. The control token used by `stop` is generated locally, stored in the user-local application configuration with restrictive permissions where the operating system supports them, passed to the child process through its environment rather than command-line arguments, and accepted only by the loopback shutdown endpoint.
+
+For a one-time command-line scan, run `vulcanary path\to\repository --json findings.json --sarif findings.sarif`.
 
 The process exits with code `1` if a finding meets the configured `fail_on` severity. Use `--no-fail` for audit-only runs.
 

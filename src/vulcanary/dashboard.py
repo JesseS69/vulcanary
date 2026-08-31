@@ -4,6 +4,7 @@ import json
 import hashlib
 import os
 import re
+import secrets
 import subprocess
 import threading
 import webbrowser
@@ -115,6 +116,8 @@ class DashboardState:
         self._monitor_stop = threading.Event()
         self._monitor_thread: threading.Thread | None = None
         self._rescan_lock = threading.Lock()
+        self.control_token: str | None = None
+        self.shutdown_callback = None
         if history_path and history_path.exists():
             try:
                 payload = json.loads(history_path.read_text(encoding="utf-8"))
@@ -694,7 +697,7 @@ def make_handler(state: DashboardState):
                 self.send_error(HTTPStatus.BAD_REQUEST, "Dashboard Host header must be loopback")
                 return
             route = urlparse(self.path).path
-            if route not in {"/api/scan", "/api/rescan", "/api/monitor", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/source/preview", "/api/source/apply", "/api/parents/evaluate", "/api/overrides/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
+            if route not in {"/api/scan", "/api/rescan", "/api/monitor", "/api/control/shutdown", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/source/preview", "/api/source/apply", "/api/parents/evaluate", "/api/overrides/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
@@ -717,7 +720,15 @@ def make_handler(state: DashboardState):
                 payload = json.loads(self.rfile.read(length))
                 if not isinstance(payload, dict):
                     raise ValueError("Request body must be a JSON object")
-                if route == "/api/rescan":
+                if route == "/api/control/shutdown":
+                    supplied = self.headers.get("X-Vulcanary-Control")
+                    if not state.control_token or not secrets.compare_digest(supplied or "", state.control_token):
+                        self._json({"error": "Valid local control token required"}, HTTPStatus.FORBIDDEN)
+                        return
+                    self._json({"stopping": True})
+                    if state.shutdown_callback:
+                        threading.Thread(target=state.shutdown_callback, daemon=True).start()
+                elif route == "/api/rescan":
                     rescanned = state.rescan_all()
                     self._json({"scans": [result.to_dict() for result in rescanned], "state": state.snapshot()})
                 elif route == "/api/monitor":
@@ -869,12 +880,14 @@ def serve(host: str, port: int, repositories: list[Path], open_browser: bool = T
     if host not in {"127.0.0.1", "localhost", "::1"}:
         raise ValueError("The dashboard is local-only; bind to a loopback address")
     state = DashboardState(Path.home() / ".vulcanary" / "dashboard-history.json")
+    state.control_token = os.environ.get("VULCANARY_CONTROL_TOKEN")
     for repository in repositories:
         state.scan_repository(repository)
     if monitor_interval is not None:
         state.configure_monitor(monitor_interval > 0, monitor_interval if monitor_interval > 0 else state.monitor_interval_seconds)
     state.start_monitor()
     server = ThreadingHTTPServer((host, port), make_handler(state))
+    state.shutdown_callback = server.shutdown
     url = f"http://{host}:{server.server_port}"
     print(f"Vulcanary dashboard: {url}")
     if open_browser:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import webbrowser
 from pathlib import Path
 
 from .config import Config
@@ -17,7 +18,10 @@ from .adapters import AdapterError, import_report
 
 
 def scan_parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(prog="vulcanary", description="Scan a repository for security risks.")
+    result = argparse.ArgumentParser(
+        prog="vulcanary", description="Scan a repository for security risks.",
+        epilog="Local product commands: vulcanary setup | start | status | stop | dashboard",
+    )
     result.add_argument("path", nargs="?", default=".", help="Repository to scan")
     result.add_argument("--config", type=Path, help="Configuration JSON path")
     result.add_argument("--json", type=Path, dest="json_path", help="Write normalized JSON report")
@@ -46,8 +50,78 @@ def dashboard_parser() -> argparse.ArgumentParser:
     return result
 
 
+def setup_parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(prog="vulcanary setup", description="Configure repositories for the local Vulcanary service.")
+    result.add_argument("--repository", "-r", action="append", type=Path, default=[], help="Repository to watch; repeat for multiple repositories")
+    result.add_argument("--monitor-interval", type=int, default=300, help="Automatic scan interval in seconds, or 0 to start paused")
+    result.add_argument("--port", type=int, default=8765, help="Loopback dashboard port")
+    return result
+
+
+def service_parser(command: str) -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(prog=f"vulcanary {command}", description=f"{command.title()} the local Vulcanary service.")
+    if command == "start":
+        result.add_argument("--no-open", action="store_true", help="Do not open the dashboard after starting")
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "setup":
+        args = setup_parser().parse_args(argv[1:])
+        from .local_app import configure_app, config_path
+        repositories = list(args.repository)
+        interactive = not repositories
+        if interactive:
+            print("Enter repositories to watch. Submit a blank line when finished.")
+            while True:
+                entered = input("Repository path: ").strip()
+                if not entered:
+                    break
+                repositories.append(Path(entered))
+        if not repositories:
+            setup_parser().error("configure at least one repository")
+        if interactive:
+            entered_interval = input(f"Automatic scan interval in seconds [{args.monitor_interval}]: ").strip()
+            if entered_interval:
+                try:
+                    args.monitor_interval = int(entered_interval)
+                except ValueError:
+                    setup_parser().error("monitoring interval must be an integer")
+        try:
+            configured = configure_app(repositories, args.monitor_interval, args.port)
+        except ValueError as error:
+            setup_parser().error(str(error))
+        print(f"Configured {len(configured['repositories'])} repositories in {config_path()}")
+        print("Run `vulcanary start` to launch continuous monitoring.")
+        return 0
+    if argv and argv[0] in {"start", "stop", "status"}:
+        command = argv[0]
+        args = service_parser(command).parse_args(argv[1:])
+        from .local_app import load_app_config, service_status, start_service, stop_service
+        try:
+            config = load_app_config()
+            if command == "start":
+                status = start_service(config)
+                print(f"Vulcanary {'started' if status.get('started') else 'is already running'} at {status['url']}")
+                if not args.no_open:
+                    webbrowser.open(status["url"])
+            elif command == "stop":
+                status = stop_service(config)
+                print("Vulcanary stopped." if status["stopped"] else "Vulcanary is not running." if not status["running"] else "Vulcanary did not stop.")
+                return 1 if status["running"] else 0
+            else:
+                status = service_status(config)
+                if status["running"]:
+                    monitor = status.get("monitor", {})
+                    print(f"Vulcanary is running at {status['url']} · {status['repositories']} repositories · {status['findings']} findings · monitor {'active' if monitor.get('enabled') else 'paused'}")
+                else:
+                    print(f"Vulcanary is stopped · {status['repositories']} repositories configured")
+                    return 1
+        except (OSError, ValueError, RuntimeError) as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 2
+        return 0
     if argv and argv[0] == "dashboard":
         args = dashboard_parser().parse_args(argv[1:])
         from .dashboard import serve

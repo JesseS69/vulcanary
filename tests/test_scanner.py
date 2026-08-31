@@ -265,6 +265,30 @@ class ScannerTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
+    def test_dashboard_shutdown_requires_the_local_control_token(self) -> None:
+        state = DashboardState()
+        state.control_token = "t" * 43
+        stopped = threading.Event()
+        state.shutdown_callback = stopped.set
+        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(state))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        url = f"http://127.0.0.1:{server.server_port}/api/control/shutdown"
+        try:
+            with self.assertRaises(HTTPError) as missing:
+                urlopen(Request(url, data=b"{}", method="POST", headers={"Content-Type": "application/json"}), timeout=5)
+            self.assertEqual(missing.exception.code, 403)
+            missing.exception.close()
+            response = urlopen(Request(url, data=b"{}", method="POST", headers={
+                "Content-Type": "application/json", "X-Vulcanary-Control": state.control_token,
+            }), timeout=5)
+            self.assertEqual(response.status, 200)
+            self.assertTrue(stopped.wait(timeout=2))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
     def test_dashboard_imports_and_reuses_external_reports(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "repository"
