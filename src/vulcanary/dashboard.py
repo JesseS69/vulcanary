@@ -4,6 +4,7 @@ import json
 import hashlib
 import os
 import re
+import subprocess
 import threading
 import webbrowser
 from dataclasses import asdict, dataclass
@@ -31,6 +32,41 @@ REMEDIATION_RECEIPT_FIELDS = (
     "repository", "branch", "created_at", "selected_fingerprints", "changed_files",
     "rescan_passed", "remaining_selected", "finding_count", "checks_passed", "checks_skipped", "checks",
 )
+RESOLUTION_PROOF_FIELDS = (
+    "repository", "fingerprint", "rule_id", "title", "severity", "category", "path", "line",
+    "first_seen", "last_seen", "resolved_at", "resolution_commit", "resolution_branch",
+    "resolution_type", "receipt_proof", "ruleset_digest", "recurrence_index", "status", "reopened_at",
+)
+
+
+def _git_identity(root: Path) -> tuple[str | None, str | None]:
+    safe = ["git", "-c", f"safe.directory={root.as_posix()}", "-C", str(root)]
+    try:
+        commit = subprocess.run([*safe, "rev-parse", "HEAD"], text=True, capture_output=True, timeout=10)
+        branch = subprocess.run([*safe, "branch", "--show-current"], text=True, capture_output=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None, None
+    return (
+        commit.stdout.strip() if commit.returncode == 0 else None,
+        branch.stdout.strip() if branch.returncode == 0 else None,
+    )
+
+
+def resolution_record_valid(record: dict) -> bool:
+    try:
+        canonical = json.dumps({field: record[field] for field in RESOLUTION_PROOF_FIELDS}, sort_keys=True, separators=(",", ":")).encode()
+    except (KeyError, TypeError):
+        return False
+    return hashlib.sha256(canonical).hexdigest() == record.get("proof")
+
+
+def _seal_resolution_record(record: dict) -> None:
+    canonical = json.dumps(
+        {field: record[field] for field in RESOLUTION_PROOF_FIELDS},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    record["proof"] = hashlib.sha256(canonical).hexdigest()
 
 
 @dataclass
@@ -67,6 +103,8 @@ class DashboardState:
         self.pending_source_fix: dict | None = None
         self.external_reports: dict[str, dict[str, list[Path]]] = {}
         self.finding_first_seen: dict[str, str] = {}
+        self.finding_snapshots: dict[str, dict[str, dict]] = {}
+        self.resolved_findings: list[dict] = []
         if history_path and history_path.exists():
             try:
                 payload = json.loads(history_path.read_text(encoding="utf-8"))
@@ -83,6 +121,10 @@ class DashboardState:
                 self.verified_fixes = verified if isinstance(verified, dict) else {}
                 first_seen = payload.get("finding_first_seen", {})
                 self.finding_first_seen = first_seen if isinstance(first_seen, dict) else {}
+                finding_snapshots = payload.get("finding_snapshots", {})
+                self.finding_snapshots = finding_snapshots if isinstance(finding_snapshots, dict) else {}
+                resolved_findings = payload.get("resolved_findings", [])
+                self.resolved_findings = list(resolved_findings)[-500:] if isinstance(resolved_findings, list) else []
             except (OSError, ValueError, TypeError):
                 self.history = []
                 self.inventory_snapshots = {}
@@ -90,6 +132,8 @@ class DashboardState:
                 self.suppression_audit = []
                 self.remediation_audit = []
                 self.finding_first_seen = {}
+                self.finding_snapshots = {}
+                self.resolved_findings = []
 
     def _persist_history(self) -> None:
         """Replace the local state file atomically so an interrupted write cannot truncate it."""
@@ -105,6 +149,8 @@ class DashboardState:
                 "suppression_snapshots": self.suppression_snapshots, "suppression_audit": self.suppression_audit,
                 "remediation_audit": self.remediation_audit,
                 "finding_first_seen": self.finding_first_seen,
+                "finding_snapshots": self.finding_snapshots,
+                "resolved_findings": self.resolved_findings,
                 "verified_fixes": self.verified_fixes,
             }, indent=2) + "\n", encoding="utf-8")
             temporary.replace(self.history_path)
@@ -143,6 +189,7 @@ class DashboardState:
         findings = analyze_reachability(root, findings + dependency_findings + imported, config)
         findings = sorted(findings + suppression_findings(config), key=lambda f: (-int(f.severity), f.path, f.line))
         current_inventory = inventory_snapshot(discover_packages(root))
+        resolution_commit, resolution_branch = _git_identity(root)
         suppression_register = config.suppression_register() + inline_suppression_register(root, config)
         current_suppressions = {item["fingerprint"]: item for item in suppression_register}
         with self._lock:
@@ -216,6 +263,55 @@ class DashboardState:
             )
             self.repositories[str(root)] = result
             current_fingerprints = {finding["fingerprint"] for finding in result.findings}
+            previous_findings = self.finding_snapshots.get(str(root))
+            current_snapshot = {
+                finding["fingerprint"]: {
+                    "fingerprint": finding["fingerprint"], "rule_id": finding["rule_id"], "title": finding["title"],
+                    "severity": finding["severity"], "category": finding["category"], "path": finding["path"],
+                    "line": finding["line"], "first_seen": self.finding_first_seen[finding["fingerprint"]],
+                    "last_seen": scanned_at,
+                }
+                for finding in result.findings
+            }
+            if previous_findings is not None:
+                for fingerprint in sorted(set(previous_findings) - current_fingerprints):
+                    prior = previous_findings[fingerprint]
+                    receipt = next((
+                        item for item in reversed(self.remediation_audit)
+                        if item.get("action") == "committed" and fingerprint in item.get("selected_fingerprints", [])
+                        and item.get("repository") == result.name
+                        and remediation_receipt_valid(item)
+                    ), None)
+                    dependency_changed = prior.get("category") == "dependency" and bool(added_refs or removed_refs)
+                    recurrence_index = sum(
+                        item.get("repository") == result.name and item.get("fingerprint") == fingerprint
+                        for item in self.resolved_findings
+                    )
+                    record = {
+                        "repository": result.name, "fingerprint": fingerprint, "rule_id": prior["rule_id"],
+                        "title": prior["title"], "severity": prior["severity"], "category": prior["category"],
+                        "path": prior["path"], "line": prior["line"], "first_seen": prior["first_seen"],
+                        "last_seen": prior["last_seen"], "resolved_at": scanned_at,
+                        "resolution_commit": resolution_commit, "resolution_branch": resolution_branch,
+                        "resolution_type": "verified_vulcanary_fix" if receipt else "dependency_update" if dependency_changed else "observed_resolved",
+                        "receipt_proof": receipt.get("proof") if receipt else None,
+                        "ruleset_digest": ruleset_manifest(config)["digest"], "recurrence_index": recurrence_index,
+                        "status": "resolved", "reopened_at": None,
+                    }
+                    _seal_resolution_record(record)
+                    self.resolved_findings.append(record)
+            for fingerprint in current_fingerprints:
+                prior_resolution = next((
+                    item for item in reversed(self.resolved_findings)
+                    if item.get("repository") == result.name and item.get("fingerprint") == fingerprint
+                    and item.get("status") == "resolved"
+                ), None)
+                if prior_resolution:
+                    prior_resolution["status"] = "reopened"
+                    prior_resolution["reopened_at"] = scanned_at
+                    _seal_resolution_record(prior_resolution)
+            self.resolved_findings = self.resolved_findings[-500:]
+            self.finding_snapshots[str(root)] = current_snapshot
             self.verified_fixes = {
                 fingerprint: proposal for fingerprint, proposal in self.verified_fixes.items()
                 if proposal.get("repository") != str(root) or fingerprint in current_fingerprints
@@ -259,6 +355,7 @@ class DashboardState:
             "history": list(reversed(self.history)),
             "suppression_audit": list(reversed(self.suppression_audit)),
             "remediation_audit": [dict(item, receipt_valid=remediation_receipt_valid(item)) for item in reversed(self.remediation_audit)],
+            "resolved_findings": [dict(item, proof_valid=resolution_record_valid(item)) for item in reversed(self.resolved_findings)],
             "summary": {"total": len(findings), "counts": counts, "categories": categories, "scanners": scanners, "ruleset": {"digest": ruleset_manifest()["digest"], "rule_count": len(ruleset_manifest()["rules"])}},
         }
 
@@ -421,6 +518,17 @@ def make_handler(state: DashboardState):
                     self.send_error(HTTPStatus.NOT_FOUND, "Remediation receipt not found")
                     return
                 self._download_json({"version": 1, "receipt_valid": remediation_receipt_valid(record), "receipt": record}, f"vulcanary-remediation-{proof[:12]}.json")
+                return
+            if path == "/api/resolutions/record.json":
+                proof = parse_qs(parsed.query).get("proof", [""])[0]
+                if not re.fullmatch(r"[0-9a-f]{64}", proof):
+                    self.send_error(HTTPStatus.BAD_REQUEST, "A valid resolution proof is required")
+                    return
+                record = next((item for item in reversed(state.resolved_findings) if item.get("proof") == proof), None)
+                if not record:
+                    self.send_error(HTTPStatus.NOT_FOUND, "Resolution record not found")
+                    return
+                self._download_json({"version": 1, "proof_valid": resolution_record_valid(record), "resolution": record}, f"vulcanary-resolution-{proof[:12]}.json")
                 return
             if path == "/api/ruleset.json":
                 self._download_json(ruleset_manifest(), "vulcanary-ruleset.json")

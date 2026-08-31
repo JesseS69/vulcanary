@@ -23,6 +23,7 @@ function render() {
   renderLedger();
   renderGovernance();
   renderRemediationHistory();
+  renderResolvedFindings();
   renderFilterOptions();
   renderFindings();
 }
@@ -88,6 +89,26 @@ function renderRemediationHistory() {
     const download = item.receipt_valid ? `<a class="secondary" href="/api/remediation/receipt.json?proof=${encodeURIComponent(item.proof)}" download>Download receipt</a>` : '';
     return `<div class="fix-item ${blocked}"><strong>${escapeHtml(item.repository)} · ${escapeHtml(status)}</strong><span>${escapeHtml(new Date(item.created_at).toLocaleString())} · ${escapeHtml(checks)} · ${Number(item.finding_count) || 0} findings remain</span><span>${escapeHtml((item.changed_files || []).join(' · ') || 'No tracked files')}</span><span class="mono">SHA-256 ${escapeHtml(item.proof || 'missing')}</span><div class="fix-actions">${download}</div></div>`;
   }).join('') || '<p class="muted">No remediation receipts yet. A receipt appears after a dashboard fix passes its rescan and project checks.</p>';
+}
+
+function renderResolvedFindings() {
+  const records = state.resolved_findings || [];
+  const resolved = records.filter(item => item.status === 'resolved').length;
+  const reopened = records.filter(item => item.status === 'reopened').length;
+  const invalid = records.filter(item => !item.proof_valid).length;
+  $('#resolved-count').textContent = resolved;
+  $('#resolved-summary').textContent = `${resolved} resolved · ${reopened} reopened · ${invalid} invalid`;
+  // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Resolution fields are backend-normalized and escaped; proof URLs contain validated hashes only.
+  $('#resolved-list').innerHTML = records.slice(0, 30).map(item => {
+    const blocked = item.status === 'reopened' || !item.proof_valid ? 'blocked' : '';
+    const commit = item.resolution_commit ? item.resolution_commit.slice(0, 10) : 'unavailable';
+    const receipt = item.receipt_proof ? ` · receipt ${item.receipt_proof.slice(0, 12)}` : '';
+    const recurrence = item.recurrence_index ? ` · recurrence ${item.recurrence_index}` : '';
+    const download = item.proof_valid ? `<a class="secondary" href="/api/resolutions/record.json?proof=${encodeURIComponent(item.proof)}" download>Download closure</a>` : '';
+    const status = String(item.status || 'unknown');
+    const resolutionType = String(item.resolution_type || 'unknown').replaceAll('_', ' ');
+    return `<div class="fix-item ${blocked}"><strong>${escapeHtml(item.repository)} · ${escapeHtml(item.title)}</strong><span>${escapeHtml(status.toUpperCase())} · ${escapeHtml(item.severity)} · ${escapeHtml(resolutionType)}</span><span>${escapeHtml(item.path)}:${Number(item.line) || 1} · commit ${escapeHtml(commit)}${escapeHtml(receipt)}${escapeHtml(recurrence)}</span><span class="mono">SHA-256 ${escapeHtml(item.proof || 'missing')}</span><div class="fix-actions">${download}</div></div>`;
+  }).join('') || '<p class="muted">No closures recorded yet. The first scan establishes a baseline; later scans record findings that disappear.</p>';
 }
 
 function renderChart(counts) {

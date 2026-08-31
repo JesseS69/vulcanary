@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from vulcanary.cli import main
 from vulcanary.config import Config
-from vulcanary.dashboard import DashboardState, make_handler
+from vulcanary.dashboard import DashboardState, make_handler, resolution_record_valid
 from vulcanary.dependencies import discover_packages, scan_dependencies
 from vulcanary.fixes import preview
 from vulcanary.models import Severity
@@ -310,6 +310,53 @@ class ScannerTests(unittest.TestCase):
                 restored = DashboardState(history).scan_repository(root)
                 self.assertEqual(restored.inventory_change["added"], [])
                 self.assertEqual(restored.inventory_change["removed"], [])
+
+    def test_dashboard_records_tamper_evident_resolution_and_recurrence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repository"
+            root.mkdir()
+            source = root / "main.js"
+            history = Path(directory) / "dashboard-history.json"
+            source.write_text("element.innerHTML = input\n", encoding="utf-8")
+            with (
+                patch("vulcanary.dashboard.scan_dependencies", return_value=([], None)),
+                patch("vulcanary.dashboard._git_identity", return_value=("a" * 40, "main")),
+            ):
+                state = DashboardState(history)
+                state.scan_repository(root)
+                fingerprint = state.snapshot()["findings"][0]["fingerprint"]
+
+                source.write_text("element.textContent = input\n", encoding="utf-8")
+                state.scan_repository(root)
+                record = state.snapshot()["resolved_findings"][0]
+                self.assertEqual(record["fingerprint"], fingerprint)
+                self.assertEqual(record["resolution_type"], "observed_resolved")
+                self.assertEqual(record["resolution_commit"], "a" * 40)
+                self.assertEqual(record["status"], "resolved")
+                self.assertTrue(record["proof_valid"])
+                self.assertNotIn("evidence", record)
+                self.assertNotIn(str(root.resolve()), json.dumps(record))
+
+                restored = DashboardState(history)
+                self.assertTrue(resolution_record_valid(restored.resolved_findings[0]))
+                tampered = dict(restored.resolved_findings[0], title="Changed title")
+                self.assertFalse(resolution_record_valid(tampered))
+
+                source.write_text("element.innerHTML = input\n", encoding="utf-8")
+                restored.scan_repository(root)
+                reopened = restored.snapshot()["resolved_findings"][0]
+                self.assertEqual(reopened["status"], "reopened")
+                self.assertIsNotNone(reopened["reopened_at"])
+                self.assertTrue(reopened["proof_valid"])
+
+                restored.scan_repository(root)
+                self.assertEqual(len(restored.resolved_findings), 1)
+
+                source.write_text("element.textContent = input\n", encoding="utf-8")
+                restored.scan_repository(root)
+                latest = restored.snapshot()["resolved_findings"][0]
+                self.assertEqual(latest["recurrence_index"], 1)
+                self.assertEqual(len(restored.resolved_findings), 2)
 
     def test_dashboard_persists_and_invalidates_verified_fixes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
