@@ -138,6 +138,10 @@ Exposure context separately correlates findings with route-like source paths and
 
 For transitive npm findings, Vulcanary records the shortest chain from each introducing direct dependency to the vulnerable version. Usage labels distinguish direct application imports, observed runtime parents, development-only parents, and recognizable build/test tooling paths. These labels add context without changing severity or claiming that missing static evidence proves safety.
 
+When OSV publishes fixes for multiple maintained release lines, Vulcanary prefers the lowest patched version in the installed package's current major line. It does not label a fix as a major upgrade merely because a newer-major fix appears first in the advisory record.
+
+Tooling-only transitive findings first receive a compatible lockfile or parent-upgrade evaluation. If one immediate tooling parent remains pinned, Vulcanary can test a **parent-scoped override** in a detached worktree. Lifecycle scripts stay disabled; the advisory must disappear on rescan and configured project checks must pass. Only that exact parent/package/version tuple is then unlocked for the ordinary reviewed fix workflow. Dirty repositories, ambiguous parent chains, skipped verification, global overrides, and unresolved advisories fail closed.
+
 Remediation priority is a deterministic operational score, separate from advisory severity. It combines severity with direct/import evidence, runtime versus tooling context, patched-release availability, and automatic-fix eligibility. The dashboard reports **Urgent**, **High priority**, **Planned**, or **Monitor upstream** while always retaining the scanner's original severity.
 
 The remediation queue can be sorted by contextual priority, original severity, policy deadline, fixability, or repository. Deadline badges keep overdue ownership visible during triage instead of requiring each finding to be opened individually.
@@ -227,7 +231,7 @@ Finding details show deterministic confidence, redacted evidence, reachability, 
 1. **Source-recipe expansion:** add more narrowly reviewed transformations and an optional, explicitly configured AI drafting adapter without weakening deterministic validation gates.
 2. **Rule sharing:** add signed, versioned community rule packs on top of the repository-local review fixtures and canonical digest boundary.
 3. **Team workflow:** add opt-in notification delivery around the existing source-free Markdown and JSON ticket exports.
-4. **Dependency remediation:** add rollback-proven lockfile updates for Yarn, nested pnpm workspaces, Poetry, uv, and PDM.
+4. **Dependency remediation:** add rollback-proven lockfile updates for Yarn, nested pnpm workspaces, Poetry, uv, and PDM, plus API-level compatibility smokes for known high-risk overrides.
 5. **Hosted control plane:** only if needed, add authenticated workers, tenant isolation, RBAC, durable audit storage, and explicit source-retention controls without weakening local-first mode.
 
 Vulcanary consumes OSV rather than maintaining a private vulnerability database, preserving advisory identifiers and fixed versions in its normalized findings. Exact Python pins in `requirements*.txt`, direct npm dependencies, and direct root-workspace pnpm dependencies can be upgraded locally when OSV identifies a same-major fix. pnpm uses `--lockfile-only --ignore-scripts`; every manager still requires an isolated branch, security rescan, configured project checks, and an explicit commit. Yarn, nested pnpm workspaces, Poetry, uv, and PDM findings remain read-only until equivalent lockfile rollback and verification coverage is available.

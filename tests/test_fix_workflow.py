@@ -183,6 +183,32 @@ class FixWorkflowTests(unittest.TestCase):
             self.assertEqual(applied["files"], ["package.json", "pnpm-lock.yaml"])
             self.assertEqual(json.loads((root / "package.json").read_text())["dependencies"]["demo"], "^1.1.0")
 
+    def test_verified_scoped_override_is_parent_limited(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._initialize_repository(root)
+            finding = {
+                "fingerprint": "override-fix", "title": "uuid advisory", "repository": root.name,
+                "repository_path": str(root), "metadata": {
+                    "fix_eligible": True, "fix_strategy": "scoped_override", "manager": "npm",
+                    "package": "uuid", "current_version": "7.0.3", "fixed_version": "11.1.1", "advisory": "GHSA-uuid",
+                    "verified_fix": {"strategy": "scoped_override", "package": "uuid", "candidate_version": "11.1.1", "parent": "xcode"},
+                },
+            }
+            plan = preview([finding], ["override-fix"])
+            real_run = subprocess.run
+
+            def run_without_network(command, **kwargs):
+                if Path(command[0]).stem.lower() != "npm":
+                    return real_run(command, **kwargs)
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            with patch("vulcanary.fixes.subprocess.run", side_effect=run_without_network):
+                applied = apply_changes(plan)
+            package = json.loads((root / "package.json").read_text())
+            self.assertEqual(package["overrides"], {"xcode": {"uuid": "11.1.1"}})
+            self.assertEqual(applied["files"], ["package.json", "package-lock.json"])
+
     def test_remediation_receipt_is_hashed_and_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             history = Path(directory) / "history.json"

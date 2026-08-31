@@ -237,11 +237,19 @@ def analyze_reachability(root: Path, findings: list[Finding], config: Config) ->
             action = "monitor_upstream"
             recommendation = "No patched release is identified. Monitor the advisory and upstream dependency while reviewing compensating controls."
         elif not metadata.get("direct") and "expo" in parents:
-            action = "evaluate_platform_upgrade"
-            recommendation = "Evaluate the compatible Expo platform set in isolation; avoid forcing an unscoped transitive override."
+            if usage == "tooling_path_via_runtime_parent":
+                action = "evaluate_tooling_remediation"
+                recommendation = "Evaluate a compatible lockfile resolution first; if the current parent remains pinned, test a parent-scoped override in isolation. Keep the advisory visible because tooling still processes repository input."
+            else:
+                action = "evaluate_platform_upgrade"
+                recommendation = "Evaluate the compatible Expo platform set in isolation; avoid forcing an unscoped transitive override."
         elif not metadata.get("direct") and parents:
-            action = "evaluate_parent_upgrade"
-            recommendation = f"Evaluate upgrades for {', '.join(parents)} in isolation, then rescan the resolved lockfile."
+            if usage == "tooling_path_via_runtime_parent":
+                action = "evaluate_tooling_remediation"
+                recommendation = f"Evaluate compatible lockfile updates for {package}; if {', '.join(parents)} remains pinned, test a parent-scoped override in isolation."
+            else:
+                action = "evaluate_parent_upgrade"
+                recommendation = f"Evaluate upgrades for {', '.join(parents)} in isolation, then rescan the resolved lockfile."
         elif metadata.get("direct"):
             action = "review_major_upgrade"
             recommendation = f"Review the breaking changes required to move {package} to {fixed}, test, and rescan."

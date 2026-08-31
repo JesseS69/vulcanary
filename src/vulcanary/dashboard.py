@@ -21,7 +21,7 @@ from .reachability import analyze_reachability
 from .sbom import cyclonedx_document, inventory_snapshot, spdx_document
 from .governance import suppression_findings
 from .fixes import apply_changes, commit_changes, preview as preview_fixes, rollback_changes, run_verification
-from .evaluator import create_expo_candidate_branch, evaluate_expo_platform, evaluate_parent_upgrades
+from .evaluator import create_expo_candidate_branch, evaluate_expo_platform, evaluate_parent_upgrades, evaluate_scoped_overrides
 from .adapters import PARSERS, import_report
 from .source_fixes import apply_source_fix, preview_source_fix
 from .tickets import finding_ticket, ticket_markdown
@@ -242,7 +242,10 @@ class DashboardState:
         for finding in findings:
             verified = self.verified_fixes.get(finding["fingerprint"])
             if verified:
-                finding["metadata"] = dict(finding.get("metadata", {}), fix_eligible=True, verified_fix=verified, fix_strategy="platform")
+                finding["metadata"] = dict(
+                    finding.get("metadata", {}), fix_eligible=True, verified_fix=verified,
+                    fix_strategy=verified.get("strategy", "platform"),
+                )
         counts = {severity: sum(item["severity"] == severity for item in findings) for severity in ("critical", "high", "medium", "low", "info")}
         categories: dict[str, int] = {}
         scanners: dict[str, int] = {}
@@ -274,6 +277,24 @@ class DashboardState:
             advisory = finding.get("metadata", {}).get("advisory")
             if finding["repository_path"] == repository and advisory in resolved:
                 proposals[finding["fingerprint"]] = candidate
+        with self._lock:
+            self.verified_fixes.update(proposals)
+            self._persist_history()
+
+    def register_override_evaluation(self, repository: str, evaluation: dict) -> None:
+        proposals = {}
+        findings = self.snapshot()["findings"]
+        for result in evaluation.get("results", []):
+            if result.get("status") != "safe_candidate" or not result.get("verification", {}).get("passed"):
+                continue
+            for finding in findings:
+                metadata = finding.get("metadata", {})
+                if finding["repository_path"] == repository and metadata.get("advisory") in result.get("resolved", []):
+                    proposals[finding["fingerprint"]] = {
+                        "strategy": "scoped_override", "package": result["package"],
+                        "candidate_version": result["candidate_version"], "parent": result["parent"],
+                        "repository": repository,
+                    }
         with self._lock:
             self.verified_fixes.update(proposals)
             self._persist_history()
@@ -461,7 +482,7 @@ def make_handler(state: DashboardState):
                 self.send_error(HTTPStatus.BAD_REQUEST, "Dashboard Host header must be loopback")
                 return
             route = urlparse(self.path).path
-            if route not in {"/api/scan", "/api/rescan", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/source/preview", "/api/source/apply", "/api/parents/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
+            if route not in {"/api/scan", "/api/rescan", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/source/preview", "/api/source/apply", "/api/parents/evaluate", "/api/overrides/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
@@ -589,6 +610,13 @@ def make_handler(state: DashboardState):
                     requested = payload.get("packages")
                     packages = set(requested) if isinstance(requested, list) and all(isinstance(item, str) for item in requested) else None
                     self._json({"evaluation": evaluate_parent_upgrades(state.snapshot()["findings"], repository, packages=packages)})
+                elif route == "/api/overrides/evaluate":
+                    repository = str(Path(payload["repository"]).resolve())
+                    if repository not in state.repositories:
+                        raise ValueError("Scan the repository before evaluating scoped overrides")
+                    evaluation = evaluate_scoped_overrides(state.snapshot()["findings"], repository)
+                    state.register_override_evaluation(repository, evaluation)
+                    self._json({"evaluation": evaluation, "state": state.snapshot()})
                 elif route == "/api/platform/evaluate":
                     repository = str(Path(payload["repository"]).resolve())
                     if repository not in state.repositories:

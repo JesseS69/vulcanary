@@ -74,6 +74,80 @@ def parent_candidates(findings: list[dict], repository: str) -> list[dict]:
     return [dict(item, advisories=sorted(item["advisories"] - {None}), vulnerable_packages=sorted(item["vulnerable_packages"] - {None})) for item in grouped.values()]
 
 
+def _package_label_name(label: str) -> str:
+    split = label.rfind("@")
+    return label[:split] if split > 0 else label
+
+
+def scoped_override_candidates(findings: list[dict], repository: str) -> list[dict]:
+    root = str(Path(repository).resolve())
+    candidates = []
+    for finding in findings:
+        metadata = finding.get("metadata", {})
+        paths = metadata.get("dependency_paths", [])
+        usage = metadata.get("usage", {}).get("classification")
+        if finding.get("repository_path") != root or metadata.get("direct") or not metadata.get("fixed_version") or usage != "tooling_path_via_runtime_parent":
+            continue
+        parents = sorted({_package_label_name(path[-2]) for path in paths if len(path) >= 2})
+        if len(parents) != 1:
+            continue
+        candidates.append({
+            "package": metadata["package"], "from": metadata["current_version"],
+            "candidate_version": metadata["fixed_version"], "parent": parents[0],
+            "advisories": [metadata["advisory"]], "fingerprints": [finding["fingerprint"]],
+            "strategy": "scoped_override",
+        })
+    return candidates
+
+
+def evaluate_scoped_overrides(
+    findings: list[dict], repository: str,
+    dependency_scanner: Callable[[Path], tuple[list, str | None]] = scan_dependencies,
+) -> dict:
+    root = Path(repository).resolve()
+    git_root_result = _run(["git", "rev-parse", "--show-toplevel"], root, 30)
+    if git_root_result.returncode:
+        raise ValueError("Scoped override evaluation requires a Git repository")
+    git_root = Path(git_root_result.stdout.strip()).resolve()
+    if _run(["git", "status", "--porcelain"], git_root, 30).stdout.strip():
+        raise ValueError("Repository has uncommitted changes; scoped override evaluation requires a clean checkpoint")
+    relative_root = root.relative_to(git_root)
+    config = Config.load(root)
+    results = []
+    for candidate in scoped_override_candidates(findings, str(root)):
+        with tempfile.TemporaryDirectory(prefix="vulcanary-override-") as directory:
+            worktree = Path(directory)
+            if _run(["git", "worktree", "add", "--detach", str(worktree), "HEAD"], git_root, 60).returncode:
+                results.append(dict(candidate, status="worktree_failed"))
+                continue
+            project = worktree / relative_root
+            try:
+                package_path = project / "package.json"
+                package = json.loads(package_path.read_text(encoding="utf-8"))
+                parent_override = package.setdefault("overrides", {}).setdefault(candidate["parent"], {})
+                if not isinstance(parent_override, dict):
+                    results.append(dict(candidate, status="override_conflict"))
+                    continue
+                parent_override[candidate["package"]] = candidate["candidate_version"]
+                package_path.write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
+                installed = _run(["npm", "install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"], project, 600)
+                if installed.returncode:
+                    results.append(dict(candidate, status="install_failed"))
+                    continue
+                rescanned, warning = dependency_scanner(project)
+                remaining = {finding.rule_id for finding in rescanned}
+                unresolved = [advisory for advisory in candidate["advisories"] if f"SCA-{advisory}" in remaining]
+                if unresolved:
+                    results.append(dict(candidate, status="still_vulnerable", remaining=unresolved, warning=warning))
+                    continue
+                verification = run_verification(str(project), config.verify_commands, config.verify_timeout_seconds)
+                status = "safe_candidate" if verification["passed"] and not verification.get("skipped") else "verification_skipped" if verification.get("skipped") else "verification_failed"
+                results.append(dict(candidate, status=status, verification=verification, resolved=candidate["advisories"], warning=warning))
+            finally:
+                _run(["git", "worktree", "remove", "--force", str(worktree)], git_root, 60)
+    return {"repository": str(root), "results": results}
+
+
 def evaluate_parent_upgrades(
     findings: list[dict],
     repository: str,

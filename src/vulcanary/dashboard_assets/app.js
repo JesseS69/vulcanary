@@ -319,6 +319,16 @@ async function evaluateAllBlocked() {
         const body = await postJson('/api/parents/evaluate', {repository, packages:otherParents});
         body.evaluation.results.forEach(item => results.push({title:`${repoFindings[0].repository} · ${item.package} ${item.candidate_version || '—'}`, status:item.status, detail:item.resolved?.length ? `Resolves ${item.resolved.length} of ${item.advisories.length} advisories` : `Affects ${item.vulnerable_packages.join(', ')}`}));
       }
+      const toolingCandidates = repoFindings.filter(finding => finding.metadata?.usage?.classification === 'tooling_path_via_runtime_parent' && finding.metadata?.fixed_version);
+      if (toolingCandidates.length) {
+        const body = await postJson('/api/overrides/evaluate', {repository});
+        state = body.state;
+        body.evaluation.results.forEach(item => results.push({
+          title:`${repoFindings[0].repository} · ${item.parent} → ${item.package} ${item.candidate_version}`,
+          status:item.status,
+          detail:item.resolved?.length ? `Verified parent-scoped override resolves ${item.resolved.length} advisory` : 'Scoped override was not proven safe',
+        }));
+      }
       const noPatch = repoFindings.filter(finding => finding.category === 'dependency' && !finding.metadata?.fixed_version);
       if (noPatch.length) results.push({title:`${repoFindings[0].repository} · upstream patches`, status:'no_patch', detail:`${noPatch.length} finding${noPatch.length === 1 ? '' : 's'} have no patched release`});
       const source = repoFindings.filter(finding => finding.category !== 'dependency');

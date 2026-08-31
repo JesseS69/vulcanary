@@ -456,6 +456,25 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(transitive_findings[0].metadata["parent_scopes"], {"parent": "runtime"})
             self.assertEqual(transitive_findings[0].metadata["dependency_paths"], [["parent@1.0.0", "demo@1.0.0"]])
 
+    def test_osv_selects_compatible_fixed_release_line(self) -> None:
+        record = {
+            "summary": "Multiple maintained release lines",
+            "affected": [{"package": {"name": "demo"}, "ranges": [
+                {"events": [{"introduced": "0"}, {"fixed": "4.3.1"}]},
+                {"events": [{"introduced": "3.0.0"}, {"fixed": "3.15.2"}]},
+            ]}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "package-lock.json").write_text(json.dumps({"packages": {
+                "": {"dependencies": {"demo": "^3.13.1"}},
+                "node_modules/demo": {"version": "3.15.0"},
+            }}), encoding="utf-8")
+            with patch("vulcanary.dependencies._json_request", side_effect=[{"results": [{"vulns": [{"id": "GHSA-lines"}]}]}, record]):
+                findings, _ = scan_dependencies(root, cache_dir=False)
+            self.assertEqual(findings[0].metadata["fixed_version"], "3.15.2")
+            self.assertTrue(findings[0].metadata["fix_eligible"])
+
     def test_fix_preview_separates_safe_and_manual_findings(self) -> None:
         findings = [
             {"fingerprint": "safe", "title": "Safe", "repository": "app", "repository_path": "C:/app", "metadata": {"fix_eligible": True, "package": "demo", "current_version": "1.0.0", "fixed_version": "1.1.0", "advisory": "GHSA-safe"}},

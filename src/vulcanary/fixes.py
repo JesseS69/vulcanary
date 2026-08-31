@@ -34,6 +34,11 @@ def preview(findings: list[dict], fingerprints: list[str]) -> dict:
                 package="expo", to=verified.get("candidate_version"), strategy="platform",
                 is_migration=bool(verified.get("is_migration")), files=["package.json", "package-lock.json"],
             )
+        elif verified and verified.get("strategy") == "scoped_override":
+            item.update(
+                package=verified["package"], to=verified["candidate_version"], strategy="scoped_override",
+                override_parent=verified["parent"], files=["package.json", "package-lock.json"], manager="npm",
+            )
         if meta.get("fix_eligible"):
             key = (item["repository_path"], item["package"], item.get("manager"))
             existing = changes_by_package.get(key)
@@ -154,7 +159,17 @@ def apply_changes(plan: dict) -> dict:
     package_path = root / "package.json"
     package = json.loads(package_path.read_text(encoding="utf-8"))
     for item in plan["changes"]:
-        if item.get("strategy") == "override":
+        if item.get("strategy") == "scoped_override":
+            parent = item.get("override_parent")
+            if not parent:
+                rollback_changes(str(root), branch, original_branch)
+                raise ValueError("The verified parent-scoped override is missing its parent package")
+            scoped = package.setdefault("overrides", {}).setdefault(parent, {})
+            if not isinstance(scoped, dict):
+                rollback_changes(str(root), branch, original_branch)
+                raise ValueError("The verified parent-scoped override conflicts with the existing package manifest")
+            scoped[item["package"]] = item["to"]
+        elif item.get("strategy") == "override":
             package.setdefault("overrides", {})[item["package"]] = item["to"]
         else:
             for section in ("dependencies", "devDependencies"):

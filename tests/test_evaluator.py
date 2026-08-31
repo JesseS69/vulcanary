@@ -6,10 +6,25 @@ from pathlib import Path
 from unittest.mock import patch
 
 from vulcanary import evaluator
-from vulcanary.evaluator import create_expo_migration_branch, latest_same_major, parent_candidates
+from vulcanary.evaluator import create_expo_migration_branch, latest_same_major, parent_candidates, scoped_override_candidates
 
 
 class ParentEvaluatorTests(unittest.TestCase):
+    def test_scoped_override_candidates_require_one_tooling_parent(self) -> None:
+        repository = str(Path("demo").resolve())
+        findings = [{
+            "fingerprint": "a" * 20, "repository_path": repository,
+            "metadata": {
+                "package": "uuid", "current_version": "7.0.3", "fixed_version": "11.1.1",
+                "advisory": "GHSA-demo", "direct": False,
+                "usage": {"classification": "tooling_path_via_runtime_parent"},
+                "dependency_paths": [["expo@55", "xcode@3.0.1", "uuid@7.0.3"]],
+            },
+        }]
+        self.assertEqual(scoped_override_candidates(findings, repository)[0]["parent"], "xcode")
+        findings[0]["metadata"]["usage"]["classification"] = "runtime_parent_observed"
+        self.assertEqual(scoped_override_candidates(findings, repository), [])
+
     def test_groups_advisories_by_declared_direct_parent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()

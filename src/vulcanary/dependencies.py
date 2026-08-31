@@ -223,6 +223,7 @@ def _severity(record: dict) -> Severity:
 
 
 def _fixed_version(record: dict, package: Package) -> str | None:
+    candidates = []
     for affected in record.get("affected", []):
         identity = affected.get("package", {})
         if identity.get("name", "").lower() != package.name.lower():
@@ -230,8 +231,13 @@ def _fixed_version(record: dict, package: Package) -> str | None:
         for version_range in affected.get("ranges", []):
             for event in version_range.get("events", []):
                 if event.get("fixed"):
-                    return event["fixed"]
-    return None
+                    candidates.append(event["fixed"])
+    if not candidates:
+        return None
+    current_major = re.match(r"\D*(\d+)", package.version)
+    compatible = [candidate for candidate in candidates if current_major and re.match(r"\D*(\d+)", candidate) and re.match(r"\D*(\d+)", candidate).group(1) == current_major.group(1)]
+    pool = compatible or candidates
+    return min(pool, key=lambda value: tuple(int(part) for part in re.findall(r"\d+", value)[:4]))
 
 
 def _same_major(current: str, fixed: str | None) -> bool:
