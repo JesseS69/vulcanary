@@ -139,17 +139,22 @@ def inline_suppression_register(root: Path, config: Config, today: date | None =
     return records
 
 
+def is_excluded(path: str | Path, config: Config, root: Path | None = None) -> bool:
+    candidate = Path(path)
+    rel = relative_path(candidate, root) if root is not None else candidate.as_posix().lstrip("./")
+    return any(
+        fnmatch.fnmatch(rel, pattern)
+        or fnmatch.fnmatch(rel, f"*/{pattern}")
+        or fnmatch.fnmatch(f"{rel}/", pattern)
+        or fnmatch.fnmatch(f"{rel}/", f"*/{pattern}")
+        or fnmatch.fnmatch(candidate.name, pattern)
+        for pattern in config.exclude
+    )
+
+
 def iter_files(root: Path, config: Config) -> Iterable[Path]:
     def excluded(path: Path) -> bool:
-        rel = relative_path(path, root)
-        return any(
-            fnmatch.fnmatch(rel, pattern)
-            or fnmatch.fnmatch(rel, f"*/{pattern}")
-            or fnmatch.fnmatch(f"{rel}/", pattern)
-            or fnmatch.fnmatch(f"{rel}/", f"*/{pattern}")
-            or fnmatch.fnmatch(path.name, pattern)
-            for pattern in config.exclude
-        )
+        return is_excluded(path, config, root)
 
     for directory, names, files in os.walk(root, topdown=True):
         parent = Path(directory)

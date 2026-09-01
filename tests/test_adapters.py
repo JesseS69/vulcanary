@@ -68,6 +68,19 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(len(document["findings"]), 1)
             self.assertNotIn("hidden", output.read_text(encoding="utf-8"))
 
+    def test_cli_applies_repository_exclusions_to_imported_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".vulcanary.json").write_text(json.dumps({"exclude": ["benchmarks/**"]}), encoding="utf-8")
+            report = root / "semgrep.json"
+            report.write_text(json.dumps({"results": [{
+                "check_id": "synthetic.secret", "path": "benchmarks/cases.json", "start": {"line": 1},
+                "extra": {"message": "Synthetic benchmark credential", "severity": "ERROR"},
+            }]}), encoding="utf-8")
+            output = root / "vulcanary.json"
+            self.assertEqual(main([str(root), "--offline", "--semgrep-json", str(report), "--json", str(output)]), 0)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["findings"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .config import Config
 from .reporters import baseline_identities, findings_new_since, render_console, render_github_annotations, render_markdown_summary, write_json, write_sarif
-from .scanners import inline_suppression_register, ruleset_manifest, scan
+from .scanners import inline_suppression_register, is_excluded, ruleset_manifest, scan
 from .dependencies import discover_packages, scan_dependencies
 from .reachability import analyze_reachability
 from .sbom import cyclonedx_document, spdx_document, write_cyclonedx, write_spdx
@@ -161,7 +161,12 @@ def main(argv: list[str] | None = None) -> int:
     except AdapterError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
-    imported = [finding for finding in imported if finding.rule_id not in config.ignored_rules and not config.is_suppressed(finding.fingerprint)]
+    imported = [
+        finding for finding in imported
+        if not is_excluded(finding.path, config)
+        and finding.rule_id not in config.ignored_rules
+        and not config.is_suppressed(finding.fingerprint)
+    ]
     imported = list({finding.fingerprint: finding for finding in imported}.values())
     findings = findings + imported
     if not args.offline:
