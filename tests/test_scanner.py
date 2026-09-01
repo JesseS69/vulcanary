@@ -177,6 +177,19 @@ class ScannerTests(unittest.TestCase):
             (root / "main.js").write_text("element.innerHTML = input", encoding="utf-8")
             self.assertEqual(main([str(root)]), 0)
 
+    def test_github_summary_is_source_free(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repository"
+            root.mkdir()
+            (root / "main.js").write_text("element.innerHTML = private_customer_value\n", encoding="utf-8")
+            summary = Path(directory) / "summary.md"
+            with patch.dict("os.environ", {"GITHUB_STEP_SUMMARY": str(summary)}):
+                self.assertEqual(main([str(root), "--github-summary", "--offline", "--no-fail"]), 0)
+            rendered = summary.read_text(encoding="utf-8")
+            self.assertIn("Vulcanary security summary", rendered)
+            self.assertIn("main.js:1", rendered)
+            self.assertNotIn("private_customer_value", rendered)
+
     def test_pr_baseline_gates_and_annotates_only_new_findings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -218,6 +231,20 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(snapshot["findings"][0]["repository"], root.name)
             self.assertEqual(snapshot["findings"][0]["metadata"]["policy"]["owner"], "unassigned")
             self.assertEqual(snapshot["repositories"][0]["policy"]["sla_days"]["medium"], 30)
+            self.assertEqual(snapshot["repositories"][0]["health"]["status"], "healthy")
+
+    def test_dashboard_can_stop_watching_without_erasing_history(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("vulcanary.dashboard.scan_dependencies", return_value=([], None)):
+                state = DashboardState()
+                state.scan_repository(root)
+            self.assertEqual(len(state.history), 1)
+            state.remove_repository(str(root))
+            self.assertEqual(state.snapshot()["repositories"], [])
+            self.assertEqual(len(state.history), 1)
+            with self.assertRaisesRegex(ValueError, "not currently watched"):
+                state.remove_repository(str(root))
 
     def test_dashboard_rescan_all_refreshes_tracked_repositories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

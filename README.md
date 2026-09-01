@@ -4,6 +4,8 @@
 
 Vulcanary is a local-first code defense system that finds vulnerabilities, tests remediation paths, and turns verified repairs into reviewable Git commits. Its forge-inspired dashboard watches multiple repositories, normalizes findings from built-in and external engines, and keeps source code under the operator's control.
 
+The complete local scanner, dashboard, continuous monitoring, GitHub workflow, remediation engine, reports, and benchmark are available in the free community edition. It requires no Vulcanary account, telemetry, hosted control plane, or paid service.
+
 The canary detects trouble; the forge proves the repair. Vulcanary evaluates dependency and platform upgrades in isolated Git worktrees, runs the repository's own verification commands, rescans the result, and unlocks a fix only when the tested findings disappear without breaking configured checks. It can also enforce the same policy in GitHub Actions and produce normalized JSON, SARIF, and CycloneDX reports.
 
 ## Quick start
@@ -34,6 +36,8 @@ vulcanary stop
 
 `start` restores the watched repositories and monitoring interval, launches in the background, and opens the dashboard. The control token used by `stop` is generated locally, stored in the user-local application configuration with restrictive permissions where the operating system supports them, passed to the child process through its environment rather than command-line arguments, and accepted only by the loopback shutdown endpoint.
 
+Run `vulcanary update-check` when you want to query the official GitHub release endpoint. It reports availability and never downloads or installs an update automatically.
+
 For a one-time command-line scan, run `vulcanary path\to\repository --json findings.json --sarif findings.sarif`.
 
 The process exits with code `1` if a finding meets the configured `fail_on` severity. Use `--no-fail` for audit-only runs.
@@ -59,6 +63,8 @@ The dashboard runs only on `127.0.0.1` by default. It provides repository summar
 
 Continuous watch rescans every five minutes by default. The dashboard can pause or resume it, change the interval from one minute to 24 hours, or trigger an immediate cycle. Only new, reopened, and severity-increased findings create monitor alerts; the first scan is a quiet baseline. Alerts retain a source-free finding identity, repository-relative path, timestamp, and Git commit when available. The browser polls local state for status updates, while all scanning remains inside the loopback process. Start paused with `--monitor-interval 0`, or choose a 30–86400 second interval on the command line.
 
+Repositories can be added and removed directly from **Repository watch**. The local application configuration is updated atomically, while scan history and closure evidence remain available after a repository is removed. Each card reports builtin/dependency scanner health, Git branch and commit, scan duration, inventory state, ownership, and finding counts. Browser desktop alerts are optional, require an explicit permission click, and are generated locally only for new monitor events.
+
 ### Guarded fixes
 
 Eligible findings have checkboxes in the remediation queue. **Select all safe fixes** collects deterministic upgrades, while **Evaluate all blocked fixes** deduplicates shared parent and platform paths and tests them without touching the watched branch. Findings are labeled with an actionable state: automatic fix, evaluate, draft source fix, or no patched release.
@@ -73,7 +79,7 @@ The **Resolved findings ledger** turns the first scan into a local baseline and 
 
 Closure records can be downloaded as normalized JSON. They deliberately exclude evidence, source snippets, absolute repository paths, command output, credentials, and environment values. The ledger remains in `~/.vulcanary/dashboard-history.json`; it is not uploaded to GitHub or included in scan artifacts.
 
-Supported source findings expose **Draft fix** instead of a disabled checkbox. Source recipes are deliberately structural and fail closed when the source shape differs from the reviewed pattern. The dashboard displays a unified diff before application, creates a `vulcanary/source-fix-*` branch, and subjects the draft to the same project-check, rescan, rollback, guarded-commit, and remediation-receipt workflow. Reviewed recipes replace a narrowly recognized static `innerHTML` construction with explicit DOM nodes and `textContent`, convert standalone Python `eval` calls over simple data values to `ast.literal_eval` with safe import placement, and remove `shell=True` when a subprocess call already uses a static string-only argument list. Dynamic HTML, nested calls, executable Python expressions, string commands, and interpolated subprocess arguments remain review-only.
+Supported source findings expose **Draft fix** instead of a disabled checkbox. Source recipes are deliberately structural and fail closed when the source shape differs from the reviewed pattern. The dashboard displays a unified diff before application, creates a `vulcanary/source-fix-*` branch, and subjects the draft to the same project-check, rescan, rollback, guarded-commit, and remediation-receipt workflow. Reviewed recipes replace a narrowly recognized static `innerHTML` construction with explicit DOM nodes and `textContent`, convert standalone Python `eval` calls over simple data values to `ast.literal_eval` with safe import placement, remove `shell=True` when a subprocess call already uses a static string-only argument list, disable persisted checkout credentials, and reduce workflow-wide `write-all` to a read-only baseline for subsequent least-privilege review. Dynamic HTML, nested calls, executable Python expressions, string commands, interpolated subprocess arguments, and workflow-specific write grants remain review-only.
 
 ## Configuration
 
@@ -244,7 +250,13 @@ Repositories can place `custom_rules` in `.vulcanary.json`. Custom identifiers m
 }
 ```
 
-Finding details show deterministic confidence, redacted evidence, reachability, exposure, ownership, deadline, and the recommended remediation path. **Export Markdown ticket** and **Export JSON ticket** create local handoff records that deliberately exclude source content, evidence, credentials, command output, and absolute paths.
+Finding details show deterministic confidence, redacted evidence, reachability, exposure, ownership, deadline, and the recommended remediation path. **Export Markdown ticket**, **Export JSON ticket**, and **Export CSV ticket** create local handoff records that deliberately exclude source content, evidence, credentials, command output, and absolute paths. CSV provides a simple import boundary for common ticket systems without giving Vulcanary access to those services.
+
+GitHub workflows can pass `--github-summary` to append a sanitized severity table and top finding list to the native job summary. The bundled workflows enable it alongside annotations and SARIF; summaries contain repository-relative locations but no evidence, source snippets, credentials, or absolute paths.
+
+## Public accuracy benchmark
+
+`benchmarks/cases.json` contains one synthetic vulnerable fixture and one closely related safe fixture for every built-in deterministic rule. The suite fails when a rule misses its vulnerable case, fires on its safe neighbor, or lacks benchmark coverage. Run `python -m unittest tests.test_benchmark -v`. Passing this benchmark proves the published fixture boundary—not complete detection of every real-world vulnerability—and that limitation is intentional and documented.
 
 ## Roadmap
 
@@ -265,3 +277,5 @@ Treat scanned repositories as hostile input. Production workers should run witho
 ## Public repository
 
 Vulcanary is designed to be published independently of the repositories it scans. Do not commit real scan reports, repository snapshots, `.env` files, access tokens, or organization-specific suppressions. See `SECURITY.md` for responsible disclosure guidance.
+
+Community participation is governed by `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SUPPORT.md`, issue/PR templates, and private vulnerability reporting. The source code remains MIT-licensed. The Vulcanary name and brand assets follow `TRADEMARKS.md` so modified distributions cannot be mistaken for official security releases.

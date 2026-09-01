@@ -1,6 +1,6 @@
 import unittest
 
-from vulcanary.tickets import finding_ticket, ticket_markdown
+from vulcanary.tickets import finding_ticket, ticket_csv, ticket_markdown
 
 
 class TicketTests(unittest.TestCase):
@@ -19,6 +19,10 @@ class TicketTests(unittest.TestCase):
         markdown = ticket_markdown(ticket)
         self.assertIn("src/app.py:7", markdown)
         self.assertIn("Source code, evidence, credentials", markdown)
+        csv_text = ticket_csv(ticket)
+        self.assertIn("src/app.py", csv_text)
+        self.assertNotIn("secret-value", csv_text)
+        self.assertNotIn("C:/secret", csv_text)
 
 
 if __name__ == "__main__":

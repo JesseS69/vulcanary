@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 
 
@@ -46,3 +48,15 @@ def ticket_markdown(ticket: dict) -> str:
         f"## Recommended remediation\n\n{ticket['remediation'] or 'Review and remediate the affected security condition.'}\n\n"
         "_Generated locally by Vulcanary. Source code, evidence, credentials, and absolute paths are excluded._\n"
     )
+
+
+def ticket_csv(ticket: dict) -> str:
+    output = io.StringIO(newline="")
+    fields = ["title", "repository", "rule_id", "severity", "category", "scanner", "path", "line", "fingerprint", "owner", "deadline", "remediation"]
+    writer = csv.DictWriter(output, fieldnames=fields)
+    writer.writeheader()
+    writer.writerow({
+        **{field: ticket.get(field) or "" for field in fields},
+        "path": ticket["location"]["path"], "line": ticket["location"]["line"],
+    })
+    return output.getvalue()

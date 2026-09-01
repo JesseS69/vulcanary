@@ -1,0 +1,20 @@
+name: Feature request
+description: Propose a local-first community feature
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes: {label: Problem to solve}
+    validations: {required: true}
+  - type: textarea
+    id: proposal
+    attributes: {label: Proposed behavior}
+    validations: {required: true}
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Local-first check
+      options:
+        - label: The proposal does not require uploading source code or credentials.
+          required: true

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import webbrowser
 from pathlib import Path
 
 from .config import Config
-from .reporters import baseline_identities, findings_new_since, render_console, render_github_annotations, write_json, write_sarif
+from .reporters import baseline_identities, findings_new_since, render_console, render_github_annotations, render_markdown_summary, write_json, write_sarif
 from .scanners import inline_suppression_register, ruleset_manifest, scan
 from .dependencies import discover_packages, scan_dependencies
 from .reachability import analyze_reachability
@@ -20,7 +21,7 @@ from .adapters import AdapterError, import_report
 def scan_parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         prog="vulcanary", description="Scan a repository for security risks.",
-        epilog="Local product commands: vulcanary setup | start | status | stop | dashboard",
+        epilog="Local product commands: vulcanary setup | start | status | stop | dashboard | update-check",
     )
     result.add_argument("path", nargs="?", default=".", help="Repository to scan")
     result.add_argument("--config", type=Path, help="Configuration JSON path")
@@ -32,6 +33,7 @@ def scan_parser() -> argparse.ArgumentParser:
     result.add_argument("--provenance", type=Path, help="Write an unsigned in-toto scan provenance statement for generated artifacts")
     result.add_argument("--baseline-json", type=Path, help="Gate only findings absent from a prior normalized JSON report")
     result.add_argument("--github-annotations", action="store_true", help="Emit GitHub Actions workflow annotations for gated findings")
+    result.add_argument("--github-summary", action="store_true", help="Append a source-free Markdown summary to GITHUB_STEP_SUMMARY")
     result.add_argument("--no-fail", action="store_true", help="Always exit successfully")
     result.add_argument("--offline", action="store_true", help="Skip OSV dependency advisory queries")
     for scanner in ("semgrep", "gitleaks", "trivy", "checkov"):
@@ -122,6 +124,20 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: {error}", file=sys.stderr)
             return 2
         return 0
+    if argv and argv[0] == "update-check":
+        argparse.ArgumentParser(prog="vulcanary update-check", description="Check GitHub for a newer Vulcanary release without installing it.").parse_args(argv[1:])
+        try:
+            from .updates import check_for_update
+            update = check_for_update()
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            print(f"error: update check failed: {error}", file=sys.stderr)
+            return 2
+        print(f"Vulcanary {update['current']} is installed. Latest: {update['latest']}.")
+        if update["update_available"]:
+            print(f"Update available: {update['url']}")
+            return 1
+        print("You are up to date.")
+        return 0
     if argv and argv[0] == "dashboard":
         args = dashboard_parser().parse_args(argv[1:])
         from .dashboard import serve
@@ -189,6 +205,13 @@ def main(argv: list[str] | None = None) -> int:
         annotations = render_github_annotations(policy_findings)
         if annotations:
             print(annotations)
+    if args.github_summary:
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if not summary_path:
+            print("error: --github-summary requires GITHUB_STEP_SUMMARY", file=sys.stderr)
+            return 2
+        with Path(summary_path).open("a", encoding="utf-8") as summary:
+            summary.write(render_markdown_summary(policy_findings, root.name) + "\n")
     blocked = any(f.severity >= config.fail_on for f in policy_findings)
     return 0 if args.no_fail or not blocked else 1
 

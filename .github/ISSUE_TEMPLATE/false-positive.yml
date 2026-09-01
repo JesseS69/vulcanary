@@ -1,0 +1,25 @@
+name: False positive or missed detection
+description: Improve a rule with paired vulnerable and safe synthetic examples
+title: "[Rule] "
+labels: [accuracy]
+body:
+  - type: input
+    id: rule
+    attributes: {label: Rule ID}
+    validations: {required: true}
+  - type: dropdown
+    id: kind
+    attributes: {label: Accuracy issue, options: [False positive, Missed detection]}
+    validations: {required: true}
+  - type: textarea
+    id: vulnerable
+    attributes: {label: Synthetic vulnerable example}
+    validations: {required: true}
+  - type: textarea
+    id: safe
+    attributes: {label: Closely related safe example}
+    validations: {required: true}
+  - type: textarea
+    id: boundary
+    attributes: {label: Proposed confidence boundary}
+    validations: {required: true}

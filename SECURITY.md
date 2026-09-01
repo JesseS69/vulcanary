@@ -1,5 +1,9 @@
 # Security policy
 
+## Supported versions
+
+Security fixes are provided for the latest tagged release. Older releases should be upgraded before reporting behavior that is already corrected in the current version.
+
 ## Reporting a vulnerability
 
 Please do not disclose exploitable vulnerabilities in a public issue. Report them privately through GitHub's private vulnerability reporting feature. Include the affected version, reproduction steps, impact, and any suggested remediation.

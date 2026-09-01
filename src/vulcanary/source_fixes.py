@@ -244,12 +244,48 @@ def _preview_disable_persisted_credentials(finding: dict) -> dict:
     }
 
 
+def _preview_reduce_write_all(finding: dict) -> dict:
+    root = Path(finding["repository_path"]).resolve()
+    relative = Path(finding["path"])
+    target = (root / relative).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as error:
+        raise ValueError("Finding path escapes the repository") from error
+    if ".github/workflows/" not in f"/{relative.as_posix()}":
+        raise ValueError("Workflow permission fixes apply only to GitHub workflow files")
+    text = target.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    line_number = int(finding["line"])
+    if line_number < 1 or line_number > len(lines):
+        raise ValueError("Finding line is outside the workflow")
+    original_line = lines[line_number - 1].rstrip("\r\n")
+    revised_line, count = re.subn(r"(?i)^(\s*permissions\s*:\s*)write-all(\s*(?:#.*)?)$", r"\1read-all\2", original_line)
+    if count != 1:
+        raise ValueError("The workflow changed after scanning; regenerate the fix")
+    newline = "\r\n" if lines[line_number - 1].endswith("\r\n") else "\n"
+    revised_lines = list(lines)
+    revised_lines[line_number - 1] = revised_line + newline
+    revised = "".join(revised_lines)
+    diff = "".join(difflib.unified_diff(
+        text.splitlines(keepends=True), revised.splitlines(keepends=True),
+        fromfile=f"a/{relative.as_posix()}", tofile=f"b/{relative.as_posix()}",
+    ))
+    return {
+        "fingerprint": finding["fingerprint"], "repository": str(root), "file": relative.as_posix(),
+        "line": line_number, "rule_id": finding["rule_id"], "recipe": "github-permissions-read-baseline",
+        "diff": diff, "changes": [{"file": relative.as_posix(), "original": text, "replacement": revised}],
+        "files": [relative.as_posix()],
+    }
+
+
 def preview_source_fix(finding: dict) -> dict:
     recipes = {
         "CODE-JS-INNERHTML": _preview_static_innerhtml,
         "CODE-PY-EVAL": _preview_python_literal_eval,
         "CODE-PY-SHELL": _preview_python_shell_false,
         "CI-GHA-PERSIST-CREDENTIALS": _preview_disable_persisted_credentials,
+        "CI-GHA-WRITE-ALL": _preview_reduce_write_all,
     }
     recipe = recipes.get(finding.get("rule_id"))
     if not recipe:

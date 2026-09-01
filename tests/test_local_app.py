@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from vulcanary.local_app import configure_app, load_app_config, service_status, start_service
+from vulcanary.local_app import configure_app, load_app_config, save_watched_repositories, service_status, start_service
 
 
 class LocalAppTests(unittest.TestCase):
@@ -23,6 +23,11 @@ class LocalAppTests(unittest.TestCase):
                 self.assertNotIn("source", document)
                 with self.assertRaisesRegex(ValueError, "does not exist"):
                     configure_app([Path(directory) / "missing"], 300)
+                second = Path(directory) / "second"
+                second.mkdir()
+                save_watched_repositories([str(second)])
+                self.assertEqual(load_app_config()["repositories"], [str(second.resolve())])
+                self.assertEqual(load_app_config()["monitor_interval"], 900)
 
     def test_background_start_keeps_control_token_out_of_arguments(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

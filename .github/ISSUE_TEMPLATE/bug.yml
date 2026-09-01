@@ -1,0 +1,24 @@
+name: Bug report
+description: Report reproducible incorrect behavior without private code or credentials
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include proprietary source, credentials, or unredacted reports. Use private vulnerability reporting for security flaws.
+  - type: input
+    id: version
+    attributes: {label: Vulcanary version, placeholder: "0.18.0"}
+    validations: {required: true}
+  - type: input
+    id: environment
+    attributes: {label: Environment, description: Operating system and Python version}
+    validations: {required: true}
+  - type: textarea
+    id: reproduction
+    attributes: {label: Synthetic reproduction, description: Minimal steps and safe fixture}
+    validations: {required: true}
+  - type: textarea
+    id: expected
+    attributes: {label: Expected behavior}
+    validations: {required: true}

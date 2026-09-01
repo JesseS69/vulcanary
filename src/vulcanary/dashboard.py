@@ -26,7 +26,7 @@ from .fixes import apply_changes, commit_changes, preview as preview_fixes, roll
 from .evaluator import create_expo_candidate_branch, evaluate_expo_platform, evaluate_parent_upgrades, evaluate_scoped_overrides
 from .adapters import PARSERS, import_report
 from .source_fixes import apply_source_fix, preview_source_fix
-from .tickets import finding_ticket, ticket_markdown
+from .tickets import finding_ticket, ticket_csv, ticket_markdown
 
 
 REMEDIATION_RECEIPT_FIELDS = (
@@ -82,6 +82,7 @@ class RepositoryScan:
     suppression_change: dict
     report_sources: list[dict]
     policy: dict
+    health: dict
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -283,6 +284,12 @@ class DashboardState:
                         "draft": sum(item["status"] == "draft" for item in config.custom_rules),
                     },
                 },
+                health={
+                    "status": "warning" if dependency_warning else "healthy",
+                    "dependency_warning": dependency_warning,
+                    "git_commit": resolution_commit,
+                    "git_branch": resolution_branch,
+                },
             )
             self.repositories[str(root)] = result
             current_fingerprints = {finding["fingerprint"] for finding in result.findings}
@@ -463,6 +470,15 @@ class DashboardState:
         finally:
             self._rescan_lock.release()
 
+    def remove_repository(self, repository: str) -> None:
+        resolved = str(Path(repository).resolve())
+        with self._lock:
+            if resolved not in self.repositories:
+                raise ValueError("Repository is not currently watched")
+            self.repositories.pop(resolved)
+            self.external_reports.pop(resolved, None)
+            self._persist_history()
+
     def configure_monitor(self, enabled: bool, interval_seconds: int) -> None:
         if not isinstance(enabled, bool):
             raise ValueError("enabled must be a boolean")
@@ -578,10 +594,10 @@ def make_handler(state: DashboardState):
             self.end_headers()
             self.wfile.write(body)
 
-        def _download_text(self, body_text: str, filename: str) -> None:
+        def _download_text(self, body_text: str, filename: str, content_type: str = "text/markdown; charset=utf-8") -> None:
             body = body_text.encode()
             self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
@@ -639,7 +655,7 @@ def make_handler(state: DashboardState):
             if path == "/api/ruleset.json":
                 self._download_json(ruleset_manifest(), "vulcanary-ruleset.json")
                 return
-            if path in {"/api/ticket.json", "/api/ticket.md"}:
+            if path in {"/api/ticket.json", "/api/ticket.md", "/api/ticket.csv"}:
                 fingerprint = parse_qs(parsed.query).get("fingerprint", [""])[0]
                 if not re.fullmatch(r"[0-9a-f]{20}", fingerprint):
                     self.send_error(HTTPStatus.BAD_REQUEST, "A valid finding fingerprint is required")
@@ -652,6 +668,8 @@ def make_handler(state: DashboardState):
                 safe_name = f"vulcanary-{finding['rule_id'].lower()}-{fingerprint[:8]}"
                 if path.endswith(".md"):
                     self._download_text(ticket_markdown(ticket), f"{safe_name}.md")
+                elif path.endswith(".csv"):
+                    self._download_text(ticket_csv(ticket), f"{safe_name}.csv", "text/csv; charset=utf-8")
                 else:
                     self._download_json(ticket, f"{safe_name}.json")
                 return
@@ -697,7 +715,7 @@ def make_handler(state: DashboardState):
                 self.send_error(HTTPStatus.BAD_REQUEST, "Dashboard Host header must be loopback")
                 return
             route = urlparse(self.path).path
-            if route not in {"/api/scan", "/api/rescan", "/api/monitor", "/api/control/shutdown", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/source/preview", "/api/source/apply", "/api/parents/evaluate", "/api/overrides/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
+            if route not in {"/api/scan", "/api/rescan", "/api/monitor", "/api/repositories/remove", "/api/control/shutdown", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/source/preview", "/api/source/apply", "/api/parents/evaluate", "/api/overrides/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
@@ -734,6 +752,11 @@ def make_handler(state: DashboardState):
                 elif route == "/api/monitor":
                     state.configure_monitor(payload.get("enabled"), payload.get("interval_seconds"))
                     self._json({"state": state.snapshot()})
+                elif route == "/api/repositories/remove":
+                    state.remove_repository(payload["repository"])
+                    from .local_app import save_watched_repositories
+                    save_watched_repositories(list(state.repositories))
+                    self._json({"state": state.snapshot()})
                 elif route == "/api/scan":
                     repository = Path(payload["repository"])
                     submitted = payload.get("reports", {})
@@ -748,6 +771,8 @@ def make_handler(state: DashboardState):
                             raise ValueError(f"{scanner} report paths must be non-empty strings")
                         reports[scanner] = [Path(item) for item in values]
                     result = state.scan_repository(repository, reports if submitted else None)
+                    from .local_app import save_watched_repositories
+                    save_watched_repositories(list(state.repositories))
                     self._json({"scan": result.to_dict(), "state": state.snapshot()})
                 elif route == "/api/fixes/preview":
                     self._json({"plan": preview_fixes(state.snapshot()["findings"], payload.get("fingerprints", []))})
@@ -883,6 +908,9 @@ def serve(host: str, port: int, repositories: list[Path], open_browser: bool = T
     state.control_token = os.environ.get("VULCANARY_CONTROL_TOKEN")
     for repository in repositories:
         state.scan_repository(repository)
+    if repositories:
+        from .local_app import save_watched_repositories
+        save_watched_repositories(list(state.repositories))
     if monitor_interval is not None:
         state.configure_monitor(monitor_interval > 0, monitor_interval if monitor_interval > 0 else state.monitor_interval_seconds)
     state.start_monitor()

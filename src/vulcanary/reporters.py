@@ -8,6 +8,22 @@ from .models import Finding
 from .version import __version__
 
 
+def render_markdown_summary(findings: list[Finding], repository: str) -> str:
+    counts = {level: sum(finding.severity.name.lower() == level for finding in findings) for level in ("critical", "high", "medium", "low", "info")}
+    rows = "\n".join(f"| {level.title()} | {counts[level]} |" for level in counts)
+    priority = sorted(findings, key=lambda item: (-int(item.severity), item.path, item.line))[:20]
+    details = "\n".join(
+        f"- **{finding.severity.name}** `{finding.rule_id}` — `{finding.path}:{finding.line}` — {finding.title}"
+        for finding in priority
+    ) or "- No findings."
+    return (
+        f"## Vulcanary security summary — {repository}\n\n"
+        "| Severity | Findings |\n|---|---:|\n" + rows + "\n\n"
+        f"### Highest-priority findings\n\n{details}\n\n"
+        "_Source snippets, evidence, credentials, and absolute paths are excluded._\n"
+    )
+
+
 def _policy_identity(rule_id: str, path: str, evidence: str) -> str:
     return sha256(f"{rule_id}\0{path}\0{evidence}".encode()).hexdigest()
 

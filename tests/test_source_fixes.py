@@ -9,6 +9,20 @@ from vulcanary.source_fixes import apply_source_fix, preview_source_fix
 
 
 class SourceFixTests(unittest.TestCase):
+    def test_reduces_write_all_to_read_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workflow = root / ".github" / "workflows" / "ci.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text("name: CI\npermissions: write-all\n", encoding="utf-8")
+            proposal = preview_source_fix({
+                "repository_path": str(root), "path": ".github/workflows/ci.yml", "line": 2,
+                "rule_id": "CI-GHA-WRITE-ALL", "fingerprint": "b" * 20,
+            })
+            self.assertEqual(proposal["recipe"], "github-permissions-read-baseline")
+            self.assertIn("permissions: read-all", proposal["diff"])
+            self.assertNotIn("permissions: write-all", proposal["changes"][0]["replacement"])
+
     def test_disables_persisted_checkout_credentials_in_workflow(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

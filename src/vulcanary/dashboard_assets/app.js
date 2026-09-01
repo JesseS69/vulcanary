@@ -3,6 +3,8 @@ let state = {repositories: [], findings: [], summary: {total: 0, counts: {}, cat
 const selectedFixes = new Set();
 let appliedBatch = null;
 let sourceProposalFingerprint = null;
+let desktopAlerts = localStorage.getItem('vulcanary-desktop-alerts') === 'on';
+let lastAlertAt = localStorage.getItem('vulcanary-last-alert-at');
 
 const colors = {critical: '#ff4d6d', high: '#ff8359', medium: '#f8c15c', low: '#73b7ff', info: '#929aa5'};
 const MIN_THREAT_SCALE = 10;
@@ -46,6 +48,7 @@ function renderMonitor() {
   }
   $('#monitor-interval').value = interval;
   $('#monitor-toggle').textContent = monitor.enabled ? 'Pause' : 'Resume';
+  $('#desktop-alerts').textContent = desktopAlerts ? 'Desktop alerts on' : 'Desktop alerts off';
   const events = state.monitor_events || [];
   $('#monitor-alert-count').textContent = `${events.length} alert${events.length === 1 ? '' : 's'}`;
   // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-31 -- Monitor event strings are escaped and numeric/timestamp values are normalized.
@@ -54,6 +57,26 @@ function renderMonitor() {
     const commit = item.commit ? ` · commit ${item.commit.slice(0, 10)}` : '';
     return `<div class="fix-item"><strong>${escapeHtml(item.repository)} · ${escapeHtml(String(item.event).replaceAll('_', ' '))}</strong><span>${escapeHtml(item.severity)}${escapeHtml(previous)} · ${escapeHtml(new Date(item.observed_at).toLocaleString())}${escapeHtml(commit)}</span><span>${escapeHtml(item.title)} · ${escapeHtml(item.path)}</span><span class="mono">${escapeHtml(item.fingerprint)}</span></div>`;
   }).join('') || '<p class="muted">No monitor alerts. Baseline scans do not generate noise.</p>';
+  processDesktopAlerts(events);
+}
+
+function processDesktopAlerts(events) {
+  const newest = events[0]?.observed_at;
+  if (!newest) return;
+  if (!lastAlertAt) {
+    lastAlertAt = newest;
+    localStorage.setItem('vulcanary-last-alert-at', newest);
+    return;
+  }
+  const unseen = events.filter(item => item.observed_at > lastAlertAt);
+  lastAlertAt = newest > lastAlertAt ? newest : lastAlertAt;
+  localStorage.setItem('vulcanary-last-alert-at', lastAlertAt);
+  if (!desktopAlerts || !unseen.length || !('Notification' in window) || Notification.permission !== 'granted') return;
+  const highest = unseen[0];
+  new Notification(`Vulcanary · ${unseen.length} security change${unseen.length === 1 ? '' : 's'}`, {
+    body: `${highest.repository}: ${highest.event.replaceAll('_', ' ')} · ${highest.title}`,
+    icon: '/vulcanary-favicon.png',
+  });
 }
 
 function renderLedger() {
@@ -163,13 +186,22 @@ function renderRepositories() {
     const inventoryLabel = changes.baseline ? `${changes.current_count || 0} components · baseline` : `${changes.current_count || 0} components · +${changes.added.length} / −${changes.removed.length}`;
     const inventoryButton = `<button class="inventory-change secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Inventory changes</button>`;
     const scanners = [...new Set(repo.findings.map(f => f.scanner))].sort().join(' · ');
+    const health = repo.health || {status:'healthy'};
+    const healthLabel = health.status === 'healthy' ? 'scanner healthy' : `scanner warning: ${health.dependency_warning || 'dependency coverage degraded'}`;
     const owner = repo.policy?.owner || 'unassigned';
     const overdue = Number(repo.policy?.overdue_count) || 0;
-    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">Owner ${escapeHtml(owner)} · ${overdue} overdue · ${repo.duration_ms} ms · ${severe} high priority · ${reachable} import-observed · ${inventoryLabel} · ${escapeHtml(scanners || 'builtin')}</span><div class="repo-actions">${sbom}${spdx}${inventoryButton}${evaluate}${platform}</div></div>`;
+    const remove = `<button class="repository-remove secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Stop watching</button>`;
+    const git = health.git_commit ? `${health.git_branch || 'detached'} @ ${health.git_commit.slice(0, 8)}` : 'Git identity unavailable';
+    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">${escapeHtml(healthLabel)} · ${escapeHtml(git)} · Owner ${escapeHtml(owner)} · ${overdue} overdue · ${repo.duration_ms} ms · ${severe} high priority · ${reachable} import-observed · ${inventoryLabel} · ${escapeHtml(scanners || 'builtin')}</span><div class="repo-actions">${sbom}${spdx}${inventoryButton}${evaluate}${platform}${remove}</div></div>`;
   }).join('');
   document.querySelectorAll('.parent-evaluate').forEach(button => button.addEventListener('click', () => evaluateParents(button)));
   document.querySelectorAll('.platform-evaluate').forEach(button => button.addEventListener('click', () => evaluatePlatform(button)));
   document.querySelectorAll('.inventory-change').forEach(button => button.addEventListener('click', () => showInventoryChange(button.dataset.repository)));
+  document.querySelectorAll('.repository-remove').forEach(button => button.addEventListener('click', async () => {
+    if (!window.confirm(`Stop watching ${button.dataset.repository}? Scan history and closure records will be retained.`)) return;
+    try { const body = await postJson('/api/repositories/remove', {repository:button.dataset.repository}); state = body.state; render(); }
+    catch (error) { $('#scan-message').textContent = error.message; }
+  }));
 }
 
 function showInventoryChange(repository) {
@@ -457,6 +489,7 @@ function openFinding(fingerprint) {
   $('#dialog-fingerprint').textContent = f.fingerprint;
   $('#ticket-markdown').href = `/api/ticket.md?fingerprint=${encodeURIComponent(f.fingerprint)}`;
   $('#ticket-json').href = `/api/ticket.json?fingerprint=${encodeURIComponent(f.fingerprint)}`;
+  $('#ticket-csv').href = `/api/ticket.csv?fingerprint=${encodeURIComponent(f.fingerprint)}`;
   $('#finding-dialog').showModal();
 }
 
@@ -475,6 +508,16 @@ $('#monitor-toggle').addEventListener('click', async () => {
   const monitor = state.monitor || {};
   const body = await postJson('/api/monitor', {enabled:!monitor.enabled, interval_seconds:Number($('#monitor-interval').value)});
   state = body.state; render();
+});
+$('#desktop-alerts').addEventListener('click', async () => {
+  if (!('Notification' in window)) { $('#scan-message').textContent = 'Desktop notifications are not supported by this browser.'; return; }
+  if (!desktopAlerts) {
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') { $('#scan-message').textContent = 'Desktop notification permission was not granted.'; return; }
+  }
+  desktopAlerts = !desktopAlerts;
+  localStorage.setItem('vulcanary-desktop-alerts', desktopAlerts ? 'on' : 'off');
+  renderMonitor();
 });
 $('#monitor-interval').addEventListener('change', async () => {
   const body = await postJson('/api/monitor', {enabled:state.monitor?.enabled !== false, interval_seconds:Number($('#monitor-interval').value)});
@@ -499,9 +542,9 @@ $('#scan-form').addEventListener('submit', async event => {
     const response = await fetch('/api/scan', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repository:$('#repository').value,reports})});
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Scan failed');
-    state = payload.state; render(); $('#scan-message').textContent = `Scanned ${payload.scan.name} in ${payload.scan.duration_ms} ms.`;
+    state = payload.state; render(); $('#scan-message').textContent = `Watching ${payload.scan.name}. Initial scan completed in ${payload.scan.duration_ms} ms.`;
   } catch (error) { $('#scan-message').textContent = error.message; }
-  finally { button.disabled = false; button.textContent = 'Run scan'; }
+  finally { button.disabled = false; button.textContent = 'Add and scan'; }
 });
 $('#search').addEventListener('input', renderFindings);
 $('#severity-filter').addEventListener('change', renderFindings);

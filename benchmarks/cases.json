@@ -1,0 +1,18 @@
+[
+  {"rule_id":"SECRET-AWS-KEY","path":"app.txt","vulnerable":"key = AKIAABCDEFGHIJKLMNOP\n","safe":"key = ${AWS_ACCESS_KEY_ID}\n"},
+  {"rule_id":"SECRET-PRIVATE-KEY","path":"app.txt","vulnerable":"-----BEGIN PRIVATE KEY-----\nsynthetic fixture\n","safe":"private_key = load_from_secret_store()\n"},
+  {"rule_id":"SECRET-GITHUB-TOKEN","path":"app.txt","vulnerable":"token = ghp_abcdefghijklmnopqrstuvwxyz1234567890\n","safe":"token = os.environ['GITHUB_TOKEN']\n"},
+  {"rule_id":"CODE-PY-EVAL","path":"app.py","vulnerable":"value = eval(user_input)\n","safe":"value = json.loads(user_input)\n"},
+  {"rule_id":"CODE-PY-SHELL","path":"app.py","vulnerable":"subprocess.run(['tool', 'arg'], shell=True)\n","safe":"subprocess.run(['tool', 'arg'], check=True)\n"},
+  {"rule_id":"CODE-PY-PICKLE","path":"app.py","vulnerable":"value = pickle.loads(payload)\n","safe":"value = json.loads(payload)\n"},
+  {"rule_id":"CODE-JS-EVAL","path":"app.js","vulnerable":"const value = eval(input);\n","safe":"const value = JSON.parse(input);\n"},
+  {"rule_id":"CODE-JS-INNERHTML","path":"app.js","vulnerable":"node.innerHTML = input;\n","safe":"node.textContent = input;\n"},
+  {"rule_id":"IAC-DOCKER-ROOT","path":"Dockerfile","vulnerable":"FROM python:3.12\nUSER root\n","safe":"FROM python:3.12\nUSER 65532:65532\n"},
+  {"rule_id":"IAC-DOCKER-LATEST","path":"Dockerfile","vulnerable":"FROM python:latest\n","safe":"FROM python:3.12.5\n"},
+  {"rule_id":"IAC-DOCKER-CURL-PIPE","path":"Dockerfile","vulnerable":"FROM alpine:3.20\nRUN curl https://example.invalid/install | sh\n","safe":"FROM alpine:3.20\nRUN curl -o /tmp/install https://example.invalid/install\n"},
+  {"rule_id":"IAC-TF-PUBLIC-INGRESS","path":"main.tf","vulnerable":"cidr_blocks = [\"0.0.0.0/0\"]\n","safe":"cidr_blocks = [\"10.0.0.0/8\"]\n"},
+  {"rule_id":"IAC-TF-PUBLIC-ACL","path":"main.tf","vulnerable":"acl = \"public-read\"\n","safe":"acl = \"private\"\n"},
+  {"rule_id":"CI-GHA-WRITE-ALL","path":".github/workflows/ci.yml","vulnerable":"permissions: write-all\n","safe":"permissions:\n  contents: read\n"},
+  {"rule_id":"CI-GHA-MUTABLE-ACTION","path":".github/workflows/ci.yml","vulnerable":"steps:\n  - uses: vendor/action@main\n","safe":"steps:\n  - uses: vendor/action@0123456789abcdef0123456789abcdef01234567\n"},
+  {"rule_id":"CI-GHA-PERSIST-CREDENTIALS","path":".github/workflows/ci.yml","vulnerable":"steps:\n  - uses: actions/checkout@v4\n    with:\n      persist-credentials: true\n","safe":"steps:\n  - uses: actions/checkout@v4\n    with:\n      persist-credentials: false\n"}
+]

@@ -87,6 +87,18 @@ def configure_app(repositories: list[Path], interval: int, port: int = 8765) -> 
     return config
 
 
+def save_watched_repositories(repositories: list[str]) -> Path:
+    resolved = []
+    for repository in repositories:
+        root = Path(repository).expanduser().resolve()
+        if not root.is_dir():
+            raise ValueError(f"Repository does not exist: {root}")
+        resolved.append(str(root))
+    config = load_app_config()
+    config["repositories"] = list(dict.fromkeys(resolved))
+    return save_app_config(config)
+
+
 def service_status(config: dict | None = None, timeout: float = 1.5) -> dict:
     current = config or load_app_config()
     url = f"http://{current['host']}:{current['port']}"
