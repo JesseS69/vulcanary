@@ -89,9 +89,29 @@ class WebAuditTests(unittest.TestCase):
     def test_passive_header_and_cookie_findings(self) -> None:
         headers = Message()
         headers["Set-Cookie"] = "session=redacted; Path=/"
-        with patch("vulcanary.webaudit.build_opener", return_value=Opener(Response("https://example.test/", headers))):
+        with patch("vulcanary.webaudit.build_opener", return_value=Opener(Response("https://example.test/", headers))), patch("vulcanary.webaudit.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 443))]):
             findings = audit_web_target("https://example.test/", "example.test")
         rules = {item.rule_id for item in findings}
         self.assertIn("DAST-HSTS", rules)
         self.assertIn("DAST-COOKIE-SECURE", rules)
         self.assertTrue(all(item.metadata["mode"] == "passive" for item in findings))
+
+    def test_private_targets_require_an_additional_explicit_override(self) -> None:
+        headers = Message()
+        with patch("vulcanary.webaudit.build_opener", return_value=Opener(Response("http://127.0.0.1/", headers))), patch("vulcanary.webaudit.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("127.0.0.1", 80))]):
+            with self.assertRaisesRegex(ValueError, "refuses private"):
+                audit_web_target("http://127.0.0.1/", "127.0.0.1")
+            self.assertTrue(audit_web_target("http://127.0.0.1/", "127.0.0.1", allow_private=True))
+
+    def test_dns_change_during_request_fails_closed(self) -> None:
+        headers = Message()
+        addresses = [[(2, 1, 6, "", ("93.184.216.34", 443))], [(2, 1, 6, "", ("93.184.216.35", 443))]]
+        with patch("vulcanary.webaudit.build_opener", return_value=Opener(Response("https://example.test/", headers))), patch("vulcanary.webaudit.socket.getaddrinfo", side_effect=addresses):
+            with self.assertRaisesRegex(ValueError, "DNS addresses changed"):
+                audit_web_target("https://example.test/", "example.test")
+
+    def test_dns_resolution_failure_is_reported_without_requesting_target(self) -> None:
+        with patch("vulcanary.webaudit.socket.getaddrinfo", side_effect=OSError("network unavailable")), patch("vulcanary.webaudit.build_opener") as opener:
+            with self.assertRaisesRegex(ValueError, "could not resolve"):
+                audit_web_target("https://example.test/", "example.test")
+        opener.assert_not_called()

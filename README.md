@@ -34,7 +34,16 @@ vulcanary status
 vulcanary stop
 ```
 
-`start` restores the watched repositories and monitoring interval, launches in the background, and opens the dashboard. The control token used by `stop` is generated locally, stored in the user-local application configuration with restrictive permissions where the operating system supports them, passed to the child process through its environment rather than command-line arguments, and accepted only by the loopback shutdown endpoint.
+`start` binds the loopback dashboard first, then loads initial repository scans in a background worker so a large dependency graph cannot produce a false startup failure. The dashboard's **Diagnostics** panel reports startup progress, scanner warnings, runtime versions, and local-history availability. The control token used by `stop` is generated locally, stored in the user-local application configuration with restrictive permissions where the operating system supports them, passed to the child process through its environment rather than command-line arguments, and accepted only by the loopback shutdown endpoint.
+
+Back up or restore local service configuration without copying the control token, scan history, findings, receipts, command output, or source:
+
+```powershell
+vulcanary config-export .\vulcanary-config.json
+vulcanary config-import .\vulcanary-config.json
+```
+
+Imports validate the schema, loopback binding, port, interval, and every repository path before atomically replacing the current configuration. The existing local control token is retained.
 
 Windows releases also include `uninstall-windows.ps1`. It stops the local service and removes the Python package while preserving `~/.vulcanary` by default. Run it with `-PurgeLocalData` only when you intentionally want to delete configuration, scan history, receipts, and audit records.
 
@@ -273,7 +282,7 @@ vulcanary web-audit https://staging.example.com `
   --authorize-target staging.example.com --json web-audit.json
 ```
 
-`--authorize-target` must exactly match the URL hostname. Embedded credentials and cross-host redirects are refused. This command does not crawl, fuzz, submit forms, authenticate, or exploit anything; it is a passive configuration audit, not a penetration test. For broader authorized testing, run free OWASP ZAP Baseline/API Scan separately and import its JSON with `--zap-json`. Active ZAP scanning intentionally remains outside Vulcanary's automatic workflows because it attacks the target and requires explicit scope and authorization.
+`--authorize-target` must exactly match the URL hostname. Embedded credentials and cross-host redirects are refused. Public-address resolution is checked before and after the request; private, loopback, link-local, reserved, and otherwise non-public addresses are refused by default, and a changed DNS answer fails closed. Authorized internal testing is CLI-only and requires both the exact hostname and `--allow-private-target`. This command does not crawl, fuzz, submit forms, authenticate, or exploit anything; it is a passive configuration audit, not a penetration test. For broader authorized testing, run free OWASP ZAP Baseline/API Scan separately and import its JSON with `--zap-json`. Active ZAP scanning intentionally remains outside Vulcanary's automatic workflows because it attacks the target and requires explicit scope and authorization.
 
 ## Read-only cloud posture
 

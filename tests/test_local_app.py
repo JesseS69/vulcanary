@@ -4,10 +4,36 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from vulcanary.local_app import configure_app, load_app_config, save_watched_repositories, service_status, start_service
+from vulcanary.local_app import configure_app, export_app_config, import_app_config, load_app_config, save_watched_repositories, service_status, start_service
 
 
 class LocalAppTests(unittest.TestCase):
+    def test_configuration_backup_excludes_secrets_and_restores_atomically(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory); app = base / "app"; repository = base / "repository"; repository.mkdir()
+            backup = base / "backup.json"
+            with patch("vulcanary.local_app.app_directory", return_value=app):
+                configured = configure_app([repository], 900, 8877)
+                original_token = configured["control_token"]
+                export_app_config(backup)
+                exported = json.loads(backup.read_text(encoding="utf-8"))
+                self.assertNotIn("control_token", exported)
+                self.assertNotIn("history", exported)
+                configured = configure_app([repository], 300, 8765)
+                restored = import_app_config(backup)
+                self.assertEqual((restored["monitor_interval"], restored["port"]), (900, 8877))
+                self.assertEqual(restored["control_token"], original_token)
+
+    def test_invalid_backup_cannot_replace_current_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory); app = base / "app"; repository = base / "repository"; repository.mkdir()
+            backup = base / "bad.json"; backup.write_text('{"format":"vulcanary-config","version":1,"repositories":[],"monitor_interval":300,"host":"0.0.0.0","port":8765}', encoding="utf-8")
+            with patch("vulcanary.local_app.app_directory", return_value=app):
+                before = configure_app([repository], 300)
+                with self.assertRaisesRegex(ValueError, "loopback"):
+                    import_app_config(backup)
+                self.assertEqual(load_app_config(), before)
+
     def test_configuration_is_validated_and_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             app = Path(directory) / "app"

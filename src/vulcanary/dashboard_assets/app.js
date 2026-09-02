@@ -23,6 +23,7 @@ function render() {
   renderChart(counts);
   renderOnboarding();
   renderWebAudits();
+  renderDiagnostics();
   renderRepositories();
   renderLedger();
   renderGovernance();
@@ -31,6 +32,21 @@ function render() {
   renderMonitor();
   renderFilterOptions();
   renderFindings();
+}
+
+function renderDiagnostics() {
+  const diagnostic = state.diagnostics || {};
+  const startup = diagnostic.startup || {total:0, completed:0, errors:[]};
+  const health = diagnostic.scanner_health || {healthy:0, warning:0};
+  const ready = startup.completed >= startup.total && !startup.errors.length && !health.warning;
+  $('#diagnostic-status').textContent = startup.completed < startup.total ? 'Starting' : ready ? 'Healthy' : 'Attention';
+  const values = [
+    ['Vulcanary', diagnostic.version || 'unknown'], ['Python', diagnostic.python || 'unknown'],
+    ['Local history', diagnostic.history || 'unknown'], ['Initial scans', `${startup.completed}/${startup.total}`],
+    ['Scanner health', `${health.healthy} healthy · ${health.warning} warning`], ['Startup errors', String(startup.errors?.length || 0)],
+  ];
+  const target = $('#diagnostic-grid'); target.replaceChildren();
+  for (const [label, value] of values) { const card=document.createElement('div'); card.className='diagnostic-card'; const key=document.createElement('span'); key.textContent=label; const result=document.createElement('strong'); result.textContent=value; card.append(key,result); target.append(card); }
 }
 
 function renderOnboarding() {

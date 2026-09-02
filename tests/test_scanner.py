@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from vulcanary.cli import main
 from vulcanary.config import Config
-from vulcanary.dashboard import DashboardState, make_handler, resolution_record_valid
+from vulcanary.dashboard import DashboardState, make_handler, resolution_record_valid, serve
 from vulcanary.dependencies import discover_packages, scan_dependencies
 from vulcanary.fixes import preview
 from vulcanary.models import Severity
@@ -20,6 +20,56 @@ from vulcanary.scanners import ruleset_manifest, scan
 
 
 class ScannerTests(unittest.TestCase):
+    def test_corrupt_history_fails_closed_to_empty_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            history = Path(directory) / "history.json"
+            history.write_text("{interrupted", encoding="utf-8")
+            state = DashboardState(history)
+        self.assertEqual(state.history, [])
+        self.assertEqual(state.web_audits, {})
+
+    def test_interrupted_history_write_preserves_previous_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            history = Path(directory) / "history.json"
+            history.write_text('{"history": []}\n', encoding="utf-8")
+            state = DashboardState(history)
+            with patch("pathlib.Path.write_text", side_effect=OSError("disk full")):
+                state._persist_history()
+            self.assertEqual(history.read_text(encoding="utf-8"), '{"history": []}\n')
+
+    def test_dashboard_binds_before_initial_repository_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); events = []
+            class Server:
+                server_port = 8765
+                def __init__(self, address, handler): events.append("bound")
+                def serve_forever(self): events.append("serving")
+                def shutdown(self): pass
+                def server_close(self): pass
+            def scan_after_bind(_self, _path):
+                self.assertIn("bound", events)
+                events.append("scan")
+            with patch("vulcanary.dashboard.ThreadingHTTPServer", Server), patch.object(DashboardState, "scan_repository", scan_after_bind), patch.object(DashboardState, "start_monitor"), patch.object(DashboardState, "stop_monitor"), patch("vulcanary.local_app.save_watched_repositories"):
+                self.assertEqual(serve("127.0.0.1", 8765, [root], open_browser=False), 0)
+            self.assertEqual(events[0], "bound")
+
+    def test_initial_scan_failure_is_reported_and_monitor_still_starts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); finished = threading.Event(); captured = {}
+            class Server:
+                server_port = 8765
+                def __init__(self, address, handler): captured["handler"] = handler
+                def serve_forever(self): finished.wait(2)
+                def shutdown(self): pass
+                def server_close(self): pass
+            def fail_scan(_self, _path): raise OSError("unavailable")
+            def start_monitor(state): captured["state"] = state; finished.set()
+            with patch("vulcanary.dashboard.ThreadingHTTPServer", Server), patch.object(DashboardState, "scan_repository", fail_scan), patch.object(DashboardState, "start_monitor", start_monitor), patch.object(DashboardState, "stop_monitor"):
+                self.assertEqual(serve("127.0.0.1", 8765, [root], open_browser=False), 0)
+            state = captured["state"]
+            self.assertEqual(state.startup_completed, 1)
+            self.assertEqual(state.startup_errors[0]["repository"], root.name)
+
     def test_ruleset_manifest_is_canonical_and_complete(self) -> None:
         first = ruleset_manifest()
         self.assertEqual(first["digest"], ruleset_manifest()["digest"])

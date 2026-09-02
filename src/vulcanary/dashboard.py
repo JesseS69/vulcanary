@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import platform
 import re
 import secrets
 import subprocess
@@ -29,6 +30,7 @@ from .source_fixes import apply_source_fix, preview_source_fix
 from .tickets import finding_ticket, ticket_csv, ticket_markdown
 from .vex import openvex_document
 from .webaudit import audit_web_target
+from .version import __version__
 
 
 REMEDIATION_RECEIPT_FIELDS = (
@@ -132,6 +134,9 @@ class DashboardState:
         self.external_reports: dict[str, dict[str, list[Path]]] = {}
         self.web_audits: dict[str, dict] = {}
         self.discovery_candidates: list[str] = []
+        self.startup_total = 0
+        self.startup_completed = 0
+        self.startup_errors: list[dict] = []
         self.finding_first_seen: dict[str, str] = {}
         self.finding_snapshots: dict[str, dict[str, dict]] = {}
         self.resolved_findings: list[dict] = []
@@ -455,6 +460,12 @@ class DashboardState:
                 "enabled": self.monitor_enabled, "interval_seconds": self.monitor_interval_seconds,
                 "last_scan": self.monitor_last_scan, "next_scan": self.monitor_next_scan,
                 "scanning": self._rescan_lock.locked(), "error": self.monitor_error,
+            },
+            "diagnostics": {
+                "version": __version__, "python": platform.python_version(),
+                "history": "writable" if self.history_path and self.history_path.parent.is_dir() and os.access(self.history_path.parent, os.W_OK) else "memory-only",
+                "startup": {"total": self.startup_total, "completed": self.startup_completed, "errors": list(self.startup_errors)},
+                "scanner_health": {"healthy": sum(repo.get("health", {}).get("status") == "healthy" for repo in scans), "warning": sum(repo.get("health", {}).get("status") != "healthy" for repo in scans)},
             },
             "summary": {"total": len(findings), "counts": counts, "categories": categories, "scanners": scanners, "ruleset": {"digest": ruleset_manifest()["digest"], "rule_count": len(ruleset_manifest()["rules"])}},
         }
@@ -989,16 +1000,33 @@ def serve(host: str, port: int, repositories: list[Path], open_browser: bool = T
         raise ValueError("The dashboard is local-only; bind to a loopback address")
     state = DashboardState(Path.home() / ".vulcanary" / "dashboard-history.json")
     state.control_token = os.environ.get("VULCANARY_CONTROL_TOKEN")
-    for repository in repositories:
-        state.scan_repository(repository)
-    if repositories:
-        from .local_app import save_watched_repositories
-        save_watched_repositories(list(state.repositories))
+    state.startup_total = len(repositories)
     if monitor_interval is not None:
         state.configure_monitor(monitor_interval > 0, monitor_interval if monitor_interval > 0 else state.monitor_interval_seconds)
-    state.start_monitor()
     server = ThreadingHTTPServer((host, port), make_handler(state))
     state.shutdown_callback = server.shutdown
+
+    def initial_scan() -> None:
+        for repository in repositories:
+            try:
+                state.scan_repository(repository)
+            except (OSError, ValueError) as error:
+                with state._lock:
+                    state.startup_errors.append({"repository": repository.name, "error": str(error)})
+            finally:
+                with state._lock:
+                    state.startup_completed += 1
+        try:
+            if repositories:
+                from .local_app import save_watched_repositories
+                save_watched_repositories(list(state.repositories))
+        except (OSError, ValueError) as error:
+            with state._lock:
+                state.startup_errors.append({"repository": "configuration", "error": str(error)})
+        finally:
+            state.start_monitor()
+
+    threading.Thread(target=initial_scan, name="vulcanary-initial-scan", daemon=True).start()
     url = f"http://{host}:{server.server_port}"
     print(f"Vulcanary dashboard: {url}")
     if open_browser:

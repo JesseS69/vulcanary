@@ -22,7 +22,7 @@ from .adapters import AdapterError, import_report
 def scan_parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         prog="vulcanary", description="Scan a repository for security risks.",
-        epilog="Commands: setup | start | status | stop | dashboard | dependency-review | web-audit | update-check",
+        epilog="Commands: setup | start | status | stop | dashboard | config-export | config-import | dependency-review | web-audit | update-check",
     )
     result.add_argument("path", nargs="?", default=".", help="Repository to scan")
     result.add_argument("--config", type=Path, help="Configuration JSON path")
@@ -69,6 +69,12 @@ def service_parser(command: str) -> argparse.ArgumentParser:
     return result
 
 
+def config_transfer_parser(command: str) -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(prog=f"vulcanary {command}", description=f"{command.replace('-', ' ').title()} without secrets or source content.")
+    result.add_argument("path", type=Path)
+    return result
+
+
 def dependency_review_parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="vulcanary dependency-review", description="Review newly introduced locked dependencies without installing or executing them.")
     result.add_argument("path", nargs="?", default=".", help="Current repository checkout")
@@ -83,6 +89,7 @@ def web_audit_parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="vulcanary web-audit", description="Run a non-exploitative HTTP security-header and cookie audit against an authorized target.")
     result.add_argument("url")
     result.add_argument("--authorize-target", required=True, help="Exact hostname you own or are authorized to test")
+    result.add_argument("--allow-private-target", action="store_true", help="Explicitly permit an authorized private or loopback target")
     result.add_argument("--json", type=Path, dest="json_path")
     result.add_argument("--no-fail", action="store_true")
     return result
@@ -90,11 +97,26 @@ def web_audit_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in {"config-export", "config-import"}:
+        command = argv[0]
+        args = config_transfer_parser(command).parse_args(argv[1:])
+        try:
+            from .local_app import export_app_config, import_app_config
+            if command == "config-export":
+                path = export_app_config(args.path)
+                print(f"Configuration backup written to {path}. Control tokens, history, findings, and source are excluded.")
+            else:
+                configured = import_app_config(args.path)
+                print(f"Restored {len(configured['repositories'])} repositories. Restart Vulcanary to apply the configuration.")
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 2
+        return 0
     if argv and argv[0] == "web-audit":
         args = web_audit_parser().parse_args(argv[1:])
         try:
             from .webaudit import audit_web_target
-            findings = audit_web_target(args.url, args.authorize_target)
+            findings = audit_web_target(args.url, args.authorize_target, allow_private=args.allow_private_target)
         except (OSError, ValueError) as error:
             print(f"error: web audit failed: {error}", file=sys.stderr)
             return 2

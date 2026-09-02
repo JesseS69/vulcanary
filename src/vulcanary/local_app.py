@@ -70,6 +70,55 @@ def save_app_config(config: dict) -> Path:
     return path
 
 
+def export_app_config(destination: Path) -> Path:
+    config = load_app_config()
+    document = {
+        "format": "vulcanary-config", "version": 1,
+        "repositories": config["repositories"], "monitor_interval": config["monitor_interval"],
+        "host": config["host"], "port": config["port"],
+    }
+    destination = destination.expanduser().resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    temporary.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(destination)
+    return destination
+
+
+def import_app_config(source: Path) -> dict:
+    try:
+        document = json.loads(source.expanduser().read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as error:
+        raise ValueError(f"Invalid configuration backup: {error}") from error
+    allowed = {"format", "version", "repositories", "monitor_interval", "host", "port"}
+    if not isinstance(document, dict) or set(document) - allowed or document.get("format") != "vulcanary-config" or document.get("version") != 1:
+        raise ValueError("Invalid or unsupported Vulcanary configuration backup")
+    repositories = document.get("repositories")
+    if not isinstance(repositories, list) or any(not isinstance(item, str) for item in repositories):
+        raise ValueError("Configuration backup repositories must be a string array")
+    if document.get("host") not in {"127.0.0.1", "localhost", "::1"}:
+        raise ValueError("Configuration backup host must be loopback")
+    interval = document.get("monitor_interval")
+    port = document.get("port")
+    if not isinstance(interval, int) or interval != 0 and not 30 <= interval <= 86_400:
+        raise ValueError("Configuration backup monitor interval must be 0 or 30-86400")
+    if not isinstance(port, int) or not 1 <= port <= 65_535:
+        raise ValueError("Configuration backup port must be between 1 and 65535")
+    resolved = []
+    for item in repositories:
+        root = Path(item).expanduser().resolve()
+        if not root.is_dir():
+            raise ValueError(f"Repository does not exist: {root}")
+        resolved.append(str(root))
+    current = load_app_config()
+    configured = current | {
+        "repositories": list(dict.fromkeys(resolved)), "monitor_interval": interval,
+        "host": document["host"], "port": port, "control_token": current["control_token"],
+    }
+    save_app_config(configured)
+    return configured
+
+
 def configure_app(repositories: list[Path], interval: int, port: int = 8765) -> dict:
     resolved = []
     for repository in repositories:

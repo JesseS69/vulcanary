@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ssl
+import ipaddress
+import socket
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
@@ -22,18 +24,37 @@ def _finding(rule: str, title: str, severity: Severity, target: str, remediation
     return Finding(rule, title, title, severity, "dast", f"web-target/{urlparse(target).hostname}", 1, evidence, remediation, "vulcanary-web", {"target": target, "mode": "passive"})
 
 
-def audit_web_target(url: str, authorized_host: str, timeout: int = 20) -> list[Finding]:
+def _resolved_addresses(host: str, port: int, allow_private: bool) -> frozenset[str]:
+    try:
+        addresses = frozenset(item[4][0] for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM))
+    except OSError as error:
+        raise ValueError("web audit could not resolve the authorized hostname") from error
+    if not addresses:
+        raise ValueError("web audit could not resolve the authorized hostname")
+    if not allow_private:
+        for value in addresses:
+            address = ipaddress.ip_address(value)
+            if not address.is_global:
+                raise ValueError("web audit refuses private, loopback, link-local, reserved, or otherwise non-public targets")
+    return addresses
+
+
+def audit_web_target(url: str, authorized_host: str, timeout: int = 20, allow_private: bool = False) -> list[Finding]:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
     if parsed.scheme not in {"http", "https"} or not host or parsed.username or parsed.password:
         raise ValueError("target must be an HTTP(S) URL without embedded credentials")
     if authorized_host.strip().lower() != host:
         raise ValueError("--authorize-target must exactly match the target hostname")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    initial_addresses = _resolved_addresses(host, port, allow_private)
     request = Request(url, headers={"User-Agent": f"Vulcanary/{__version__} passive-web-audit"}, method="GET")
     opener = build_opener(_SameHostRedirects(host), HTTPSHandler(context=ssl.create_default_context()))
     with opener.open(request, timeout=max(1, min(timeout, 60))) as response:
         final_url = response.geturl()
         headers = response.headers
+    if _resolved_addresses(host, port, allow_private) != initial_addresses:
+        raise ValueError("web audit refused a hostname whose DNS addresses changed during the request")
     findings = []
     if urlparse(final_url).scheme != "https":
         findings.append(_finding("DAST-HTTPS", "Target does not enforce HTTPS", Severity.HIGH, final_url, "Redirect all HTTP traffic to HTTPS and disable plaintext service access."))
