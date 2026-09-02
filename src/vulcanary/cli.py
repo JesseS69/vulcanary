@@ -181,8 +181,12 @@ def main(argv: list[str] | None = None) -> int:
             if command == "start":
                 status = start_service(config)
                 print(f"Vulcanary {'started' if status.get('started') else 'is already running'} at {status['url']}")
+                authorized_url = f"{status['url']}/?token={config['control_token']}"
                 if not args.no_open:
-                    webbrowser.open(status["url"])
+                    webbrowser.open(authorized_url)
+                else:
+                    print("Open the dashboard with its local control token:")
+                    print(f"  {authorized_url}")
             elif command == "stop":
                 status = stop_service(config)
                 print("Vulcanary stopped." if status["stopped"] else "Vulcanary is not running." if not status["running"] else "Vulcanary did not stop.")

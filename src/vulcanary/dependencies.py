@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
 import os
 import re
 import tempfile
@@ -14,6 +15,7 @@ from urllib.request import Request, urlopen
 
 from .models import Finding, Severity, relative_path
 from .version import __version__
+from ._vendor.cvss import CVSS4
 
 
 _CACHE_TTL_SECONDS = 6 * 60 * 60
@@ -210,7 +212,70 @@ def _cache_write(directory: Path | None, namespace: str, key: str, value: dict) 
         pass
 
 
-def _severity(record: dict) -> Severity:
+def _cvss3_score(vector: str) -> float | None:
+    """Calculate a CVSS v3.x Base score using the FIRST v3.1 equations."""
+    try:
+        parts = vector.split("/")
+        if parts[0] not in {"CVSS:3.0", "CVSS:3.1"}:
+            return None
+        metrics = dict(part.split(":", 1) for part in parts[1:])
+        av = {"N": .85, "A": .62, "L": .55, "P": .2}[metrics["AV"]]
+        ac = {"L": .77, "H": .44}[metrics["AC"]]
+        scope = metrics["S"]
+        pr = ({"N": .85, "L": .62, "H": .27} if scope == "U" else {"N": .85, "L": .68, "H": .5})[metrics["PR"]]
+        ui = {"N": .85, "R": .62}[metrics["UI"]]
+        impacts = {"H": .56, "L": .22, "N": 0}
+        iss = 1 - math.prod(1 - impacts[metrics[name]] for name in ("C", "I", "A"))
+        impact = 6.42 * iss if scope == "U" else 7.52 * (iss - .029) - 3.25 * (iss - .02) ** 15
+        if impact <= 0:
+            return 0.0
+        exploitability = 8.22 * av * ac * pr * ui
+        raw = min(impact + exploitability, 10) if scope == "U" else min(1.08 * (impact + exploitability), 10)
+        return math.ceil((raw - 1e-10) * 10) / 10
+    except (KeyError, ValueError):
+        return None
+
+
+def _cvss_scores(record: dict, package: Package | None = None) -> list[tuple[float, str]]:
+    entries = list(record.get("severity", [])) if isinstance(record.get("severity"), list) else []
+    for affected in record.get("affected", []):
+        identity = affected.get("package", {}) if isinstance(affected, dict) else {}
+        if package and identity.get("name", "").lower() != package.name.lower():
+            continue
+        severity = affected.get("severity", []) if isinstance(affected, dict) else []
+        if isinstance(severity, list):
+            entries.extend(severity)
+    scores = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("score"), str):
+            continue
+        vector = entry["score"]
+        score = None
+        if entry.get("type") == "CVSS_V3":
+            score = _cvss3_score(vector)
+        elif entry.get("type") == "CVSS_V4":
+            try:
+                score = float(CVSS4(vector).scores()[0])
+            except (KeyError, TypeError, ValueError):
+                score = None
+        if score is not None:
+            scores.append((score, vector))
+    return scores
+
+
+def _severity(record: dict, package: Package | None = None) -> Severity:
+    scores = _cvss_scores(record, package)
+    if scores:
+        score = max(value for value, _ in scores)
+        if score == 0:
+            return Severity.INFO
+        if score <= 3.9:
+            return Severity.LOW
+        if score <= 6.9:
+            return Severity.MEDIUM
+        if score <= 8.9:
+            return Severity.HIGH
+        return Severity.CRITICAL
     candidates = [record.get("database_specific", {}).get("severity")]
     for affected in record.get("affected", []):
         candidates.append(affected.get("ecosystem_specific", {}).get("severity"))
@@ -220,6 +285,30 @@ def _severity(record: dict) -> Severity:
         if name in values:
             return Severity.MEDIUM if name == "MODERATE" else Severity[name]
     return Severity.HIGH
+
+
+def _is_stable_version(value: str, ecosystem: str) -> bool:
+    normalized = value.strip().lower()
+    if ecosystem.lower() == "go":
+        normalized = normalized.removeprefix("v")
+    return not bool(re.search(r"(?:[-._+]|\d)(?:a(?:lpha)?|b(?:eta)?|rc|pre(?:view)?|dev|snapshot)\d*", normalized))
+
+
+def _version_key(value: str, ecosystem: str) -> tuple:
+    """Order common ecosystem versions numerically while keeping prereleases below releases."""
+    normalized = value.strip().lower()
+    if ecosystem.lower() == "go":
+        normalized = normalized.removeprefix("v")
+    release_text = re.split(r"[-+]|(?<=\d)(?:a(?:lpha)?|b(?:eta)?|rc|pre(?:view)?|dev)", normalized, maxsplit=1)[0]
+    release = tuple(int(part) for part in re.findall(r"\d+", release_text)[:8])
+    suffix = normalized[len(re.match(r"[vV]?[0-9.]*", normalized).group(0)):] if re.match(r"[vV]?[0-9.]*", normalized) else normalized
+    stage = 4
+    for marker, rank in (("dev", 0), ("alpha", 1), ("a", 1), ("beta", 2), ("b", 2), ("pre", 3), ("rc", 3), ("snapshot", 3)):
+        if marker in suffix:
+            stage = rank
+            break
+    suffix_number = int(re.search(r"\d+", suffix).group(0)) if re.search(r"\d+", suffix) else 0
+    return release, stage, suffix_number, normalized
 
 
 def _fixed_version(record: dict, package: Package) -> str | None:
@@ -237,7 +326,8 @@ def _fixed_version(record: dict, package: Package) -> str | None:
     current_major = re.match(r"\D*(\d+)", package.version)
     compatible = [candidate for candidate in candidates if current_major and re.match(r"\D*(\d+)", candidate) and re.match(r"\D*(\d+)", candidate).group(1) == current_major.group(1)]
     pool = compatible or candidates
-    return min(pool, key=lambda value: tuple(int(part) for part in re.findall(r"\d+", value)[:4]))
+    stable = [candidate for candidate in pool if _is_stable_version(candidate, package.ecosystem)]
+    return min(stable or pool, key=lambda value: _version_key(value, package.ecosystem))
 
 
 def _same_major(current: str, fixed: str | None) -> bool:
@@ -358,6 +448,9 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
     for package, result in zip(packages, normalized_results):
         for summary in result.get("vulns", []):
             record = records.get(summary["id"], {})
+            if record.get("withdrawn"):
+                continue
+            cvss_score, cvss_vector = max(_cvss_scores(record, package), default=(None, None))
             fixed = _fixed_version(record, package)
             same_major = _same_major(package.version, fixed)
             parent_packages, dependency_paths, parent_scopes = dependency_context(root, package) if package.manager == "npm" and not package.direct else ([], [], {})
@@ -379,7 +472,7 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
             remediation = f"Upgrade {package.name} to {fixed} or later." if fixed else f"Review {summary['id']} and upgrade {package.name} to a non-affected release."
             findings.append(Finding(
                 f"SCA-{summary['id']}", record.get("summary") or f"Vulnerable dependency: {package.name}",
-                f"{package.name} {package.version} is affected by {summary['id']}.", _severity(record), "dependency",
+                f"{package.name} {package.version} is affected by {summary['id']}.", _severity(record, package), "dependency",
                 package.path, 1, f"{package.name}@{package.version}", remediation, "osv", {
                     "package": package.name,
                     "current_version": package.version,
@@ -395,6 +488,7 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
                     "fix_strategy": "pip" if package.manager == "pip" else "dependency" if package.direct else "override",
                     "dependency_file": package.path,
                     "advisory": summary["id"],
+                    "cvss": {"score": cvss_score, "vector": cvss_vector} if cvss_score is not None else None,
                 },
             ))
     return findings, None

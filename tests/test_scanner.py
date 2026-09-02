@@ -318,31 +318,59 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(len(rescanned), 1)
             self.assertEqual(state.snapshot()["summary"]["total"], 0)
 
+    def test_dashboard_mutating_routes_require_the_local_control_token(self) -> None:
+        """A loopback bind is not an authorization boundary: other local users can reach it too."""
+        state = DashboardState()
+        state.control_token = "test-control-token"
+        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(state))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            for route in ("/api/rescan", "/api/scan", "/api/fixes/apply", "/api/fixes/commit", "/api/web-audit"):
+                url = f"http://127.0.0.1:{server.server_port}{route}"
+                for headers in (
+                    {"Content-Type": "application/json"},
+                    {"Content-Type": "application/json", "X-Vulcanary-Control": "wrong-token"},
+                ):
+                    with self.assertRaises(HTTPError) as refused:
+                        urlopen(Request(url, data=b"{}", method="POST", headers=headers), timeout=5)
+                    self.assertEqual(refused.exception.code, 403, route)
+                    refused.exception.close()
+            state_url = f"http://127.0.0.1:{server.server_port}/api/state"
+            self.assertEqual(urlopen(state_url, timeout=5).status, 200)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
     def test_dashboard_post_actions_reject_cross_site_and_non_json_requests(self) -> None:
-        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(DashboardState()))
+        state = DashboardState()
+        state.control_token = "test-control-token"
+        authorized = {"X-Vulcanary-Control": state.control_token}
+        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(state))
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         url = f"http://127.0.0.1:{server.server_port}/api/rescan"
         try:
             with self.assertRaises(HTTPError) as non_json:
-                urlopen(Request(url, data=b"{}", method="POST", headers={"Content-Type": "text/plain"}), timeout=5)
+                urlopen(Request(url, data=b"{}", method="POST", headers={"Content-Type": "text/plain", **authorized}), timeout=5)
             self.assertEqual(non_json.exception.code, 415)
             non_json.exception.close()
             with self.assertRaises(HTTPError) as cross_site:
-                urlopen(Request(url, data=b"{}", method="POST", headers={"Content-Type": "application/json", "Origin": "https://attacker.invalid"}), timeout=5)
+                urlopen(Request(url, data=b"{}", method="POST", headers={"Content-Type": "application/json", "Origin": "https://attacker.invalid", **authorized}), timeout=5)
             self.assertEqual(cross_site.exception.code, 403)
             cross_site.exception.close()
             with self.assertRaises(HTTPError) as invalid_host:
-                urlopen(Request(url, data=b"{}", method="POST", headers={"Content-Type": "application/json", "Host": "attacker.invalid"}), timeout=5)
+                urlopen(Request(url, data=b"{}", method="POST", headers={"Content-Type": "application/json", "Host": "attacker.invalid", **authorized}), timeout=5)
             self.assertEqual(invalid_host.exception.code, 400)
             invalid_host.exception.close()
             with self.assertRaises(HTTPError) as non_object:
-                urlopen(Request(url, data=b"[]", method="POST", headers={"Content-Type": "application/json"}), timeout=5)
+                urlopen(Request(url, data=b"[]", method="POST", headers={"Content-Type": "application/json", **authorized}), timeout=5)
             self.assertEqual(non_object.exception.code, 400)
             non_object.exception.close()
             response = urlopen(Request(
                 url, data=b"{}", method="POST",
-                headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{server.server_port}"},
+                headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{server.server_port}", **authorized},
             ), timeout=5)
             self.assertEqual(response.status, 200)
         finally:
@@ -581,6 +609,37 @@ class ScannerTests(unittest.TestCase):
             self.assertTrue(findings[0].metadata["fix_eligible"])
             self.assertEqual(findings[0].metadata["fix_strategy"], "pip")
 
+    def test_osv_uses_cvss_v3_and_v4_base_scores(self) -> None:
+        cases = [
+            ("CVSS_V3", "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", Severity.CRITICAL, 9.8),
+            ("CVSS_V4", "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N", Severity.HIGH, 8.7),
+        ]
+        for kind, vector, expected_severity, expected_score in cases:
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "requirements.txt").write_text("demo==1.0.0\n", encoding="utf-8")
+                batch = {"results": [{"vulns": [{"id": f"GHSA-{kind.lower()}"}]}]}
+                record = {
+                    "summary": "CVSS-only advisory", "severity": [{"type": kind, "score": vector}],
+                    "affected": [{"package": {"name": "demo"}, "ranges": [{"events": [{"fixed": "1.1.0"}]}]}],
+                }
+                with patch("vulcanary.dependencies._json_request", side_effect=[batch, record]):
+                    findings, warning = scan_dependencies(root, cache_dir=False)
+                self.assertIsNone(warning)
+                self.assertEqual(findings[0].severity, expected_severity)
+                self.assertEqual(findings[0].metadata["cvss"], {"score": expected_score, "vector": vector})
+
+    def test_osv_ignores_withdrawn_advisories(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "requirements.txt").write_text("demo==1.0.0\n", encoding="utf-8")
+            batch = {"results": [{"vulns": [{"id": "GHSA-withdrawn"}]}]}
+            record = {"withdrawn": "2026-01-01T00:00:00Z", "affected": [{"package": {"name": "demo"}}]}
+            with patch("vulcanary.dependencies._json_request", side_effect=[batch, record]):
+                findings, warning = scan_dependencies(root, cache_dir=False)
+            self.assertIsNone(warning)
+            self.assertEqual(findings, [])
+
     def test_reuses_sanitized_osv_cache_without_network(self) -> None:
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as cache_directory:
             root = Path(directory)
@@ -647,6 +706,20 @@ class ScannerTests(unittest.TestCase):
                 findings, _ = scan_dependencies(root, cache_dir=False)
             self.assertEqual(findings[0].metadata["fixed_version"], "3.15.2")
             self.assertTrue(findings[0].metadata["fix_eligible"])
+
+    def test_osv_prefers_a_stable_fix_over_a_prerelease(self) -> None:
+        record = {
+            "affected": [{"package": {"name": "demo"}, "ranges": [
+                {"events": [{"fixed": "1.2.0-rc.1"}]},
+                {"events": [{"fixed": "1.2.0"}]},
+            ]}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "requirements.txt").write_text("demo==1.0.0\n", encoding="utf-8")
+            with patch("vulcanary.dependencies._json_request", side_effect=[{"results": [{"vulns": [{"id": "GHSA-stable"}]}]}, record]):
+                findings, _ = scan_dependencies(root, cache_dir=False)
+            self.assertEqual(findings[0].metadata["fixed_version"], "1.2.0")
 
     def test_fix_preview_separates_safe_and_manual_findings(self) -> None:
         findings = [

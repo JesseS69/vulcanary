@@ -1,4 +1,20 @@
 const $ = (selector) => document.querySelector(selector);
+
+// The launch URL carries the local control token once; keep it for this tab only and
+// strip it from the address bar so it does not persist in browser history.
+const controlToken = (() => {
+  const supplied = new URLSearchParams(window.location.search).get('token');
+  if (supplied) {
+    try { sessionStorage.setItem('vulcanary-control-token', supplied); } catch (error) { /* private mode */ }
+    const cleaned = new URL(window.location.href);
+    cleaned.searchParams.delete('token');
+    window.history.replaceState({}, '', cleaned.pathname + cleaned.search + cleaned.hash);
+    return supplied;
+  }
+  try { return sessionStorage.getItem('vulcanary-control-token') || ''; } catch (error) { return ''; }
+})();
+
+const actionHeaders = () => ({'Content-Type': 'application/json', 'X-Vulcanary-Control': controlToken});
 let state = {repositories: [], findings: [], summary: {total: 0, counts: {}, categories: {}}};
 const selectedFixes = new Set();
 let appliedBatch = null;
@@ -32,6 +48,9 @@ function render() {
   renderMonitor();
   renderFilterOptions();
   renderFindings();
+  if (!controlToken) {
+    $('#updated').textContent = 'Dashboard actions are locked: reopen this page from the authorized link printed by `vulcanary start`.';
+  }
 }
 
 function renderDiagnostics() {
@@ -489,7 +508,7 @@ function updateFixBar() {
 }
 
 async function postJson(url, payload = {}) {
-  const response = await fetch(url, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const response = await fetch(url, {method:'POST',headers:actionHeaders(),body:JSON.stringify(payload)});
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || 'Request failed');
   return body;
@@ -547,7 +566,7 @@ function openFinding(fingerprint) {
 
 async function refresh({rescan = false} = {}) {
   const response = await fetch(rescan ? '/api/rescan' : '/api/state', rescan ? {
-    method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'
+    method: 'POST', headers: actionHeaders(), body: '{}'
   } : undefined);
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || 'Refresh failed');
@@ -606,7 +625,7 @@ $('#scan-form').addEventListener('submit', async event => {
       ['checkov', $('#checkov-report').value.trim()], ['zap', $('#zap-report').value.trim()],
       ['prowler', $('#prowler-report').value.trim()], ['sarif', $('#sarif-report').value.trim()],
     ].filter(([, path]) => path));
-    const response = await fetch('/api/scan', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repository:$('#repository').value,reports})});
+    const response = await fetch('/api/scan', {method:'POST',headers:actionHeaders(),body:JSON.stringify({repository:$('#repository').value,reports})});
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Scan failed');
     state = payload.state; render(); $('#scan-message').textContent = `Watching ${payload.scan.name}. Initial scan completed in ${payload.scan.duration_ms} ms.`;
@@ -664,5 +683,5 @@ $('#commit-fixes').addEventListener('click', async () => {
   try { const body = await postJson('/api/fixes/commit'); $('#fix-message').textContent = `Committed ${body.committed.commit.slice(0, 8)} on ${body.committed.branch}. Proof ${body.committed.receipt.proof.slice(0, 12)} recorded.`; button.classList.add('hidden'); selectedFixes.clear(); updateFixBar(); }
   catch(error) { $('#fix-message').textContent = error.message; button.disabled = false; button.textContent = 'Commit verified fixes'; }
 });
-refresh({rescan: true}).catch(error => { $('#updated').textContent = `Dashboard error: ${error.message}`; });
+refresh({rescan: Boolean(controlToken)}).catch(error => { $('#updated').textContent = `Dashboard error: ${error.message}`; });
 setInterval(() => refresh().catch(error => { $('#updated').textContent = `Dashboard error: ${error.message}`; }), 10000);
