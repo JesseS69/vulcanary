@@ -318,31 +318,59 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(len(rescanned), 1)
             self.assertEqual(state.snapshot()["summary"]["total"], 0)
 
+    def test_dashboard_mutating_routes_require_the_local_control_token(self) -> None:
+        """A loopback bind is not an authorization boundary: other local users can reach it too."""
+        state = DashboardState()
+        state.control_token = "test-control-token"
+        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(state))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            for route in ("/api/rescan", "/api/scan", "/api/fixes/apply", "/api/fixes/commit", "/api/web-audit"):
+                url = f"http://127.0.0.1:{server.server_port}{route}"
+                for headers in (
+                    {"Content-Type": "application/json"},
+                    {"Content-Type": "application/json", "X-Vulcanary-Control": "wrong-token"},
+                ):
+                    with self.assertRaises(HTTPError) as refused:
+                        urlopen(Request(url, data=b"{}", method="POST", headers=headers), timeout=5)
+                    self.assertEqual(refused.exception.code, 403, route)
+                    refused.exception.close()
+            state_url = f"http://127.0.0.1:{server.server_port}/api/state"
+            self.assertEqual(urlopen(state_url, timeout=5).status, 200)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
     def test_dashboard_post_actions_reject_cross_site_and_non_json_requests(self) -> None:
-        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(DashboardState()))
+        state = DashboardState()
+        state.control_token = "test-control-token"
+        authorized = {"X-Vulcanary-Control": state.control_token}
+        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(state))
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         url = f"http://127.0.0.1:{server.server_port}/api/rescan"
         try:
             with self.assertRaises(HTTPError) as non_json:
-                urlopen(Request(url, data=b"{}", method="POST", headers={"Content-Type": "text/plain"}), timeout=5)
+                urlopen(Request(url, data=b"{}", method="POST", headers={"Content-Type": "text/plain", **authorized}), timeout=5)
             self.assertEqual(non_json.exception.code, 415)
             non_json.exception.close()
             with self.assertRaises(HTTPError) as cross_site:
-                urlopen(Request(url, data=b"{}", method="POST", headers={"Content-Type": "application/json", "Origin": "https://attacker.invalid"}), timeout=5)
+                urlopen(Request(url, data=b"{}", method="POST", headers={"Content-Type": "application/json", "Origin": "https://attacker.invalid", **authorized}), timeout=5)
             self.assertEqual(cross_site.exception.code, 403)
             cross_site.exception.close()
             with self.assertRaises(HTTPError) as invalid_host:
-                urlopen(Request(url, data=b"{}", method="POST", headers={"Content-Type": "application/json", "Host": "attacker.invalid"}), timeout=5)
+                urlopen(Request(url, data=b"{}", method="POST", headers={"Content-Type": "application/json", "Host": "attacker.invalid", **authorized}), timeout=5)
             self.assertEqual(invalid_host.exception.code, 400)
             invalid_host.exception.close()
             with self.assertRaises(HTTPError) as non_object:
-                urlopen(Request(url, data=b"[]", method="POST", headers={"Content-Type": "application/json"}), timeout=5)
+                urlopen(Request(url, data=b"[]", method="POST", headers={"Content-Type": "application/json", **authorized}), timeout=5)
             self.assertEqual(non_object.exception.code, 400)
             non_object.exception.close()
             response = urlopen(Request(
                 url, data=b"{}", method="POST",
-                headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{server.server_port}"},
+                headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{server.server_port}", **authorized},
             ), timeout=5)
             self.assertEqual(response.status, 200)
         finally:

@@ -34,7 +34,11 @@ vulcanary status
 vulcanary stop
 ```
 
-`start` binds the loopback dashboard first, then loads initial repository scans in a background worker so a large dependency graph cannot produce a false startup failure. The dashboard's **Diagnostics** panel reports startup progress, scanner warnings, runtime versions, and local-history availability. The control token used by `stop` is generated locally, stored in the user-local application configuration with restrictive permissions where the operating system supports them, passed to the child process through its environment rather than command-line arguments, and accepted only by the loopback shutdown endpoint.
+`start` binds the loopback dashboard first, then loads initial repository scans in a background worker so a large dependency graph cannot produce a false startup failure. The dashboard's **Diagnostics** panel reports startup progress, scanner warnings, runtime versions, and local-history availability. The control token is generated locally, stored in the user-local application configuration with restrictive permissions where the operating system supports them, and passed to the child process through its environment rather than command-line arguments.
+
+Every state-changing dashboard endpoint requires that token in an `X-Vulcanary-Control` header, including scanning, remediation, monitoring changes, and shutdown. A loopback bind is a reachability limit, not an authorization boundary: on a shared or multi-user machine any local process can connect to `127.0.0.1`, and remediation can execute repository-defined verification commands. `start` therefore opens the dashboard at a URL carrying the token once; the page keeps it for that tab only and immediately removes it from the address bar so it is not retained in browser history. With `--no-open`, the authorized URL is printed for you to paste. Opening the dashboard without a token still shows findings but leaves every action locked.
+
+Read-only endpoints remain unauthenticated so `vulcanary status` can report service health without holding the token. Findings are therefore readable by other local processes; treat the machine running Vulcanary as trusted.
 
 Back up or restore local service configuration without copying the control token, scan history, findings, receipts, command output, or source:
 
@@ -124,7 +128,18 @@ Copy `.vulcanary.example.json` to `.vulcanary.json` in the repository being scan
 }
 ```
 
-Verification commands are opt-in and executed directly without a shell after a proposed dependency fix passes its security rescan. Only configure commands you trust; scanned repositories are otherwise treated as hostile input. Command output is not returned to the dashboard, preventing accidental leakage of tokens or other build-log secrets.
+Verification commands are opt-in and executed directly without a shell after a proposed dependency fix passes its security rescan. Command output is not returned to the dashboard, preventing accidental leakage of tokens or other build-log secrets.
+
+> **Trust boundary: `verify_commands` comes from the scanned repository.**
+> Vulcanary reads `.vulcanary.json` from the repository being scanned, so `verify_commands` is controlled by whoever controls that repository's contents. Scanning is always read-only and never runs repository-defined commands. **Applying a fix does run them**, on your machine, with your user account.
+>
+> In practice this means:
+>
+> - Adding, scanning, and reviewing findings for an untrusted repository is safe.
+> - Applying or committing a fix in a repository you do not trust is equivalent to running its build scripts. Read its `.vulcanary.json` first.
+> - Treat a pull request that adds or edits `verify_commands` as a code-execution change and review it as one.
+>
+> Commands run without a shell, from an argument array, under `verify_timeout_seconds`. That prevents shell metacharacter injection; it does not make an untrusted command safe.
 
 Repositories can declare `repository_owner`, `security_contact`, and severity-specific `remediation_sla_days` in `.vulcanary.json`. The dashboard records when each stable finding fingerprint was first seen, calculates its deadline, and labels it on track, due soon, or overdue. First-seen history remains local and survives rescans so unresolved findings cannot reset their deadline by moving lines.
 
@@ -282,7 +297,7 @@ vulcanary web-audit https://staging.example.com `
   --authorize-target staging.example.com --json web-audit.json
 ```
 
-`--authorize-target` must exactly match the URL hostname. Embedded credentials and cross-host redirects are refused. Public-address resolution is checked before and after the request; private, loopback, link-local, reserved, and otherwise non-public addresses are refused by default, and a changed DNS answer fails closed. Authorized internal testing is CLI-only and requires both the exact hostname and `--allow-private-target`. This command does not crawl, fuzz, submit forms, authenticate, or exploit anything; it is a passive configuration audit, not a penetration test. For broader authorized testing, run free OWASP ZAP Baseline/API Scan separately and import its JSON with `--zap-json`. Active ZAP scanning intentionally remains outside Vulcanary's automatic workflows because it attacks the target and requires explicit scope and authorization.
+`--authorize-target` must exactly match the URL hostname. Embedded credentials and cross-host redirects are refused. Public-address resolution is checked before and after the request; private, loopback, link-local, reserved, and otherwise non-public addresses are refused by default. A DNS answer that changes across the request fails closed. This is fail-closed detection of a changed answer, not complete DNS-rebinding prevention: the HTTP client performs its own connection-time lookup, so a rebind inside that window is detected after the request rather than prevented before it. Authorized internal testing is CLI-only and requires both the exact hostname and `--allow-private-target`. This command does not crawl, fuzz, submit forms, authenticate, or exploit anything; it is a passive configuration audit, not a penetration test. For broader authorized testing, run free OWASP ZAP Baseline/API Scan separately and import its JSON with `--zap-json`. Active ZAP scanning intentionally remains outside Vulcanary's automatic workflows because it attacks the target and requires explicit scope and authorization.
 
 ## Read-only cloud posture
 

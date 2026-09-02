@@ -661,6 +661,12 @@ def make_handler(state: DashboardState):
             self.end_headers()
             self.wfile.write(body)
 
+        def _authorized(self) -> bool:
+            """Every mutating route requires the local control token, not just loopback reachability."""
+            supplied = self.headers.get("X-Vulcanary-Control") or ""
+            expected = state.control_token or ""
+            return bool(expected) and secrets.compare_digest(supplied, expected)
+
         def _host_is_local(self) -> bool:
             host = self.headers.get("Host", "")
             port = self.server.server_address[1]
@@ -803,6 +809,9 @@ def make_handler(state: DashboardState):
             if route not in {"/api/scan", "/api/discover", "/api/web-audit", "/api/web-audits/remove", "/api/rescan", "/api/monitor", "/api/repositories/remove", "/api/control/shutdown", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/source/preview", "/api/source/apply", "/api/parents/evaluate", "/api/overrides/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
+            if not self._authorized():
+                self._json({"error": "A valid local control token is required for dashboard actions"}, HTTPStatus.FORBIDDEN)
+                return
             content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
             if content_type != "application/json":
                 self._json({"error": "POST requests require application/json"}, HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
@@ -824,10 +833,6 @@ def make_handler(state: DashboardState):
                 if not isinstance(payload, dict):
                     raise ValueError("Request body must be a JSON object")
                 if route == "/api/control/shutdown":
-                    supplied = self.headers.get("X-Vulcanary-Control")
-                    if not state.control_token or not secrets.compare_digest(supplied or "", state.control_token):
-                        self._json({"error": "Valid local control token required"}, HTTPStatus.FORBIDDEN)
-                        return
                     self._json({"stopping": True})
                     if state.shutdown_callback:
                         threading.Thread(target=state.shutdown_callback, daemon=True).start()
@@ -999,7 +1004,7 @@ def serve(host: str, port: int, repositories: list[Path], open_browser: bool = T
     if host not in {"127.0.0.1", "localhost", "::1"}:
         raise ValueError("The dashboard is local-only; bind to a loopback address")
     state = DashboardState(Path.home() / ".vulcanary" / "dashboard-history.json")
-    state.control_token = os.environ.get("VULCANARY_CONTROL_TOKEN")
+    state.control_token = os.environ.get("VULCANARY_CONTROL_TOKEN") or secrets.token_urlsafe(32)
     state.startup_total = len(repositories)
     if monitor_interval is not None:
         state.configure_monitor(monitor_interval > 0, monitor_interval if monitor_interval > 0 else state.monitor_interval_seconds)
@@ -1028,9 +1033,13 @@ def serve(host: str, port: int, repositories: list[Path], open_browser: bool = T
 
     threading.Thread(target=initial_scan, name="vulcanary-initial-scan", daemon=True).start()
     url = f"http://{host}:{server.server_port}"
+    authorized_url = f"{url}/?token={state.control_token}"
     print(f"Vulcanary dashboard: {url}")
     if open_browser:
-        threading.Timer(0.25, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.25, lambda: webbrowser.open(authorized_url)).start()
+    else:
+        print("Open the dashboard with its local control token:")
+        print(f"  {authorized_url}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

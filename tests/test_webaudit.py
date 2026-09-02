@@ -69,12 +69,13 @@ class WebAuditTests(unittest.TestCase):
 
     def test_dashboard_web_endpoint_enforces_exact_authorization(self) -> None:
         state = DashboardState()
+        state.control_token = "test-control-token"
         server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(state))
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         endpoint = f"http://127.0.0.1:{server.server_port}/api/web-audit"
         try:
-            request = Request(endpoint, data=json.dumps({"url": "https://example.test", "authorized_host": "other.test"}).encode(), method="POST", headers={"Content-Type": "application/json"})
+            request = Request(endpoint, data=json.dumps({"url": "https://example.test", "authorized_host": "other.test"}).encode(), method="POST", headers={"Content-Type": "application/json", "X-Vulcanary-Control": state.control_token})
             with self.assertRaises(HTTPError) as rejected:
                 urlopen(request, timeout=5)
             self.assertEqual(rejected.exception.code, 400)
