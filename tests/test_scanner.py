@@ -609,6 +609,37 @@ class ScannerTests(unittest.TestCase):
             self.assertTrue(findings[0].metadata["fix_eligible"])
             self.assertEqual(findings[0].metadata["fix_strategy"], "pip")
 
+    def test_osv_uses_cvss_v3_and_v4_base_scores(self) -> None:
+        cases = [
+            ("CVSS_V3", "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", Severity.CRITICAL, 9.8),
+            ("CVSS_V4", "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N", Severity.HIGH, 8.7),
+        ]
+        for kind, vector, expected_severity, expected_score in cases:
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "requirements.txt").write_text("demo==1.0.0\n", encoding="utf-8")
+                batch = {"results": [{"vulns": [{"id": f"GHSA-{kind.lower()}"}]}]}
+                record = {
+                    "summary": "CVSS-only advisory", "severity": [{"type": kind, "score": vector}],
+                    "affected": [{"package": {"name": "demo"}, "ranges": [{"events": [{"fixed": "1.1.0"}]}]}],
+                }
+                with patch("vulcanary.dependencies._json_request", side_effect=[batch, record]):
+                    findings, warning = scan_dependencies(root, cache_dir=False)
+                self.assertIsNone(warning)
+                self.assertEqual(findings[0].severity, expected_severity)
+                self.assertEqual(findings[0].metadata["cvss"], {"score": expected_score, "vector": vector})
+
+    def test_osv_ignores_withdrawn_advisories(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "requirements.txt").write_text("demo==1.0.0\n", encoding="utf-8")
+            batch = {"results": [{"vulns": [{"id": "GHSA-withdrawn"}]}]}
+            record = {"withdrawn": "2026-01-01T00:00:00Z", "affected": [{"package": {"name": "demo"}}]}
+            with patch("vulcanary.dependencies._json_request", side_effect=[batch, record]):
+                findings, warning = scan_dependencies(root, cache_dir=False)
+            self.assertIsNone(warning)
+            self.assertEqual(findings, [])
+
     def test_reuses_sanitized_osv_cache_without_network(self) -> None:
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as cache_directory:
             root = Path(directory)
@@ -675,6 +706,20 @@ class ScannerTests(unittest.TestCase):
                 findings, _ = scan_dependencies(root, cache_dir=False)
             self.assertEqual(findings[0].metadata["fixed_version"], "3.15.2")
             self.assertTrue(findings[0].metadata["fix_eligible"])
+
+    def test_osv_prefers_a_stable_fix_over_a_prerelease(self) -> None:
+        record = {
+            "affected": [{"package": {"name": "demo"}, "ranges": [
+                {"events": [{"fixed": "1.2.0-rc.1"}]},
+                {"events": [{"fixed": "1.2.0"}]},
+            ]}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "requirements.txt").write_text("demo==1.0.0\n", encoding="utf-8")
+            with patch("vulcanary.dependencies._json_request", side_effect=[{"results": [{"vulns": [{"id": "GHSA-stable"}]}]}, record]):
+                findings, _ = scan_dependencies(root, cache_dir=False)
+            self.assertEqual(findings[0].metadata["fixed_version"], "1.2.0")
 
     def test_fix_preview_separates_safe_and_manual_findings(self) -> None:
         findings = [

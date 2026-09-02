@@ -48,6 +48,9 @@ function render() {
   renderMonitor();
   renderFilterOptions();
   renderFindings();
+  if (!controlToken) {
+    $('#updated').textContent = 'Dashboard actions are locked: reopen this page from the authorized link printed by `vulcanary start`.';
+  }
 }
 
 function renderDiagnostics() {
@@ -680,8 +683,5 @@ $('#commit-fixes').addEventListener('click', async () => {
   try { const body = await postJson('/api/fixes/commit'); $('#fix-message').textContent = `Committed ${body.committed.commit.slice(0, 8)} on ${body.committed.branch}. Proof ${body.committed.receipt.proof.slice(0, 12)} recorded.`; button.classList.add('hidden'); selectedFixes.clear(); updateFixBar(); }
   catch(error) { $('#fix-message').textContent = error.message; button.disabled = false; button.textContent = 'Commit verified fixes'; }
 });
-if (!controlToken) {
-  $('#updated').textContent = 'Dashboard actions are locked: reopen this page from the link printed by `vulcanary start`.';
-}
-refresh({rescan: true}).catch(error => { $('#updated').textContent = `Dashboard error: ${error.message}`; });
+refresh({rescan: Boolean(controlToken)}).catch(error => { $('#updated').textContent = `Dashboard error: ${error.message}`; });
 setInterval(() => refresh().catch(error => { $('#updated').textContent = `Dashboard error: ${error.message}`; }), 10000);

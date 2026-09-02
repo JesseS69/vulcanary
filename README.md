@@ -40,6 +40,8 @@ Every state-changing dashboard endpoint requires that token in an `X-Vulcanary-C
 
 Read-only endpoints remain unauthenticated so `vulcanary status` can report service health without holding the token. Findings are therefore readable by other local processes; treat the machine running Vulcanary as trusted.
 
+OSV advisory normalization ignores withdrawn records, derives qualitative severity from CVSS v3 and v4 Base vectors when OSV does not publish a textual rating, and records the score and vector with each finding. Fixed-version selection prefers the nearest compatible stable release so a prerelease is never recommended when a stable patched version is available.
+
 Back up or restore local service configuration without copying the control token, scan history, findings, receipts, command output, or source:
 
 ```powershell
