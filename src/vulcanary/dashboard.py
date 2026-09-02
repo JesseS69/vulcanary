@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .config import Config
-from .scanners import inline_suppression_register, ruleset_manifest, scan
+from .scanners import inline_suppression_register, is_excluded, ruleset_manifest, scan
 from .dependencies import discover_packages, scan_dependencies
 from .reachability import analyze_reachability
 from .sbom import cyclonedx_document, inventory_snapshot, spdx_document
@@ -27,6 +27,7 @@ from .evaluator import create_expo_candidate_branch, evaluate_expo_platform, eva
 from .adapters import PARSERS, import_report
 from .source_fixes import apply_source_fix, preview_source_fix
 from .tickets import finding_ticket, ticket_csv, ticket_markdown
+from .vex import openvex_document
 
 
 REMEDIATION_RECEIPT_FIELDS = (
@@ -204,7 +205,7 @@ class DashboardState:
                 resolved = report.resolve()
                 imported.extend(import_report(scanner, resolved, root))
                 report_sources.append({"scanner": scanner, "path": str(resolved)})
-        imported = [finding for finding in imported if finding.rule_id not in config.ignored_rules and not config.is_suppressed(finding.fingerprint)]
+        imported = [finding for finding in imported if not is_excluded(finding.path, config) and finding.rule_id not in config.ignored_rules and not config.is_suppressed(finding.fingerprint)]
         imported = list({finding.fingerprint: finding for finding in imported}.values())
         if external_reports is not None:
             self.external_reports[repository_key] = external_reports
@@ -615,7 +616,7 @@ def make_handler(state: DashboardState):
             if path == "/api/state":
                 self._json(state.snapshot())
                 return
-            if path in {"/api/repositories/sbom", "/api/repositories/spdx"}:
+            if path in {"/api/repositories/sbom", "/api/repositories/spdx", "/api/repositories/openvex"}:
                 requested = parse_qs(parsed.query).get("repository", [""])[0]
                 repository = str(Path(requested).resolve()) if requested else ""
                 scan_result = state.repositories.get(repository)
@@ -623,7 +624,10 @@ def make_handler(state: DashboardState):
                     self.send_error(HTTPStatus.NOT_FOUND, "Scan the repository before exporting its SBOM")
                     return
                 safe_name = "".join(character if character.isalnum() or character in {"-", "_"} else "-" for character in scan_result.name)
-                if path.endswith("/spdx"):
+                if path.endswith("/openvex"):
+                    document = openvex_document(scan_result.name, scan_result.findings)
+                    self._download_json(document, f"{safe_name}-vulcanary.openvex.json")
+                elif path.endswith("/spdx"):
                     document = spdx_document(scan_result.name, discover_packages(Path(repository)), scan_result.findings)
                     self._download_json(document, f"{safe_name}-vulcanary.spdx.json")
                 else:

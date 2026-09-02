@@ -15,13 +15,14 @@ from .reachability import analyze_reachability
 from .sbom import cyclonedx_document, spdx_document, write_cyclonedx, write_spdx
 from .governance import suppression_findings
 from .provenance import scan_provenance, write_provenance
+from .vex import openvex_document, write_openvex
 from .adapters import AdapterError, import_report
 
 
 def scan_parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         prog="vulcanary", description="Scan a repository for security risks.",
-        epilog="Local product commands: vulcanary setup | start | status | stop | dashboard | update-check",
+        epilog="Commands: setup | start | status | stop | dashboard | dependency-review | web-audit | update-check",
     )
     result.add_argument("path", nargs="?", default=".", help="Repository to scan")
     result.add_argument("--config", type=Path, help="Configuration JSON path")
@@ -29,6 +30,7 @@ def scan_parser() -> argparse.ArgumentParser:
     result.add_argument("--sarif", type=Path, help="Write SARIF 2.1 report")
     result.add_argument("--sbom", type=Path, help="Write a CycloneDX 1.5 SBOM")
     result.add_argument("--spdx", type=Path, help="Write an SPDX 2.3 JSON SBOM")
+    result.add_argument("--openvex", type=Path, help="Write an OpenVEX document for observed dependency vulnerabilities")
     result.add_argument("--ruleset-manifest", type=Path, help="Write the canonical built-in ruleset manifest and SHA-256 digest")
     result.add_argument("--provenance", type=Path, help="Write an unsigned in-toto scan provenance statement for generated artifacts")
     result.add_argument("--baseline-json", type=Path, help="Gate only findings absent from a prior normalized JSON report")
@@ -36,7 +38,7 @@ def scan_parser() -> argparse.ArgumentParser:
     result.add_argument("--github-summary", action="store_true", help="Append a source-free Markdown summary to GITHUB_STEP_SUMMARY")
     result.add_argument("--no-fail", action="store_true", help="Always exit successfully")
     result.add_argument("--offline", action="store_true", help="Skip OSV dependency advisory queries")
-    for scanner in ("semgrep", "gitleaks", "trivy", "checkov"):
+    for scanner in ("semgrep", "gitleaks", "trivy", "checkov", "zap", "prowler", "sarif"):
         result.add_argument(f"--{scanner}-json", action="append", type=Path, default=[], help=f"Import a {scanner.title()} JSON report; repeat as needed")
     result.add_argument("--trivy-image-json", action="append", type=Path, default=[], help="Import a local Trivy container-image JSON report; repeat as needed")
     return result
@@ -67,8 +69,59 @@ def service_parser(command: str) -> argparse.ArgumentParser:
     return result
 
 
+def dependency_review_parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(prog="vulcanary dependency-review", description="Review newly introduced locked dependencies without installing or executing them.")
+    result.add_argument("path", nargs="?", default=".", help="Current repository checkout")
+    result.add_argument("--base", required=True, type=Path, help="Trusted base checkout to compare")
+    result.add_argument("--json", type=Path, dest="json_path", help="Write a normalized JSON report")
+    result.add_argument("--github-annotations", action="store_true")
+    result.add_argument("--no-fail", action="store_true")
+    return result
+
+
+def web_audit_parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(prog="vulcanary web-audit", description="Run a non-exploitative HTTP security-header and cookie audit against an authorized target.")
+    result.add_argument("url")
+    result.add_argument("--authorize-target", required=True, help="Exact hostname you own or are authorized to test")
+    result.add_argument("--json", type=Path, dest="json_path")
+    result.add_argument("--no-fail", action="store_true")
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "web-audit":
+        args = web_audit_parser().parse_args(argv[1:])
+        try:
+            from .webaudit import audit_web_target
+            findings = audit_web_target(args.url, args.authorize_target)
+        except (OSError, ValueError) as error:
+            print(f"error: web audit failed: {error}", file=sys.stderr)
+            return 2
+        print(render_console(findings))
+        if args.json_path:
+            write_json(findings, args.json_path, policy={"mode": "passive-web-audit", "authorized_host": args.authorize_target})
+        return 0 if args.no_fail or not any(item.severity >= Config().fail_on for item in findings) else 1
+    if argv and argv[0] == "dependency-review":
+        args = dependency_review_parser().parse_args(argv[1:])
+        root, base = Path(args.path).resolve(), args.base.resolve()
+        if not root.is_dir() or not base.is_dir():
+            dependency_review_parser().error("path and --base must be existing directories")
+        try:
+            from .admission import review_dependency_changes
+            findings, added = review_dependency_changes(root, base)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
+            print(f"error: invalid dependency admission policy: {error}", file=sys.stderr)
+            return 2
+        print(f"Dependency delta: {len(added)} added locked package(s).")
+        print(render_console(findings))
+        if args.json_path:
+            write_json(findings, args.json_path, policy={"mode": "dependency-admission", "added_packages": len(added)})
+        if args.github_annotations:
+            annotations = render_github_annotations(findings)
+            if annotations:
+                print(annotations)
+        return 0 if args.no_fail or not findings else 1
     if argv and argv[0] == "setup":
         args = setup_parser().parse_args(argv[1:])
         from .local_app import configure_app, config_path
@@ -156,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     findings = scan(root, config)
     try:
-        imported = [finding for scanner in ("semgrep", "gitleaks", "trivy", "checkov") for report in getattr(args, f"{scanner}_json") for finding in import_report(scanner, report, root)]
+        imported = [finding for scanner in ("semgrep", "gitleaks", "trivy", "checkov", "zap", "prowler", "sarif") for report in getattr(args, f"{scanner.replace('-', '_')}_json") for finding in import_report(scanner, report, root)]
         imported += [finding for report in args.trivy_image_json for finding in import_report("trivy-image", report, root)]
     except AdapterError as error:
         print(f"error: {error}", file=sys.stderr)
@@ -193,10 +246,12 @@ def main(argv: list[str] | None = None) -> int:
         write_cyclonedx(cyclonedx_document(root.name, discover_packages(root), [finding.to_dict() for finding in findings]), args.sbom)
     if args.spdx:
         write_spdx(spdx_document(root.name, discover_packages(root), [finding.to_dict() for finding in findings]), args.spdx)
+    if args.openvex:
+        write_openvex(openvex_document(root.name, [finding.to_dict() for finding in findings]), args.openvex)
     if args.ruleset_manifest:
         args.ruleset_manifest.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     if args.provenance:
-        artifacts = [path for path in (args.json_path, args.sarif, args.sbom, args.spdx, args.ruleset_manifest) if path]
+        artifacts = [path for path in (args.json_path, args.sarif, args.sbom, args.spdx, args.openvex, args.ruleset_manifest) if path]
         write_provenance(scan_provenance(root.name, artifacts, manifest["digest"]), args.provenance)
     policy_findings = findings
     if args.baseline_json:

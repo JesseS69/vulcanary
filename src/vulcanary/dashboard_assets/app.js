@@ -182,6 +182,7 @@ function renderRepositories() {
     const platform = repo.findings.some(f => f.metadata?.parent_packages?.includes('expo')) ? `<button class="platform-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Evaluate Expo platform set</button><button class="platform-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" data-migration="true" type="button">Evaluate next Expo SDK migration</button>` : '';
     const sbom = `<a class="secondary" href="/api/repositories/sbom?repository=${encodeURIComponent(repo.repository)}" download>Download SBOM</a>`;
     const spdx = `<a class="secondary" href="/api/repositories/spdx?repository=${encodeURIComponent(repo.repository)}" download>Download SPDX</a>`;
+    const openvex = `<a class="secondary" href="/api/repositories/openvex?repository=${encodeURIComponent(repo.repository)}" download>Download VEX</a>`;
     const changes = repo.inventory_change || {added:[],removed:[]};
     const inventoryLabel = changes.baseline ? `${changes.current_count || 0} components · baseline` : `${changes.current_count || 0} components · +${changes.added.length} / −${changes.removed.length}`;
     const inventoryButton = `<button class="inventory-change secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Inventory changes</button>`;
@@ -192,7 +193,7 @@ function renderRepositories() {
     const overdue = Number(repo.policy?.overdue_count) || 0;
     const remove = `<button class="repository-remove secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Stop watching</button>`;
     const git = health.git_commit ? `${health.git_branch || 'detached'} @ ${health.git_commit.slice(0, 8)}` : 'Git identity unavailable';
-    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">${escapeHtml(healthLabel)} · ${escapeHtml(git)} · Owner ${escapeHtml(owner)} · ${overdue} overdue · ${repo.duration_ms} ms · ${severe} high priority · ${reachable} import-observed · ${inventoryLabel} · ${escapeHtml(scanners || 'builtin')}</span><div class="repo-actions">${sbom}${spdx}${inventoryButton}${evaluate}${platform}${remove}</div></div>`;
+    return `<div class="repo-item"><span class="repo-name">${escapeHtml(repo.name)}</span><span class="repo-risk">${repo.findings.length} findings</span><span class="repo-meta">${escapeHtml(healthLabel)} · ${escapeHtml(git)} · Owner ${escapeHtml(owner)} · ${overdue} overdue · ${repo.duration_ms} ms · ${severe} high priority · ${reachable} import-observed · ${inventoryLabel} · ${escapeHtml(scanners || 'builtin')}</span><div class="repo-actions">${sbom}${spdx}${openvex}${inventoryButton}${evaluate}${platform}${remove}</div></div>`;
   }).join('');
   document.querySelectorAll('.parent-evaluate').forEach(button => button.addEventListener('click', () => evaluateParents(button)));
   document.querySelectorAll('.platform-evaluate').forEach(button => button.addEventListener('click', () => evaluatePlatform(button)));
@@ -537,7 +538,8 @@ $('#scan-form').addEventListener('submit', async event => {
     const reports = Object.fromEntries([
       ['semgrep', $('#semgrep-report').value.trim()], ['gitleaks', $('#gitleaks-report').value.trim()],
       ['trivy', $('#trivy-report').value.trim()], ['trivy-image', $('#trivy-image-report').value.trim()],
-      ['checkov', $('#checkov-report').value.trim()],
+      ['checkov', $('#checkov-report').value.trim()], ['zap', $('#zap-report').value.trim()],
+      ['prowler', $('#prowler-report').value.trim()], ['sarif', $('#sarif-report').value.trim()],
     ].filter(([, path]) => path));
     const response = await fetch('/api/scan', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({repository:$('#repository').value,reports})});
     const payload = await response.json();

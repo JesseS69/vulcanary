@@ -12,7 +12,7 @@ class AdapterError(ValueError):
 
 
 def _severity(value: object, default: Severity = Severity.MEDIUM) -> Severity:
-    aliases = {"UNKNOWN": default, "NEGLIGIBLE": Severity.INFO, "WARNING": Severity.MEDIUM, "ERROR": Severity.HIGH}
+    aliases = {"UNKNOWN": default, "NEGLIGIBLE": Severity.INFO, "NONE": Severity.INFO, "NOTE": Severity.INFO, "WARNING": Severity.MEDIUM, "ERROR": Severity.HIGH}
     name = str(value or "").upper()
     return aliases.get(name, Severity.__members__.get(name, default))
 
@@ -139,8 +139,107 @@ def _checkov(document: Any, root: Path) -> list[Finding]:
     return findings
 
 
+def _zap(document: Any, root: Path) -> list[Finding]:
+    if not isinstance(document, dict) or not isinstance(document.get("site"), list):
+        raise AdapterError("ZAP report must contain a site array")
+    findings = []
+    levels = {"0": "info", "1": "low", "2": "medium", "3": "high", "4": "critical"}
+    for site in document["site"]:
+        if not isinstance(site, dict) or not isinstance(site.get("alerts", []), list):
+            raise AdapterError("ZAP site is malformed")
+        host = _text(site.get("@host") or site.get("@name"), "authorized-target")
+        for alert in site.get("alerts", []):
+            if not isinstance(alert, dict):
+                raise AdapterError("ZAP alert is malformed")
+            instances = alert.get("instances") if isinstance(alert.get("instances"), list) else []
+            location = instances[0].get("uri") if instances and isinstance(instances[0], dict) else host
+            findings.append(_finding(
+                scanner="zap", rule=alert.get("pluginid") or alert.get("alertRef"),
+                title=alert.get("alert"), description=alert.get("desc"),
+                severity=levels.get(str(alert.get("riskcode")), alert.get("riskdesc")),
+                category="dast", path=f"web-target/{host}", line=1, root=root,
+                remediation=alert.get("solution"), evidence="[response evidence excluded]",
+                metadata={"target": location, "confidence": alert.get("confidence"), "cwe": alert.get("cweid")},
+            ))
+    return findings
+
+
+def _sarif(document: Any, root: Path) -> list[Finding]:
+    if not isinstance(document, dict) or document.get("version") != "2.1.0" or not isinstance(document.get("runs"), list):
+        raise AdapterError("SARIF report must be a SARIF 2.1.0 document with runs")
+    findings = []
+    for run in document["runs"]:
+        if not isinstance(run, dict) or not isinstance(run.get("results", []), list):
+            raise AdapterError("SARIF run is malformed")
+        driver = ((run.get("tool") or {}).get("driver") or {}) if isinstance(run.get("tool"), dict) else {}
+        if not isinstance(driver, dict):
+            raise AdapterError("SARIF tool driver is malformed")
+        scanner = re_safe_name(driver.get("name") or "sarif")
+        rule_list = driver.get("rules", [])
+        if not isinstance(rule_list, list):
+            raise AdapterError("SARIF driver rules must be an array")
+        rules = {str(rule.get("id")): rule for rule in rule_list if isinstance(rule, dict)}
+        for item in run.get("results", []):
+            if not isinstance(item, dict):
+                raise AdapterError("SARIF result is malformed")
+            rule_id = str(item.get("ruleId") or "unknown")
+            rule = rules.get(rule_id, {})
+            message = item.get("message", {})
+            title = message.get("text") if isinstance(message, dict) else message
+            locations = item.get("locations") if isinstance(item.get("locations"), list) else []
+            physical = (((locations[0].get("physicalLocation") or {}) if locations and isinstance(locations[0], dict) else {}))
+            artifact = physical.get("artifactLocation") if isinstance(physical.get("artifactLocation"), dict) else {}
+            region = physical.get("region") if isinstance(physical.get("region"), dict) else {}
+            help_text = rule.get("help", {}) if isinstance(rule.get("help"), dict) else {}
+            findings.append(_finding(
+                scanner=scanner, rule=rule_id, title=title, description=title,
+                severity=item.get("level"), category="external",
+                path=artifact.get("uri"), line=region.get("startLine"), root=root,
+                remediation=help_text.get("text") or rule.get("helpUri"),
+                metadata={"external_rule_id": rule_id},
+            ))
+    return findings
+
+
+def re_safe_name(value: object) -> str:
+    normalized = "".join(character.lower() if character.isalnum() else "-" for character in str(value))
+    return normalized.strip("-")[:40] or "sarif"
+
+
+def _prowler(document: Any, root: Path) -> list[Finding]:
+    records = document if isinstance(document, list) else document.get("findings") if isinstance(document, dict) else None
+    if not isinstance(records, list):
+        raise AdapterError("Prowler report must be an OCSF findings array")
+    findings = []
+    for item in records:
+        if not isinstance(item, dict):
+            raise AdapterError("Prowler finding is malformed")
+        status = str(item.get("status_code") or item.get("status") or "FAIL").upper()
+        if status in {"PASS", "2", "RESOLVED", "SUPPRESSED"}:
+            continue
+        finding_info = item.get("finding_info") if isinstance(item.get("finding_info"), dict) else {}
+        resources = item.get("resources") if isinstance(item.get("resources"), list) else []
+        resource = resources[0] if resources and isinstance(resources[0], dict) else {}
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        remediation = item.get("remediation") if isinstance(item.get("remediation"), dict) else {}
+        title = finding_info.get("title") or item.get("message") or item.get("check_title")
+        raw_severity = item.get("severity")
+        if not raw_severity:
+            raw_severity = {1: "info", 2: "low", 3: "medium", 4: "high", 5: "critical"}.get(item.get("severity_id"), "medium")
+        findings.append(_finding(
+            scanner="prowler", rule=finding_info.get("uid") or item.get("check_id") or item.get("event_code"),
+            title=title, description=item.get("message") or item.get("status_detail") or title,
+            severity=raw_severity, category="cloud",
+            path=f"cloud-resource/{_text(resource.get('name') or resource.get('uid'), 'unknown')}", line=1, root=root,
+            remediation=remediation.get("desc") or remediation.get("description"),
+            metadata={"provider": metadata.get("product", {}).get("vendor_name") if isinstance(metadata.get("product"), dict) else item.get("cloud_provider"), "region": resource.get("region"), "resource_uid": resource.get("uid")},
+        ))
+    return findings
+
+
 PARSERS: dict[str, Callable[[Any, Path], list[Finding]]] = {
     "semgrep": _semgrep, "gitleaks": _gitleaks, "trivy": _trivy, "trivy-image": _trivy, "checkov": _checkov,
+    "zap": _zap, "sarif": _sarif, "prowler": _prowler,
 }
 
 

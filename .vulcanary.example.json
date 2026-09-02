@@ -1,14 +1,24 @@
 {
-  "repository_owner": "application-team",
-  "security_contact": "security@example.com",
-  "remediation_sla_days": {"critical": 1, "high": 7, "medium": 30, "low": 90, "info": 180},
   "fail_on": "high",
   "exclude": [
-    "fixtures/**",
-    "docs/examples/**"
+    "fixtures/**"
   ],
   "ignored_rules": [],
   "ignored_fingerprints": [],
   "suppressions": [],
-  "max_file_bytes": 1000000
+  "max_file_bytes": 1000000,
+  "verify_commands": [
+    ["npm", "test"],
+    ["npm", "run", "build"]
+  ],
+  "verify_timeout_seconds": 300,
+  "repository_owner": "security@example.com",
+  "security_contact": "security@example.com",
+  "dependency_policy": {
+    "deny_packages": [],
+    "deny_licenses": [],
+    "allow_install_scripts": true,
+    "allow_non_registry_sources": false,
+    "require_npm_integrity": true
+  }
 }

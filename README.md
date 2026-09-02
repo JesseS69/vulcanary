@@ -4,7 +4,7 @@
 
 Vulcanary is a local-first code defense system that finds vulnerabilities, tests remediation paths, and turns verified repairs into reviewable Git commits. Its forge-inspired dashboard watches multiple repositories, normalizes findings from built-in and external engines, and keeps source code under the operator's control.
 
-The complete local scanner, dashboard, continuous monitoring, GitHub workflow, remediation engine, reports, and benchmark are available in the free community edition. It requires no Vulcanary account, telemetry, hosted control plane, or paid service.
+The complete local scanner, dashboard, continuous monitoring, GitHub workflow, dependency admission gate, passive web audit, cloud/DAST report adapters, remediation engine, reports, and benchmark are available in the free community edition. It requires no Vulcanary account, telemetry, hosted control plane, or paid service.
 
 The canary detects trouble; the forge proves the repair. Vulcanary evaluates dependency and platform upgrades in isolated Git worktrees, runs the repository's own verification commands, rescans the result, and unlocks a fix only when the tested findings disappear without breaking configured checks. It can also enforce the same policy in GitHub Actions and produce normalized JSON, SARIF, and CycloneDX reports.
 
@@ -100,7 +100,14 @@ Copy `.vulcanary.example.json` to `.vulcanary.json` in the repository being scan
   }],
   "max_file_bytes": 1000000,
   "verify_commands": [["npm", "test", "--", "--runInBand"], ["npm", "run", "build"]],
-  "verify_timeout_seconds": 300
+  "verify_timeout_seconds": 300,
+  "dependency_policy": {
+    "deny_packages": ["unapproved-package"],
+    "deny_licenses": ["GPL-3.0"],
+    "allow_install_scripts": false,
+    "allow_non_registry_sources": false,
+    "require_npm_integrity": true
+  }
 }
 ```
 
@@ -155,6 +162,9 @@ The rule ID, owner, ISO expiration date, and meaningful justification are mandat
 - Verified dependency, platform, and supported source-fix branches with rollback, project checks, rescanning, and guarded commits
 - CycloneDX dependency inventory and change tracking
 - Fingerprint-scoped, owned, expiring security exceptions with a local audit trail
+- Pull-request dependency admission for denied packages/licenses, lifecycle scripts, non-registry sources, and missing npm integrity
+- Permission-gated passive HTTP header and cookie audits
+- Normalization of OWASP ZAP, Prowler JSON-OCSF, and generic SARIF 2.1 reports
 
 Dependency scanning sends only package names, ecosystems, and pinned versions to OSV.dev; source code is never uploaded. Successful query and public advisory responses are cached for six hours in the operating system's temporary directory using hashed package identities. The cache never contains repository paths or source, and `VULCANARY_CACHE_DIR` can select a different location. Use `--offline` to disable advisory queries.
 
@@ -186,7 +196,13 @@ Export the same inventory as SPDX 2.3 JSON when downstream tooling expects SPDX:
 vulcanary . --spdx vulcanary.spdx.json
 ```
 
-The local dashboard provides **Download SBOM** and **Download SPDX** for every watched repository. Supply-chain documents contain package identities, versions, package-manager and direct/transitive properties, advisory relationships, and Vulcanary context. They exclude source content, absolute repository paths, credentials, and raw command output. The bundled GitHub Actions workflow uploads both formats with the normalized JSON and SARIF reports.
+Export observed dependency vulnerabilities as OpenVEX without claiming that missing static reachability proves safety:
+
+```powershell
+vulcanary . --openvex vulcanary.openvex.json
+```
+
+The local dashboard provides **Download SBOM**, **Download SPDX**, and **Download VEX** for every watched repository. Supply-chain documents contain package identities, versions, package-manager and direct/transitive properties, advisory relationships, and Vulcanary context. OpenVEX statements mark versions Vulcanary actually observed as `affected`; Vulcanary never manufactures `not_affected` status from absent static imports. These exports exclude source content, absolute repository paths, credentials, and raw command output. The bundled GitHub Actions workflow uploads all three formats with the normalized JSON and SARIF reports.
 
 The dashboard keeps a local dependency-inventory baseline in `~/.vulcanary/dashboard-history.json`. Every subsequent scan reports exact components added and removed since the previous successful scan, including version changes as one removal plus one addition. Use **Inventory changes** on a repository card to review the delta. This history stays on the local machine and is not included in GitHub artifacts or the public Vulcanary repository.
 
@@ -202,20 +218,31 @@ vulcanary . --baseline-json base-vulcanary.json --github-annotations --sarif vul
 
 Malformed or incomplete baseline reports fail closed. The workflow uploads SARIF to GitHub code scanning when its token has `security-events: write`; uploads are skipped for untrusted fork pull requests while local annotations and policy enforcement still run.
 
+### Dependency admission and blocked merges
+
+`dependency-review` compares two checkouts using their committed lockfiles. It never installs or imports a proposed package. Only newly introduced locked package identities are evaluated, so existing debt does not permanently block unrelated pull requests:
+
+```powershell
+vulcanary dependency-review . --base path\to\trusted-base --github-annotations --json dependency-review.json
+```
+
+The `dependency_policy` configuration can deny exact package names and declared npm licenses, forbid dependencies with install-time lifecycle scripts, forbid Git/file/direct-URL sources, and require npm lockfile integrity digests. The policy is always loaded from the trusted base checkout, so a pull request cannot approve itself by weakening `.vulcanary.json`. Findings fail closed at high severity. The bundled pull-request workflow runs this gate before the ordinary code scan; making the Vulcanary job a required repository check blocks the merge. This is **dependency admission**, not an invisible replacement for `npm install` or `pip install`: Vulcanary does not hook package-manager processes or silently change a developer's machine.
+
 ## Import other scanners
 
 Vulcanary can normalize existing scanner output into the same local policy gate, JSON, SARIF, SBOM vulnerability data, and GitHub annotations. The external tools remain optional and run wherever you choose; Vulcanary only reads their JSON reports.
 
 ```powershell
 vulcanary . --semgrep-json semgrep.json --gitleaks-json gitleaks.json `
-  --trivy-json trivy.json --checkov-json checkov.json --sarif vulcanary.sarif
+  --trivy-json trivy.json --checkov-json checkov.json --zap-json zap.json `
+  --prowler-json prowler.ocsf.json --sarif-json other.sarif --sarif vulcanary.sarif
 ```
 
 Each option can be repeated. Imported paths are constrained to the scanned repository, malformed reports fail closed, and Gitleaks secret values are never retained in Vulcanary output.
 
 Container images are opt-in and report-driven: generate a Trivy image report separately and import it with `--trivy-image-json report.json`, or provide the report path in the dashboard scan form. Vulcanary normalizes the image package inventory and vulnerabilities under the `container` category. It never starts Docker, mounts the Docker socket, pulls an image, contacts a registry, or executes anything from the report.
 
-The local dashboard accepts optional report paths for all four external engines in the scan form. Imported findings retain their scanner identity and can be filtered by scanner, category, or severity. Report paths stay in memory for rescans and are not written to dashboard history.
+The local dashboard accepts optional report paths for Semgrep, Gitleaks, Trivy filesystem/images, Checkov, OWASP ZAP, Prowler JSON-OCSF, and generic SARIF 2.1 in the scan form. Imported findings retain their scanner identity and can be filtered by scanner, category, or severity. Report paths stay in memory for rescans and are not written to dashboard history.
 
 Other public repositories can call `.github/workflows/security-scan.yml` as a reusable workflow. Consumers should pin both the workflow reference and its required `vulcanary_ref` input to the same full Vulcanary commit SHA.
 
@@ -226,6 +253,23 @@ Every scan can export `--ruleset-manifest vulcanary-ruleset.json`. The canonical
 `--provenance vulcanary-provenance.json` creates an in-toto Statement v1 containing SHA-256 subjects for the generated JSON, SARIF, CycloneDX, SPDX, and ruleset artifacts. The statement explicitly marks itself unsigned; a trusted CI identity or key-backed signer must sign it externally before it should be treated as an attestation. Vulcanary never invents or stores signing keys.
 
 The bundled public-repository workflow follows that boundary by creating a separate, least-privilege attestation job only for pushes to `main`. It downloads the completed scan artifacts and uses GitHub's OIDC-backed `actions/attest` flow to create a keyless Sigstore attestation. Pull-request code never runs in the job holding `id-token` or `attestations` write permissions. Verify a downloaded report with `gh attestation verify <file> --repo OWNER/REPOSITORY`.
+
+## Passive web/API security
+
+Vulcanary can make one non-authenticated GET request to a web target and report HTTPS, HSTS, CSP, clickjacking, MIME-sniffing, referrer-policy, and cookie-attribute gaps:
+
+```powershell
+vulcanary web-audit https://staging.example.com `
+  --authorize-target staging.example.com --json web-audit.json
+```
+
+`--authorize-target` must exactly match the URL hostname. Embedded credentials and cross-host redirects are refused. This command does not crawl, fuzz, submit forms, authenticate, or exploit anything; it is a passive configuration audit, not a penetration test. For broader authorized testing, run free OWASP ZAP Baseline/API Scan separately and import its JSON with `--zap-json`. Active ZAP scanning intentionally remains outside Vulcanary's automatic workflows because it attacks the target and requires explicit scope and authorization.
+
+## Read-only cloud posture
+
+Vulcanary does not ask for or retain AWS, Azure, GCP, Kubernetes, Microsoft 365, or other cloud credentials. The free Prowler CLI can use an operator's existing read-only provider session and emit JSON-OCSF locally; import that file with `--prowler-json` or through the dashboard. Vulcanary retains the check, severity, provider, region, and resource identity while excluding raw cloud response data.
+
+This provides cloud-posture reporting and policy normalization—not agent-based runtime protection, workload isolation, attack-path analysis, or cloud remediation. Generic `--sarif-json` also creates a subscription-free boundary for compatible SAST, IaC, container, secret, malware, and supply-chain scanners without granting those tools dashboard access.
 
 ## Reviewed custom rules
 
@@ -273,6 +317,8 @@ Vulcanary consumes OSV rather than maintaining a private vulnerability database,
 The dashboard is a loopback-only local service, not an authenticated multi-user control plane. It rejects non-loopback bind addresses and Host headers, cross-site actions, non-JSON or non-object request bodies, and negative or oversized content lengths. JSON responses disable caching, MIME sniffing, and referrer propagation.
 
 Treat scanned repositories as hostile input. Production workers should run without cloud credentials, with a read-only checkout, CPU/memory/time limits, no Docker socket, and network disabled unless an adapter explicitly needs allow-listed advisory endpoints. Never execute build scripts merely to discover dependencies.
+
+The passive web audit is permitted only for a hostname the operator explicitly affirms they own or are authorized to test. Imported ZAP and Prowler files are treated as untrusted data. Vulcanary parses them without executing embedded content, excludes response bodies and secret values, and never launches ZAP, Prowler, Docker, or a cloud CLI on the user's behalf.
 
 ## Public repository
 

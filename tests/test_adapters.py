@@ -53,6 +53,30 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(findings[0].path, "external-report")
         self.assertEqual(findings[0].line, 9)
 
+    def test_zap_report_excludes_response_content(self) -> None:
+        findings = self.load("zap", {"site": [{"@host": "example.test", "alerts": [{
+            "pluginid": "10010", "alert": "Cookie missing HttpOnly", "riskcode": "2", "desc": "Cookie policy",
+            "solution": "Add HttpOnly", "instances": [{"uri": "https://example.test/account", "evidence": "secret-session"}],
+        }]}]})
+        self.assertEqual((findings[0].category, findings[0].scanner), ("dast", "zap"))
+        self.assertNotIn("secret-session", json.dumps(findings[0].to_dict()))
+
+    def test_generic_sarif_report_is_normalized(self) -> None:
+        findings = self.load("sarif", {"version": "2.1.0", "runs": [{
+            "tool": {"driver": {"name": "Demo Scanner", "rules": [{"id": "R1", "help": {"text": "Fix it"}}]}},
+            "results": [{"ruleId": "R1", "level": "error", "message": {"text": "Unsafe setting"}, "locations": [{"physicalLocation": {"artifactLocation": {"uri": "infra.tf"}, "region": {"startLine": 8}}}]}],
+        }]})
+        self.assertEqual((findings[0].scanner, findings[0].line, findings[0].severity), ("demo-scanner", 8, Severity.HIGH))
+
+    def test_prowler_ocsf_skips_passes_and_normalizes_failures(self) -> None:
+        findings = self.load("prowler", [{"status": "PASS"}, {
+            "status": "FAIL", "severity": "high", "finding_info": {"uid": "aws_s3_public", "title": "Public bucket"},
+            "resources": [{"uid": "arn:demo", "name": "bucket", "region": "us-east-1"}],
+            "remediation": {"desc": "Disable public access"},
+        }])
+        self.assertEqual(len(findings), 1)
+        self.assertEqual((findings[0].category, findings[0].metadata["region"]), ("cloud", "us-east-1"))
+
     def test_malformed_report_fails_closed(self) -> None:
         with self.assertRaises(AdapterError):
             self.load("semgrep", {"unexpected": []})

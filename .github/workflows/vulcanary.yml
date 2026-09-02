@@ -77,12 +77,15 @@ jobs:
         run: |
           git worktree add --detach "$RUNNER_TEMP/vulcanary-base" "${{ github.event.pull_request.base.sha }}"
           vulcanary "$RUNNER_TEMP/vulcanary-base" --json "$RUNNER_TEMP/vulcanary-baseline.json" --no-fail
+      - name: Enforce dependency admission policy
+        if: github.event_name == 'pull_request'
+        run: vulcanary dependency-review . --base "$RUNNER_TEMP/vulcanary-base" --github-annotations --json vulcanary-dependency-review.json
       - name: Scan pull-request changes
         if: github.event_name == 'pull_request'
-        run: vulcanary . --semgrep-json "$RUNNER_TEMP/semgrep.json" --gitleaks-json "$RUNNER_TEMP/gitleaks.json" --trivy-json "$RUNNER_TEMP/trivy.json" --checkov-json "$RUNNER_TEMP/checkov.json" --baseline-json "$RUNNER_TEMP/vulcanary-baseline.json" --github-annotations --github-summary --sarif vulcanary.sarif --json vulcanary.json --sbom vulcanary.cdx.json --spdx vulcanary.spdx.json --ruleset-manifest vulcanary-ruleset.json --provenance vulcanary-provenance.json
+        run: vulcanary . --semgrep-json "$RUNNER_TEMP/semgrep.json" --gitleaks-json "$RUNNER_TEMP/gitleaks.json" --trivy-json "$RUNNER_TEMP/trivy.json" --checkov-json "$RUNNER_TEMP/checkov.json" --baseline-json "$RUNNER_TEMP/vulcanary-baseline.json" --github-annotations --github-summary --sarif vulcanary.sarif --json vulcanary.json --sbom vulcanary.cdx.json --spdx vulcanary.spdx.json --openvex vulcanary.openvex.json --ruleset-manifest vulcanary-ruleset.json --provenance vulcanary-provenance.json
       - name: Scan repository
         if: github.event_name != 'pull_request'
-        run: vulcanary . --semgrep-json "$RUNNER_TEMP/semgrep.json" --gitleaks-json "$RUNNER_TEMP/gitleaks.json" --trivy-json "$RUNNER_TEMP/trivy.json" --checkov-json "$RUNNER_TEMP/checkov.json" --github-summary --sarif vulcanary.sarif --json vulcanary.json --sbom vulcanary.cdx.json --spdx vulcanary.spdx.json --ruleset-manifest vulcanary-ruleset.json --provenance vulcanary-provenance.json
+        run: vulcanary . --semgrep-json "$RUNNER_TEMP/semgrep.json" --gitleaks-json "$RUNNER_TEMP/gitleaks.json" --trivy-json "$RUNNER_TEMP/trivy.json" --checkov-json "$RUNNER_TEMP/checkov.json" --github-summary --sarif vulcanary.sarif --json vulcanary.json --sbom vulcanary.cdx.json --spdx vulcanary.spdx.json --openvex vulcanary.openvex.json --ruleset-manifest vulcanary-ruleset.json --provenance vulcanary-provenance.json
       - name: Upload SARIF to GitHub code scanning
         if: ${{ always() && hashFiles('vulcanary.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         uses: github/codeql-action/upload-sarif@v4
@@ -99,8 +102,10 @@ jobs:
             vulcanary.sarif
             vulcanary.cdx.json
             vulcanary.spdx.json
+            vulcanary.openvex.json
             vulcanary-ruleset.json
             vulcanary-provenance.json
+            vulcanary-dependency-review.json
           if-no-files-found: warn
           retention-days: 14
 
