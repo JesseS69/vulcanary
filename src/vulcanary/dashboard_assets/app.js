@@ -505,6 +505,18 @@ async function refresh({rescan = false} = {}) {
 }
 
 $('#scan-toggle').addEventListener('click', () => $('#scan-form').classList.toggle('hidden'));
+$('#open-scan-form').addEventListener('click', () => { $('#scan-form').classList.remove('hidden'); $('#scan-form').scrollIntoView({behavior:'smooth'}); });
+$('#web-audit-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = $('#web-audit-submit'); button.disabled = true; button.textContent = 'Auditing…'; $('#web-audit-message').textContent = '';
+  try {
+    const body = await postJson('/api/web-audit', {url:$('#web-url').value.trim(), authorized_host:$('#web-authorized-host').value.trim()});
+    state = body.state; render();
+    const count = body.audit.findings.length;
+    $('#web-audit-message').textContent = `Completed one passive request to ${body.audit.host}: ${count} ${count === 1 ? 'finding' : 'findings'}.`;
+  } catch (error) { $('#web-audit-message').textContent = error.message; }
+  finally { button.disabled = false; button.textContent = 'Run authorized audit'; }
+});
 $('#monitor-toggle').addEventListener('click', async () => {
   const monitor = state.monitor || {};
   const body = await postJson('/api/monitor', {enabled:!monitor.enabled, interval_seconds:Number($('#monitor-interval').value)});

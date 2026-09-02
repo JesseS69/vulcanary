@@ -1,7 +1,16 @@
 import unittest
+import json
+import tempfile
+import threading
 from email.message import Message
+from http.server import ThreadingHTTPServer
+from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from unittest.mock import patch
 
+from vulcanary.dashboard import DashboardState, make_handler
+from vulcanary.models import Finding, Severity
 from vulcanary.webaudit import audit_web_target
 
 
@@ -19,6 +28,43 @@ class Opener:
 
 
 class WebAuditTests(unittest.TestCase):
+    def test_dashboard_adds_authorized_web_findings_to_the_queue(self) -> None:
+        finding = Finding("DAST-CSP", "CSP missing", "CSP missing", Severity.MEDIUM, "dast", "web-target/example.test", 1, scanner="vulcanary-web")
+        state = DashboardState()
+        with patch("vulcanary.dashboard.audit_web_target", return_value=[finding]):
+            audit = state.audit_web("https://example.test/health", "example.test")
+        snapshot = state.snapshot()
+        self.assertEqual(audit["request_count"], 1)
+        self.assertEqual(snapshot["web_audits"][0]["host"], "example.test")
+        self.assertEqual(snapshot["findings"][0]["repository"], "web:example.test")
+        self.assertFalse(snapshot["findings"][0]["metadata"]["fix_eligible"])
+
+    def test_dashboard_persists_web_results_without_response_content(self) -> None:
+        finding = Finding("DAST-CSP", "CSP missing", "CSP missing", Severity.MEDIUM, "dast", "web-target/example.test", 1, scanner="vulcanary-web")
+        with tempfile.TemporaryDirectory() as directory:
+            history = Path(directory) / "state.json"
+            state = DashboardState(history)
+            with patch("vulcanary.dashboard.audit_web_target", return_value=[finding]):
+                state.audit_web("https://example.test/", "example.test")
+            restored = DashboardState(history).snapshot()
+        self.assertEqual(restored["web_audits"][0]["request_count"], 1)
+        self.assertNotIn("response", json.dumps(restored["web_audits"]))
+
+    def test_dashboard_web_endpoint_enforces_exact_authorization(self) -> None:
+        state = DashboardState()
+        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(state))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        endpoint = f"http://127.0.0.1:{server.server_port}/api/web-audit"
+        try:
+            request = Request(endpoint, data=json.dumps({"url": "https://example.test", "authorized_host": "other.test"}).encode(), method="POST", headers={"Content-Type": "application/json"})
+            with self.assertRaises(HTTPError) as rejected:
+                urlopen(request, timeout=5)
+            self.assertEqual(rejected.exception.code, 400)
+            rejected.exception.close()
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=5)
+
     def test_requires_exact_authorized_hostname(self) -> None:
         with self.assertRaises(ValueError):
             audit_web_target("https://example.test", "other.test")

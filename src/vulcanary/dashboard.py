@@ -28,6 +28,7 @@ from .adapters import PARSERS, import_report
 from .source_fixes import apply_source_fix, preview_source_fix
 from .tickets import finding_ticket, ticket_csv, ticket_markdown
 from .vex import openvex_document
+from .webaudit import audit_web_target
 
 
 REMEDIATION_RECEIPT_FIELDS = (
@@ -105,6 +106,7 @@ class DashboardState:
         self.verified_fixes: dict[str, dict] = {}
         self.pending_source_fix: dict | None = None
         self.external_reports: dict[str, dict[str, list[Path]]] = {}
+        self.web_audits: dict[str, dict] = {}
         self.finding_first_seen: dict[str, str] = {}
         self.finding_snapshots: dict[str, dict[str, dict]] = {}
         self.resolved_findings: list[dict] = []
@@ -134,6 +136,8 @@ class DashboardState:
                 self.remediation_audit = list(remediation_audit)[-200:] if isinstance(remediation_audit, list) else []
                 verified = payload.get("verified_fixes", {})
                 self.verified_fixes = verified if isinstance(verified, dict) else {}
+                web_audits = payload.get("web_audits", {})
+                self.web_audits = web_audits if isinstance(web_audits, dict) else {}
                 first_seen = payload.get("finding_first_seen", {})
                 self.finding_first_seen = first_seen if isinstance(first_seen, dict) else {}
                 finding_snapshots = payload.get("finding_snapshots", {})
@@ -157,6 +161,7 @@ class DashboardState:
                 self.finding_snapshots = {}
                 self.resolved_findings = []
                 self.monitor_events = []
+                self.web_audits = {}
 
     def _persist_history(self) -> None:
         """Replace the local state file atomically so an interrupted write cannot truncate it."""
@@ -177,6 +182,7 @@ class DashboardState:
                 "monitor_events": self.monitor_events,
                 "monitor": {"enabled": self.monitor_enabled, "interval_seconds": self.monitor_interval_seconds},
                 "verified_fixes": self.verified_fixes,
+                "web_audits": self.web_audits,
             }, indent=2) + "\n", encoding="utf-8")
             temporary.replace(self.history_path)
         except OSError:
@@ -390,7 +396,12 @@ class DashboardState:
     def snapshot(self) -> dict:
         with self._lock:
             scans = [item.to_dict() for item in self.repositories.values()]
+            web_audits = list(self.web_audits.values())
         findings = [dict(finding, repository=repo["name"], repository_path=repo["repository"]) for repo in scans for finding in repo["findings"]]
+        findings.extend(
+            dict(finding, repository=audit["name"], repository_path=audit["url"])
+            for audit in web_audits for finding in audit["findings"]
+        )
         for finding in findings:
             verified = self.verified_fixes.get(finding["fingerprint"])
             if verified:
@@ -407,6 +418,7 @@ class DashboardState:
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "repositories": scans,
+            "web_audits": web_audits,
             "findings": findings,
             "history": list(reversed(self.history)),
             "suppression_audit": list(reversed(self.suppression_audit)),
@@ -420,6 +432,23 @@ class DashboardState:
             },
             "summary": {"total": len(findings), "counts": counts, "categories": categories, "scanners": scanners, "ruleset": {"digest": ruleset_manifest()["digest"], "rule_count": len(ruleset_manifest()["rules"])}},
         }
+
+    def audit_web(self, url: str, authorized_host: str) -> dict:
+        """Run one explicitly authorized passive request and retain only normalized findings."""
+        if not isinstance(url, str) or not isinstance(authorized_host, str):
+            raise ValueError("url and authorized_host must be strings")
+        target = url.strip()
+        findings = audit_web_target(target, authorized_host.strip())
+        parsed = urlparse(target)
+        audit = {
+            "url": target, "host": parsed.hostname, "name": f"web:{parsed.hostname}",
+            "audited_at": datetime.now(timezone.utc).isoformat(), "mode": "passive", "request_count": 1,
+            "findings": [dict(item.to_dict(), metadata=dict(item.metadata, fix_eligible=False)) for item in findings],
+        }
+        with self._lock:
+            self.web_audits[target] = audit
+            self._persist_history()
+        return audit
 
     def register_platform_evaluation(self, repository: str, evaluation: dict) -> None:
         resolved = set(evaluation.get("resolved", []))
@@ -719,7 +748,7 @@ def make_handler(state: DashboardState):
                 self.send_error(HTTPStatus.BAD_REQUEST, "Dashboard Host header must be loopback")
                 return
             route = urlparse(self.path).path
-            if route not in {"/api/scan", "/api/rescan", "/api/monitor", "/api/repositories/remove", "/api/control/shutdown", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/source/preview", "/api/source/apply", "/api/parents/evaluate", "/api/overrides/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
+            if route not in {"/api/scan", "/api/web-audit", "/api/rescan", "/api/monitor", "/api/repositories/remove", "/api/control/shutdown", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/source/preview", "/api/source/apply", "/api/parents/evaluate", "/api/overrides/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
@@ -778,6 +807,9 @@ def make_handler(state: DashboardState):
                     from .local_app import save_watched_repositories
                     save_watched_repositories(list(state.repositories))
                     self._json({"scan": result.to_dict(), "state": state.snapshot()})
+                elif route == "/api/web-audit":
+                    audit = state.audit_web(payload.get("url"), payload.get("authorized_host"))
+                    self._json({"audit": audit, "state": state.snapshot()})
                 elif route == "/api/fixes/preview":
                     self._json({"plan": preview_fixes(state.snapshot()["findings"], payload.get("fingerprints", []))})
                 elif route == "/api/source/preview":
@@ -899,7 +931,7 @@ def make_handler(state: DashboardState):
                     state.record_remediation("committed", {**receipt, "commit": committed["commit"]})
                     state.pending_fix = None
                     self._json({"committed": committed})
-            except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+            except (ValueError, KeyError, TypeError, OSError, json.JSONDecodeError) as error:
                 self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
 
     return Handler

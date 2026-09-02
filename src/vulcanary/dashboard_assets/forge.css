@@ -219,3 +219,4 @@ tbody tr:hover { background: #e8ff5b08; }
   .split-grid { grid-template-columns: 1fr; }
   .heat-rule { margin-top: 0; }
 }
+.web-cloud-panel{margin-bottom:12px}.security-lanes{display:grid;grid-template-columns:1fr 1fr;gap:12px}.security-lane{background:#0e1115;border:1px solid var(--line);border-radius:10px;padding:18px}.security-lane h3{margin:0 0 8px}.security-lane>label{display:block;margin:14px 0 0;color:var(--muted);font-size:12px;font-weight:700}.security-lane>label input{display:block;width:100%;margin-top:6px}.security-lane button{margin-top:14px}.security-lane #web-audit-message{margin-top:10px}.lane-steps{color:var(--muted);padding-left:20px}.lane-steps li{margin:7px 0}.lane-steps strong{color:var(--text)}@media(max-width:1000px){.security-lanes{grid-template-columns:1fr}}

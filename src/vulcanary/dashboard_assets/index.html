@@ -19,6 +19,7 @@
       <a class="active" href="#overview">The Forge</a>
       <a href="#findings">Remediation <span id="nav-count" class="nav-count">0</span></a>
       <a href="#repositories">Repository Watch</a>
+      <a href="#web-cloud">Web &amp; Cloud</a>
       <a href="#ledger">Forge Ledger</a>
       <a href="#governance">Risk Register <span id="governance-count" class="nav-count">0</span></a>
       <a href="#remediation-audit">Fix Receipts <span id="receipt-count" class="nav-count">0</span></a>
@@ -45,6 +46,25 @@
       <details><summary>Import free scanner reports</summary><div class="report-grid"><label>Semgrep JSON<input id="semgrep-report" type="text" placeholder="Optional report path"></label><label>Gitleaks JSON<input id="gitleaks-report" type="text" placeholder="Optional redacted report path"></label><label>Trivy filesystem JSON<input id="trivy-report" type="text" placeholder="Optional report path"></label><label>Trivy image JSON<input id="trivy-image-report" type="text" placeholder="Optional local image report path"></label><label>Checkov JSON<input id="checkov-report" type="text" placeholder="Optional report path"></label><label>OWASP ZAP JSON<input id="zap-report" type="text" placeholder="Authorized web/API scan report"></label><label>Prowler OCSF JSON<input id="prowler-report" type="text" placeholder="Read-only cloud posture report"></label><label>Generic SARIF 2.1<input id="sarif-report" type="text" placeholder="Any compatible scanner report"></label></div></details>
       <p id="scan-message" class="muted"></p>
     </form>
+
+    <section id="web-cloud" class="panel web-cloud-panel">
+      <div class="panel-head"><div><p class="eyebrow">PERMISSION-GATED COVERAGE</p><h2>Web &amp; cloud security</h2></div><span class="pill">Local control</span></div>
+      <div class="security-lanes">
+        <form id="web-audit-form" class="security-lane">
+          <p class="eyebrow">PASSIVE WEB AUDIT</p><h3>Inspect one endpoint</h3>
+          <p class="muted">Makes exactly one GET request and checks transport, security headers, and cookie flags. Cross-host redirects and embedded credentials are refused.</p>
+          <label for="web-url">Target URL<input id="web-url" type="url" placeholder="https://app.example.com/" required></label>
+          <label for="web-authorized-host">Type the exact hostname to confirm authorization<input id="web-authorized-host" type="text" placeholder="app.example.com" required></label>
+          <button id="web-audit-submit" class="primary" type="submit">Run authorized audit</button><p id="web-audit-message" class="muted"></p>
+        </form>
+        <div class="security-lane">
+          <p class="eyebrow">CLOUD POSTURE</p><h3>Bring your own read-only report</h3>
+          <p class="muted">Run Prowler with read-only cloud credentials, save its JSON-OCSF report locally, then attach that path while adding the corresponding repository. Vulcanary normalizes findings; cloud credentials never enter this dashboard.</p>
+          <ol class="lane-steps"><li>Run Prowler in your own cloud environment.</li><li>Export JSON-OCSF to a local file.</li><li>Use <strong>Watch repository → Import free scanner reports → Prowler OCSF JSON</strong>.</li></ol>
+          <button id="open-scan-form" class="secondary" type="button">Open report import</button>
+        </div>
+      </div>
+    </section>
 
     <section id="overview" class="metric-grid" aria-label="Security summary">
       <article class="metric hero-metric"><p>Open exposure</p><strong id="total">0</strong><span id="risk-label">Forge clear</span></article>

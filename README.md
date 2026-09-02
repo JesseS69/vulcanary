@@ -59,7 +59,7 @@ vulcanary dashboard `
   --repository C:\path\to\zirze-native
 ```
 
-The dashboard runs only on `127.0.0.1` by default. It provides repository summaries, live threat temperature, searchable findings, dependency inventory changes, a local scan ledger with per-repository finding deltas, governed exceptions, and guarded remediation. Scanned source and findings remain on the local machine.
+The dashboard runs only on `127.0.0.1` by default. It provides repository summaries, live threat temperature, searchable findings, dependency inventory changes, a local scan ledger with per-repository finding deltas, governed exceptions, and guarded remediation. Its **Web & cloud security** panel can run the native one-request passive web audit only after the operator types the exact authorized hostname, and explains how to import a locally generated, read-only Prowler JSON-OCSF report without giving Vulcanary cloud credentials. Normalized web findings survive local dashboard restarts; response bodies are never stored. Scanned source and findings remain on the local machine.
 
 Continuous watch rescans every five minutes by default. The dashboard can pause or resume it, change the interval from one minute to 24 hours, or trigger an immediate cycle. Only new, reopened, and severity-increased findings create monitor alerts; the first scan is a quiet baseline. Alerts retain a source-free finding identity, repository-relative path, timestamp, and Git commit when available. The browser polls local state for status updates, while all scanning remains inside the loopback process. Start paused with `--monitor-interval 0`, or choose a 30–86400 second interval on the command line.
 
