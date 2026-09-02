@@ -1024,7 +1024,9 @@ def serve(host: str, port: int, repositories: list[Path], open_browser: bool = T
         try:
             if repositories:
                 from .local_app import save_watched_repositories
-                save_watched_repositories(list(state.repositories))
+                # Preserve the user's intended watch list even when a transient scanner
+                # failure prevents one repository from entering the in-memory snapshot.
+                save_watched_repositories([str(repository) for repository in repositories])
         except (OSError, ValueError) as error:
             with state._lock:
                 state.startup_errors.append({"repository": "configuration", "error": str(error)})

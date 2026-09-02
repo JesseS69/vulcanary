@@ -64,11 +64,12 @@ class ScannerTests(unittest.TestCase):
                 def server_close(self): pass
             def fail_scan(_self, _path): raise OSError("unavailable")
             def start_monitor(state): captured["state"] = state; finished.set()
-            with patch("vulcanary.dashboard.ThreadingHTTPServer", Server), patch.object(DashboardState, "scan_repository", fail_scan), patch.object(DashboardState, "start_monitor", start_monitor), patch.object(DashboardState, "stop_monitor"):
+            with patch("vulcanary.dashboard.ThreadingHTTPServer", Server), patch.object(DashboardState, "scan_repository", fail_scan), patch.object(DashboardState, "start_monitor", start_monitor), patch.object(DashboardState, "stop_monitor"), patch("vulcanary.local_app.save_watched_repositories") as save_repositories:
                 self.assertEqual(serve("127.0.0.1", 8765, [root], open_browser=False), 0)
             state = captured["state"]
             self.assertEqual(state.startup_completed, 1)
             self.assertEqual(state.startup_errors[0]["repository"], root.name)
+            save_repositories.assert_called_once_with([str(root)])
 
     def test_ruleset_manifest_is_canonical_and_complete(self) -> None:
         first = ruleset_manifest()
