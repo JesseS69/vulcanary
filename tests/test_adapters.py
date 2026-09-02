@@ -9,6 +9,13 @@ from vulcanary.models import Severity
 
 
 class AdapterTests(unittest.TestCase):
+    def test_public_example_reports_remain_importable(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        examples = root / "examples" / "reports"
+        self.assertEqual(len(import_report("zap", examples / "zap.json", root)), 1)
+        self.assertEqual(len(import_report("prowler", examples / "prowler-ocsf.json", root)), 1)
+        self.assertEqual(len(import_report("sarif", examples / "generic.sarif", root)), 1)
+
     def load(self, scanner: str, document: object):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -171,6 +171,16 @@ def iter_files(root: Path, config: Config) -> Iterable[Path]:
             yield path
 
 
+_STATIC_JS_STRING = re.compile(r'^\s*(?:"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|`(?:\\.|[^`\\])*`)\s*;?\s*(?://.*)?$')
+
+
+def _is_static_inner_html_assignment(text: str, match_end: int) -> bool:
+    """Treat a single literal with no template interpolation as data, not an XSS flow."""
+    line_end = text.find("\n", match_end)
+    expression = text[match_end: line_end if line_end >= 0 else len(text)]
+    return "${" not in expression and _STATIC_JS_STRING.fullmatch(expression) is not None
+
+
 def scan(root: Path, config: Config) -> list[Finding]:
     findings: list[Finding] = []
     for path in iter_files(root, config):
@@ -208,6 +218,8 @@ def scan(root: Path, config: Config) -> list[Finding]:
             if rule.id.startswith("CI-GHA-") and not (path.suffix.lower() in {".yml", ".yaml"} and ".github/workflows/" in f"/{rel}"):
                 continue
             for match in rule.pattern.finditer(text):
+                if rule.id == "CODE-JS-INNERHTML" and _is_static_inner_html_assignment(text, match.end()):
+                    continue
                 line = text.count("\n", 0, match.start()) + 1
                 candidates = [annotations[number] for number in (line - 1, line) if number in annotations]
                 if any(record.rule_id == rule.id and record.status in {"active", "expiring"} for record in candidates):

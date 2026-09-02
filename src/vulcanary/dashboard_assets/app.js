@@ -21,6 +21,8 @@ function render() {
   const ruleset = state.summary.ruleset;
   $('#ruleset-info').textContent = ruleset ? `${ruleset.rule_count} rules · ${ruleset.digest.slice(0, 10)}` : 'Ruleset unavailable';
   renderChart(counts);
+  renderOnboarding();
+  renderWebAudits();
   renderRepositories();
   renderLedger();
   renderGovernance();
@@ -29,6 +31,39 @@ function render() {
   renderMonitor();
   renderFilterOptions();
   renderFindings();
+}
+
+function renderOnboarding() {
+  const panel = $('#onboarding');
+  const onboarding = state.onboarding || {complete:true, candidate_repositories:[]};
+  panel.classList.toggle('hidden', onboarding.complete);
+  const target = $('#onboarding-candidates');
+  target.replaceChildren();
+  for (const repository of onboarding.candidate_repositories || []) {
+    const row = document.createElement('div'); row.className = 'candidate-item';
+    const path = document.createElement('code'); path.textContent = repository;
+    const button = document.createElement('button'); button.className = 'secondary'; button.type = 'button'; button.textContent = 'Use this repository';
+    button.addEventListener('click', () => { $('#repository').value = repository; $('#scan-form').classList.remove('hidden'); $('#scan-form').scrollIntoView({behavior:'smooth'}); });
+    row.append(path, button); target.append(row);
+  }
+  if (!onboarding.candidate_repositories?.length) target.textContent = 'No discovery has run yet. You can also enter a path manually.';
+}
+
+function renderWebAudits() {
+  const audits = state.web_audits || [];
+  $('#web-audit-count').textContent = `${audits.length} target${audits.length === 1 ? '' : 's'}`;
+  const target = $('#web-audit-history'); target.replaceChildren();
+  for (const audit of audits) {
+    const row = document.createElement('div'); row.className = 'audit-item';
+    const details = document.createElement('span'); details.textContent = `${audit.host} · ${audit.findings.length} findings · ${new Date(audit.audited_at).toLocaleString()}`;
+    const actions = document.createElement('div'); actions.className = 'audit-actions';
+    const rerun = document.createElement('button'); rerun.className = 'secondary'; rerun.type = 'button'; rerun.textContent = 'Rerun';
+    rerun.addEventListener('click', () => { $('#web-url').value = audit.url; $('#web-authorized-host').value = ''; $('#web-authorized-host').focus(); $('#web-audit-message').textContent = 'Retype the exact hostname to authorize a new request.'; });
+    const remove = document.createElement('button'); remove.className = 'secondary'; remove.type = 'button'; remove.textContent = 'Remove';
+    remove.addEventListener('click', async () => { const body = await postJson('/api/web-audits/remove', {url:audit.url}); state = body.state; render(); });
+    actions.append(rerun, remove); row.append(details, actions); target.append(row);
+  }
+  if (!audits.length) target.textContent = 'No web targets audited yet.';
 }
 
 function renderMonitor() {
@@ -505,6 +540,8 @@ async function refresh({rescan = false} = {}) {
 }
 
 $('#scan-toggle').addEventListener('click', () => $('#scan-form').classList.toggle('hidden'));
+$('#onboarding-discover').addEventListener('click', async () => { const body = await postJson('/api/discover', {}); state = body.state; render(); });
+$('#onboarding-manual').addEventListener('click', () => { $('#scan-form').classList.remove('hidden'); $('#repository').focus(); });
 $('#open-scan-form').addEventListener('click', () => { $('#scan-form').classList.remove('hidden'); $('#scan-form').scrollIntoView({behavior:'smooth'}); });
 $('#web-audit-form').addEventListener('submit', async event => {
   event.preventDefault();

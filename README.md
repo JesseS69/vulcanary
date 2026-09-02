@@ -36,6 +36,8 @@ vulcanary stop
 
 `start` restores the watched repositories and monitoring interval, launches in the background, and opens the dashboard. The control token used by `stop` is generated locally, stored in the user-local application configuration with restrictive permissions where the operating system supports them, passed to the child process through its environment rather than command-line arguments, and accepted only by the loopback shutdown endpoint.
 
+Windows releases also include `uninstall-windows.ps1`. It stops the local service and removes the Python package while preserving `~/.vulcanary` by default. Run it with `-PurgeLocalData` only when you intentionally want to delete configuration, scan history, receipts, and audit records.
+
 Run `vulcanary update-check` when you want to query the official GitHub release endpoint. It reports availability and never downloads or installs an update automatically.
 
 For a one-time command-line scan, run `vulcanary path\to\repository --json findings.json --sarif findings.sarif`.
@@ -60,6 +62,8 @@ vulcanary dashboard `
 ```
 
 The dashboard runs only on `127.0.0.1` by default. It provides repository summaries, live threat temperature, searchable findings, dependency inventory changes, a local scan ledger with per-repository finding deltas, governed exceptions, and guarded remediation. Its **Web & cloud security** panel can run the native one-request passive web audit only after the operator types the exact authorized hostname, and explains how to import a locally generated, read-only Prowler JSON-OCSF report without giving Vulcanary cloud credentials. Normalized web findings survive local dashboard restarts; response bodies are never stored. Scanned source and findings remain on the local machine.
+
+On first run, **Find nearby repositories** looks for Git directory markers and offers them as setup candidates. Discovery runs only after that click, reads directory names only, stops at a bounded depth, ignores common generated/private application folders, and never scans a candidate until the operator selects it. Web-audit history includes **Rerun** and **Remove** controls; rerun deliberately clears the authorization field so every new network request requires the hostname to be typed again.
 
 Continuous watch rescans every five minutes by default. The dashboard can pause or resume it, change the interval from one minute to 24 hours, or trigger an immediate cycle. Only new, reopened, and severity-increased findings create monitor alerts; the first scan is a quiet baseline. Alerts retain a source-free finding identity, repository-relative path, timestamp, and Git commit when available. The browser polls local state for status updates, while all scanning remains inside the loopback process. Start paused with `--monitor-interval 0`, or choose a 30–86400 second interval on the command line.
 
@@ -243,6 +247,12 @@ Each option can be repeated. Imported paths are constrained to the scanned repos
 Container images are opt-in and report-driven: generate a Trivy image report separately and import it with `--trivy-image-json report.json`, or provide the report path in the dashboard scan form. Vulcanary normalizes the image package inventory and vulnerabilities under the `container` category. It never starts Docker, mounts the Docker socket, pulls an image, contacts a registry, or executes anything from the report.
 
 The local dashboard accepts optional report paths for Semgrep, Gitleaks, Trivy filesystem/images, Checkov, OWASP ZAP, Prowler JSON-OCSF, and generic SARIF 2.1 in the scan form. Imported findings retain their scanner identity and can be filtered by scanner, category, or severity. Report paths stay in memory for rescans and are not written to dashboard history.
+
+Safe synthetic examples live in `examples/reports/` for ZAP, Prowler JSON-OCSF, and SARIF. They contain no real targets, cloud identifiers, secrets, or scan output and can be used to exercise the import UI against a disposable repository.
+
+### Make the pull-request gate enforceable
+
+After the workflow succeeds once, open the repository's **Settings → Rules → Rulesets**, create a branch ruleset targeting the default branch, enable **Require status checks to pass**, and select the Vulcanary `scan` check. Also require pull requests and block force pushes. GitHub controls these repository settings; committing a workflow alone cannot make its check mandatory. Keep an administrator recovery path and test the ruleset with a temporary failing pull request before relying on it.
 
 Other public repositories can call `.github/workflows/security-scan.yml` as a reusable workflow. Consumers should pin both the workflow reference and its required `vulcanary_ref` input to the same full Vulcanary commit SHA.
 

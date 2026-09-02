@@ -35,6 +35,13 @@
     </header>
     <div class="heat-rule" aria-hidden="true"><span></span></div>
 
+    <section id="onboarding" class="panel onboarding-panel hidden">
+      <p class="eyebrow">FIRST FIRING</p><h2>Start local protection</h2>
+      <p class="muted">Vulcanary found nearby Git repositories by directory name only. Nothing is uploaded, and a repository is not read until you choose to scan it.</p>
+      <div id="onboarding-candidates" class="candidate-list"></div>
+      <button id="onboarding-discover" class="primary" type="button">Find nearby repositories</button> <button id="onboarding-manual" class="secondary" type="button">Enter another path</button>
+    </section>
+
     <section class="monitor-strip" aria-label="Continuous monitoring controls">
       <div><span id="monitor-dot" class="status-dot"></span><strong id="monitor-status">Monitor loading</strong><span id="monitor-next" class="muted"></span></div>
       <div class="monitor-controls"><label for="monitor-interval">Every</label><select id="monitor-interval"><option value="60">1 minute</option><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="3600">1 hour</option><option value="21600">6 hours</option><option value="86400">24 hours</option></select><button id="desktop-alerts" class="secondary" type="button">Desktop alerts off</button><button id="monitor-toggle" class="secondary" type="button">Pause</button><button id="scan-now" class="primary" type="button">Scan now</button></div>
@@ -56,6 +63,7 @@
           <label for="web-url">Target URL<input id="web-url" type="url" placeholder="https://app.example.com/" required></label>
           <label for="web-authorized-host">Type the exact hostname to confirm authorization<input id="web-authorized-host" type="text" placeholder="app.example.com" required></label>
           <button id="web-audit-submit" class="primary" type="submit">Run authorized audit</button><p id="web-audit-message" class="muted"></p>
+          <div class="audit-history-head"><strong>Local audit history</strong><span id="web-audit-count" class="pill">0 targets</span></div><div id="web-audit-history" class="audit-history"></div>
         </form>
         <div class="security-lane">
           <p class="eyebrow">CLOUD POSTURE</p><h3>Bring your own read-only report</h3>

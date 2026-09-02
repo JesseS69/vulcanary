@@ -177,6 +177,14 @@ class ScannerTests(unittest.TestCase):
             (root / "main.js").write_text("element.innerHTML = input", encoding="utf-8")
             self.assertEqual(main([str(root)]), 0)
 
+    def test_static_innerhtml_literal_is_not_reported_as_user_controlled_xss(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "notice.js").write_text("notice.innerHTML = '<strong>Static notice</strong>';\n", encoding="utf-8")
+            (root / "dynamic.js").write_text("notice.innerHTML = `<strong>${message}</strong>`;\n", encoding="utf-8")
+            findings = scan(root, Config())
+        self.assertEqual([(item.rule_id, item.path) for item in findings], [("CODE-JS-INNERHTML", "dynamic.js")])
+
     def test_github_summary_is_source_free(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "repository"

@@ -1,0 +1,13 @@
+{
+  "site": [{
+    "@name": "https://demo.example",
+    "alerts": [{
+      "pluginid": "10020",
+      "name": "Missing Anti-clickjacking Header",
+      "riskcode": "2",
+      "desc": "A safe demonstration finding.",
+      "solution": "Set frame-ancestors in Content-Security-Policy.",
+      "instances": [{"uri": "https://demo.example/account", "method": "GET"}]
+    }]
+  }]
+}

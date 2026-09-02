@@ -1,0 +1,9 @@
+[
+  {
+    "status_code": "FAIL",
+    "severity": "Medium",
+    "finding_info": {"uid": "demo-s3-public", "title": "Demonstration public storage policy", "desc": "A synthetic cloud posture finding."},
+    "resources": [{"uid": "arn:aws:s3:::example-redacted", "name": "example-redacted", "type": "AWS::S3::Bucket"}],
+    "remediation": {"desc": "Block public access and review the bucket policy."}
+  }
+]

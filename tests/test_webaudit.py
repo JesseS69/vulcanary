@@ -9,7 +9,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from unittest.mock import patch
 
-from vulcanary.dashboard import DashboardState, make_handler
+from vulcanary.dashboard import DashboardState, discover_local_repositories, make_handler
 from vulcanary.models import Finding, Severity
 from vulcanary.webaudit import audit_web_target
 
@@ -49,6 +49,23 @@ class WebAuditTests(unittest.TestCase):
             restored = DashboardState(history).snapshot()
         self.assertEqual(restored["web_audits"][0]["request_count"], 1)
         self.assertNotIn("response", json.dumps(restored["web_audits"]))
+
+    def test_web_audit_history_can_be_removed_without_touching_repositories(self) -> None:
+        finding = Finding("DAST-CSP", "CSP missing", "CSP missing", Severity.MEDIUM, "dast", "web-target/example.test", 1)
+        state = DashboardState()
+        with patch("vulcanary.dashboard.audit_web_target", return_value=[finding]):
+            state.audit_web("https://example.test/", "example.test")
+        state.remove_web_audit("https://example.test/")
+        self.assertEqual(state.snapshot()["web_audits"], [])
+        with self.assertRaisesRegex(ValueError, "not in local history"):
+            state.remove_web_audit("https://example.test/")
+
+    def test_repository_discovery_reads_only_git_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); repository = root / "project"; (repository / ".git").mkdir(parents=True)
+            with patch("vulcanary.dashboard.Path.home", return_value=root):
+                found = discover_local_repositories()
+        self.assertEqual(found, [str(repository.resolve())])
 
     def test_dashboard_web_endpoint_enforces_exact_authorization(self) -> None:
         state = DashboardState()

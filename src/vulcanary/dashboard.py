@@ -90,6 +90,30 @@ class RepositoryScan:
         return asdict(self)
 
 
+def discover_local_repositories(limit: int = 30) -> list[str]:
+    """Find nearby Git repositories for first-run setup without reading their contents."""
+    roots = [Path.home(), Path.home() / "Documents"]
+    ignored = {".cache", ".config", ".local", ".vscode", "AppData", "node_modules", ".venv"}
+    discovered: list[str] = []
+    seen: set[str] = set()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for current, directories, _files in os.walk(root):
+            relative_depth = len(Path(current).relative_to(root).parts)
+            directories[:] = [name for name in directories if name not in ignored and not name.startswith(".")]
+            if (Path(current) / ".git").exists():
+                resolved = str(Path(current).resolve())
+                if resolved not in seen:
+                    discovered.append(resolved); seen.add(resolved)
+                directories[:] = []
+                if len(discovered) >= limit:
+                    return sorted(discovered, key=str.lower)
+            elif relative_depth >= 4:
+                directories[:] = []
+    return sorted(discovered, key=str.lower)
+
+
 class DashboardState:
     def __init__(self, history_path: Path | None = None) -> None:
         self._lock = threading.Lock()
@@ -107,6 +131,7 @@ class DashboardState:
         self.pending_source_fix: dict | None = None
         self.external_reports: dict[str, dict[str, list[Path]]] = {}
         self.web_audits: dict[str, dict] = {}
+        self.discovery_candidates: list[str] = []
         self.finding_first_seen: dict[str, str] = {}
         self.finding_snapshots: dict[str, dict[str, dict]] = {}
         self.resolved_findings: list[dict] = []
@@ -419,6 +444,7 @@ class DashboardState:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "repositories": scans,
             "web_audits": web_audits,
+            "onboarding": {"complete": bool(scans), "candidate_repositories": list(self.discovery_candidates)},
             "findings": findings,
             "history": list(reversed(self.history)),
             "suppression_audit": list(reversed(self.suppression_audit)),
@@ -449,6 +475,21 @@ class DashboardState:
             self.web_audits[target] = audit
             self._persist_history()
         return audit
+
+    def remove_web_audit(self, url: str) -> None:
+        if not isinstance(url, str):
+            raise ValueError("url must be a string")
+        with self._lock:
+            if url not in self.web_audits:
+                raise ValueError("Web audit is not in local history")
+            self.web_audits.pop(url)
+            self._persist_history()
+
+    def discover_candidates(self) -> list[str]:
+        candidates = discover_local_repositories()
+        with self._lock:
+            self.discovery_candidates = candidates
+        return candidates
 
     def register_platform_evaluation(self, repository: str, evaluation: dict) -> None:
         resolved = set(evaluation.get("resolved", []))
@@ -748,7 +789,7 @@ def make_handler(state: DashboardState):
                 self.send_error(HTTPStatus.BAD_REQUEST, "Dashboard Host header must be loopback")
                 return
             route = urlparse(self.path).path
-            if route not in {"/api/scan", "/api/web-audit", "/api/rescan", "/api/monitor", "/api/repositories/remove", "/api/control/shutdown", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/source/preview", "/api/source/apply", "/api/parents/evaluate", "/api/overrides/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
+            if route not in {"/api/scan", "/api/discover", "/api/web-audit", "/api/web-audits/remove", "/api/rescan", "/api/monitor", "/api/repositories/remove", "/api/control/shutdown", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/source/preview", "/api/source/apply", "/api/parents/evaluate", "/api/overrides/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
@@ -782,6 +823,9 @@ def make_handler(state: DashboardState):
                 elif route == "/api/rescan":
                     rescanned = state.rescan_all()
                     self._json({"scans": [result.to_dict() for result in rescanned], "state": state.snapshot()})
+                elif route == "/api/discover":
+                    state.discover_candidates()
+                    self._json({"state": state.snapshot()})
                 elif route == "/api/monitor":
                     state.configure_monitor(payload.get("enabled"), payload.get("interval_seconds"))
                     self._json({"state": state.snapshot()})
@@ -810,6 +854,9 @@ def make_handler(state: DashboardState):
                 elif route == "/api/web-audit":
                     audit = state.audit_web(payload.get("url"), payload.get("authorized_host"))
                     self._json({"audit": audit, "state": state.snapshot()})
+                elif route == "/api/web-audits/remove":
+                    state.remove_web_audit(payload.get("url"))
+                    self._json({"state": state.snapshot()})
                 elif route == "/api/fixes/preview":
                     self._json({"plan": preview_fixes(state.snapshot()["findings"], payload.get("fingerprints", []))})
                 elif route == "/api/source/preview":
