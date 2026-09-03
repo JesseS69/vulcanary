@@ -684,7 +684,7 @@ def _version_key(value: str, ecosystem: str) -> tuple:
     normalized = value.strip().lower()
     if ecosystem.lower() == "go":
         normalized = normalized.removeprefix("v")
-    release_text = re.split(r"[-+]|(?<=\d)(?:a(?:lpha)?|b(?:eta)?|rc|pre(?:view)?|dev)", normalized, maxsplit=1)[0]
+    release_text = re.split(r"(?:[-._+]|(?<=\d))(?:a(?:lpha)?|b(?:eta)?|rc|pre(?:view)?|dev|snapshot)", normalized, maxsplit=1)[0]
     release = tuple(int(part) for part in re.findall(r"\d+", release_text)[:8])
     suffix = normalized[len(re.match(r"[vV]?[0-9.]*", normalized).group(0)):] if re.match(r"[vV]?[0-9.]*", normalized) else normalized
     stage = 4
@@ -706,6 +706,10 @@ def _fixed_version(record: dict, package: Package) -> str | None:
             for event in version_range.get("events", []):
                 if event.get("fixed"):
                     candidates.append(event["fixed"])
+    if not candidates:
+        return None
+    current_key = _version_key(package.version, package.ecosystem)
+    candidates = [candidate for candidate in candidates if _version_key(candidate, package.ecosystem) > current_key]
     if not candidates:
         return None
     current_major = re.match(r"\D*(\d+)", package.version)
@@ -863,12 +867,12 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
             parent_packages, dependency_paths, parent_scopes = dependency_context(root, package, graph_cache) if package.manager == "npm" and not package.direct else ([], [], {})
             root_pnpm = package.manager == "pnpm" and package.path == "pnpm-lock.yaml"
             fix_eligible = bool(package.direct and same_major and (package.manager in {"npm", "pip"} or root_pnpm))
-            if package.manager not in {"npm", "pip", "pnpm"}:
+            if not fixed:
+                fix_block_reason = "The advisory does not identify a patched release newer than the installed version"
+            elif package.manager not in {"npm", "pip", "pnpm"}:
                 fix_block_reason = f"Vulcanary scans {package.manager} locks read-only; automatic upgrades are not enabled yet"
             elif package.manager == "pnpm" and not root_pnpm:
                 fix_block_reason = "Nested pnpm workspace upgrades require an explicit workspace target"
-            elif not fixed:
-                fix_block_reason = "The advisory does not identify a patched release yet"
             elif not same_major:
                 fix_block_reason = f"The fix requires a major upgrade to {fixed}"
             elif not package.direct:
@@ -880,7 +884,7 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
                 alias for advisory_id in advisory_ids
                 for alias in [advisory_id, *_record_aliases(records.get(advisory_id, {}))]
             })
-            remediation = f"Upgrade {package.name} to {fixed} or later." if fixed else f"Review {primary} and upgrade {package.name} to a non-affected release."
+            remediation = f"Upgrade {package.name} to {fixed} or later." if fixed else f"No patched release newer than {package.version} was identified; review {primary} before changing {package.name}."
             findings.append(Finding(
                 f"SCA-{primary}", record.get("summary") or f"Vulnerable dependency: {package.name}",
                 f"{package.name} {package.version} is affected by {primary} and its linked advisory records.", severity, "dependency",

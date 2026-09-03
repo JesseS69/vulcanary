@@ -1135,6 +1135,52 @@ class ScannerTests(unittest.TestCase):
             self.assertFalse(findings[0].metadata["fix_eligible"])
             self.assertIn("read-only", findings[0].metadata["fix_block_reason"])
 
+    def test_maven_parallel_patch_lines_never_recommend_a_downgrade(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "dependency-tree.json").write_text(json.dumps({
+                "groupId": "com.example", "artifactId": "app", "version": "1.0.0", "children": [
+                    {"groupId": "org.apache.logging.log4j", "artifactId": "log4j-core", "version": "2.14.1"},
+                ],
+            }), encoding="utf-8")
+            batch = {"results": [{"vulns": [{"id": "GHSA-jfh8-c2jp-5v3q"}]}]}
+            log4shell = {
+                "database_specific": {"severity": "CRITICAL"},
+                "affected": [{
+                    "package": {"name": "org.apache.logging.log4j:log4j-core"},
+                    "ranges": [{"events": [
+                        {"introduced": "0"}, {"fixed": "2.3.1"},
+                        {"introduced": "2.4.0"}, {"fixed": "2.12.2"},
+                        {"introduced": "2.13.0"}, {"fixed": "2.15.0"},
+                    ]}],
+                }],
+            }
+            with patch("vulcanary.dependencies._json_request", side_effect=[batch, log4shell]):
+                findings, warning = scan_dependencies(root, cache_dir=False)
+            self.assertIsNone(warning)
+            self.assertEqual(findings[0].metadata["fixed_version"], "2.15.0")
+            self.assertNotIn("2.12.2 or later", findings[0].remediation)
+
+    def test_fix_selection_returns_no_patch_when_all_candidates_are_older(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "dependency-tree.json").write_text(json.dumps({
+                "groupId": "com.example", "artifactId": "app", "version": "1.0.0", "children": [
+                    {"groupId": "org.example", "artifactId": "unsupported", "version": "3.0.0"},
+                ],
+            }), encoding="utf-8")
+            batch = {"results": [{"vulns": [{"id": "GHSA-no-newer-patch"}]}]}
+            record = {"database_specific": {"severity": "HIGH"}, "affected": [{
+                "package": {"name": "org.example:unsupported"},
+                "ranges": [{"events": [{"fixed": "1.9.9"}, {"fixed": "2.8.8"}]}],
+            }]}
+            with patch("vulcanary.dependencies._json_request", side_effect=[batch, record]):
+                findings, warning = scan_dependencies(root, cache_dir=False)
+            self.assertIsNone(warning)
+            self.assertIsNone(findings[0].metadata["fixed_version"])
+            self.assertIn("No patched release newer than 3.0.0", findings[0].remediation)
+            self.assertIn("newer than the installed version", findings[0].metadata["fix_block_reason"])
+
     def test_malformed_maven_tree_does_not_suppress_coverage_warning(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
