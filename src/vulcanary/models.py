@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 class Severity(IntEnum):
+    UNKNOWN = -1
     INFO = 0
     LOW = 1
     MEDIUM = 2

@@ -23,7 +23,7 @@ let sourceProposalFingerprint = null;
 let desktopAlerts = localStorage.getItem('vulcanary-desktop-alerts') === 'on';
 let lastAlertAt = localStorage.getItem('vulcanary-last-alert-at');
 
-const colors = {critical: '#ff4d6d', high: '#ff8359', medium: '#f8c15c', low: '#73b7ff', info: '#929aa5'};
+const colors = {critical: '#ff4d6d', high: '#ff8359', medium: '#f8c15c', low: '#73b7ff', info: '#929aa5', unknown: '#69717d'};
 const MIN_THREAT_SCALE = 10;
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
 
@@ -234,10 +234,10 @@ function renderResolvedFindings() {
 }
 
 function renderChart(counts) {
-  const normalized = Object.fromEntries(['critical','high','medium','low','info'].map(level => [level, Math.max(0, Number(counts[level]) || 0)]));
+  const normalized = Object.fromEntries(['critical','high','medium','low','info','unknown'].map(level => [level, Math.max(0, Number(counts[level]) || 0)]));
   const max = Math.max(MIN_THREAT_SCALE, ...Object.values(normalized));
   // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Severity names are fixed and all count values are normalized finite numbers.
-  $('#severity-chart').innerHTML = ['critical','high','medium','low','info'].map(level => `<div class="bar-row"><span>${level}</span><progress class="threat-progress ${level}" max="${max}" value="${normalized[level]}" aria-label="${level}: ${normalized[level]}"></progress><strong>${normalized[level]}</strong></div>`).join('');
+  $('#severity-chart').innerHTML = ['critical','high','medium','low','info','unknown'].map(level => `<div class="bar-row"><span>${level}</span><progress class="threat-progress ${level}" max="${max}" value="${normalized[level]}" aria-label="${level}: ${normalized[level]}"></progress><strong>${normalized[level]}</strong></div>`).join('');
 }
 
 function renderRepositories() {
@@ -332,7 +332,7 @@ function filteredFindings() {
   const scanner = $('#scanner-filter').value;
   const category = $('#category-filter').value;
   const sort = $('#sort-findings').value;
-  const severityRank = {critical:5,high:4,medium:3,low:2,info:1};
+  const severityRank = {critical:5,high:4,medium:3,low:2,info:1,unknown:0};
   const findings = state.findings.filter(f => (severity === 'all' || f.severity === severity) && (scanner === 'all' || f.scanner === scanner) && (category === 'all' || f.category === category) && `${f.title} ${f.rule_id} ${f.path} ${f.repository} ${f.scanner} ${f.category} ${f.metadata?.policy?.owner || ''}`.toLowerCase().includes(query));
   return findings.sort((left, right) => {
     if (sort === 'severity') return (severityRank[right.severity] || 0) - (severityRank[left.severity] || 0);
@@ -391,6 +391,7 @@ function priorityBadge(finding) {
 function deadlineBadge(finding) {
   const policy = finding.metadata?.policy;
   if (!policy) return '';
+  if (policy.status === 'unknown') return `<span class="priority unknown" title="Owner ${escapeHtml(policy.owner)} · no severity evidence or SLA">UNRATED</span>`;
   const label = policy.status === 'overdue' ? 'OVERDUE' : policy.status === 'due_soon' ? 'DUE SOON' : `DUE ${new Date(policy.deadline).toLocaleDateString()}`;
   return `<span class="priority ${escapeHtml(policy.status)}" title="Owner ${escapeHtml(policy.owner)} · ${escapeHtml(policy.sla_days)} day SLA">${escapeHtml(label)}</span>`;
 }
@@ -554,7 +555,7 @@ function openFinding(fingerprint) {
   $('#dialog-severity').textContent = f.severity;
   const priority = f.metadata?.priority;
   const policy = f.metadata?.policy;
-  const deadline = policy ? ` Owner: ${policy.owner}. Deadline: ${new Date(policy.deadline).toLocaleDateString()} (${policy.status.replaceAll('_', ' ')}).` : '';
+  const deadline = policy?.deadline ? ` Owner: ${policy.owner}. Deadline: ${new Date(policy.deadline).toLocaleDateString()} (${policy.status.replaceAll('_', ' ')}).` : policy ? ` Owner: ${policy.owner}. No SLA clock until the advisory publishes severity evidence.` : '';
   $('#dialog-priority').textContent = (priority ? `${priority.label} (${priority.score}/100). ${priority.reason}` : 'Not scored.') + deadline;
   $('#dialog-scanner').textContent = `${f.scanner} · ${f.category}`;
   const confidence = f.metadata?.confidence || (f.scanner === 'builtin' ? 'high — deterministic local pattern' : 'scanner-reported');

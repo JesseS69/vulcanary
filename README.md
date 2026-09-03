@@ -40,6 +40,8 @@ Every dashboard API endpoint containing findings, repository metadata, reports, 
 
 OSV advisory normalization ignores withdrawn records, derives qualitative severity from CVSS v3 and v4 Base vectors when OSV does not publish a textual rating, and records the score and vector with each finding. Fixed-version selection prefers the nearest compatible stable release so a prerelease is never recommended when a stable patched version is available.
 
+OSV records connected by aliases are emitted as one vulnerability rather than separate database findings. The merged record retains every contributing advisory ID and fixed-version candidate, uses CVSS or an explicit textual rating instead of inventing severity, and selects the newest compatible patched version when sources disagree. Advisories with no severity evidence are labeled `unknown`; they do not start an SLA clock or trip a severity gate. Existing fingerprints, first-seen history, and suppressions are migrated through recorded alias fingerprints.
+
 Back up or restore local service configuration without copying the control token, scan history, findings, receipts, command output, or source:
 
 ```powershell

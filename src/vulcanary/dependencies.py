@@ -348,6 +348,21 @@ def _cvss_scores(record: dict, package: Package | None = None) -> list[tuple[flo
     return scores
 
 
+def _textual_severity(record: dict, package: Package | None = None) -> Severity | None:
+    candidates = [record.get("database_specific", {}).get("severity")]
+    for affected in record.get("affected", []):
+        identity = affected.get("package", {}) if isinstance(affected, dict) else {}
+        if package and identity.get("name", "").lower() != package.name.lower():
+            continue
+        candidates.append(affected.get("ecosystem_specific", {}).get("severity"))
+        candidates.append(affected.get("database_specific", {}).get("severity"))
+    values = " ".join(str(item).upper() for item in candidates if item)
+    for name in ("CRITICAL", "HIGH", "MEDIUM", "MODERATE", "LOW"):
+        if name in values:
+            return Severity.MEDIUM if name == "MODERATE" else Severity[name]
+    return None
+
+
 def _severity(record: dict, package: Package | None = None) -> Severity:
     scores = _cvss_scores(record, package)
     if scores:
@@ -361,15 +376,68 @@ def _severity(record: dict, package: Package | None = None) -> Severity:
         if score <= 8.9:
             return Severity.HIGH
         return Severity.CRITICAL
-    candidates = [record.get("database_specific", {}).get("severity")]
-    for affected in record.get("affected", []):
-        candidates.append(affected.get("ecosystem_specific", {}).get("severity"))
-        candidates.append(affected.get("database_specific", {}).get("severity"))
-    values = " ".join(str(item).upper() for item in candidates if item)
-    for name in ("CRITICAL", "HIGH", "MEDIUM", "MODERATE", "LOW"):
-        if name in values:
-            return Severity.MEDIUM if name == "MODERATE" else Severity[name]
-    return Severity.HIGH
+    return _textual_severity(record, package) or Severity.UNKNOWN
+
+
+def _record_aliases(record: dict) -> list[str]:
+    aliases = record.get("aliases", [])
+    return [alias for alias in aliases if isinstance(alias, str)] if isinstance(aliases, list) else []
+
+
+def _advisory_groups(advisory_ids: set[str], records: dict[str, dict]) -> list[list[str]]:
+    """Return connected components across record IDs and their transitive aliases."""
+    groups: list[tuple[set[str], set[str]]] = []
+    for advisory_id in sorted(advisory_ids):
+        record = records.get(advisory_id, {})
+        tokens = {advisory_id, *_record_aliases(record)}
+        overlapping = [index for index, (_, known) in enumerate(groups) if known & tokens]
+        members = {advisory_id}
+        for index in reversed(overlapping):
+            prior_members, prior_tokens = groups.pop(index)
+            members.update(prior_members)
+            tokens.update(prior_tokens)
+        groups.append((members, tokens))
+    return sorted((sorted(members) for members, _ in groups), key=lambda members: members[0])
+
+
+def _group_assessment(advisory_ids: list[str], records: dict[str, dict], package: Package) -> tuple[str, Severity, float | None, str | None]:
+    scored = []
+    textual = []
+    for advisory_id in advisory_ids:
+        record = records.get(advisory_id, {})
+        scores = _cvss_scores(record, package)
+        if scores:
+            score, vector = max(scores)
+            scored.append((score, vector, advisory_id))
+        severity = _textual_severity(record, package)
+        if severity is not None:
+            textual.append((severity, advisory_id))
+    if scored:
+        score, vector, primary = max(scored, key=lambda item: (item[0], item[2]))
+        return primary, _severity(records[primary], package), score, vector
+    if textual:
+        severity, primary = max(textual, key=lambda item: (int(item[0]), item[1]))
+        return primary, severity, None, None
+    primary = min(advisory_ids)
+    return primary, Severity.UNKNOWN, None, None
+
+
+def _legacy_fingerprints(advisory_ids: list[str], primary: str, package: Package) -> list[str]:
+    evidence = f"{package.name}@{package.version}"
+    return [
+        hashlib.sha256(f"SCA-{advisory_id}\0{package.path}\01\0{evidence}".encode()).hexdigest()[:20]
+        for advisory_id in advisory_ids if advisory_id != primary
+    ]
+
+
+def _group_fixed_version(advisory_ids: list[str], records: dict[str, dict], package: Package) -> tuple[str | None, list[str]]:
+    candidates = sorted({
+        fixed for advisory_id in advisory_ids
+        if (fixed := _fixed_version(records.get(advisory_id, {}), package)) is not None
+    }, key=lambda value: _version_key(value, package.ecosystem))
+    compatible = [candidate for candidate in candidates if _same_major(package.version, candidate)]
+    pool = compatible or candidates
+    return (max(pool, key=lambda value: _version_key(value, package.ecosystem)) if pool else None), candidates
 
 
 def _is_stable_version(value: str, ecosystem: str) -> bool:
@@ -531,12 +599,15 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
         return [], f"OSV dependency scan unavailable: {error}"
     findings = []
     for package, result in zip(packages, normalized_results):
-        for summary in result.get("vulns", []):
-            record = records.get(summary["id"], {})
-            if record.get("withdrawn"):
-                continue
-            cvss_score, cvss_vector = max(_cvss_scores(record, package), default=(None, None))
-            fixed = _fixed_version(record, package)
+        active_ids = {
+            summary["id"] for summary in result.get("vulns", [])
+            if isinstance(summary, dict) and isinstance(summary.get("id"), str)
+            and not records.get(summary["id"], {}).get("withdrawn")
+        }
+        for advisory_ids in _advisory_groups(active_ids, records):
+            primary, severity, cvss_score, cvss_vector = _group_assessment(advisory_ids, records, package)
+            record = records.get(primary, {})
+            fixed, fixed_candidates = _group_fixed_version(advisory_ids, records, package)
             same_major = _same_major(package.version, fixed)
             parent_packages, dependency_paths, parent_scopes = dependency_context(root, package) if package.manager == "npm" and not package.direct else ([], [], {})
             root_pnpm = package.manager == "pnpm" and package.path == "pnpm-lock.yaml"
@@ -554,14 +625,19 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
                 fix_block_reason = f"Upgrade {candidates}; unscoped transitive overrides can break other dependency paths"
             else:
                 fix_block_reason = None
-            remediation = f"Upgrade {package.name} to {fixed} or later." if fixed else f"Review {summary['id']} and upgrade {package.name} to a non-affected release."
+            aliases = sorted({
+                alias for advisory_id in advisory_ids
+                for alias in [advisory_id, *_record_aliases(records.get(advisory_id, {}))]
+            })
+            remediation = f"Upgrade {package.name} to {fixed} or later." if fixed else f"Review {primary} and upgrade {package.name} to a non-affected release."
             findings.append(Finding(
-                f"SCA-{summary['id']}", record.get("summary") or f"Vulnerable dependency: {package.name}",
-                f"{package.name} {package.version} is affected by {summary['id']}.", _severity(record, package), "dependency",
+                f"SCA-{primary}", record.get("summary") or f"Vulnerable dependency: {package.name}",
+                f"{package.name} {package.version} is affected by {primary} and its linked advisory records.", severity, "dependency",
                 package.path, 1, f"{package.name}@{package.version}", remediation, "osv", {
                     "package": package.name,
                     "current_version": package.version,
                     "fixed_version": fixed,
+                    "fixed_version_candidates": fixed_candidates,
                     "ecosystem": package.ecosystem,
                     "manager": package.manager,
                     "direct": package.direct,
@@ -572,7 +648,11 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
                     "parent_scopes": parent_scopes,
                     "fix_strategy": "pip" if package.manager == "pip" else "dependency" if package.direct else "override",
                     "dependency_file": package.path,
-                    "advisory": summary["id"],
+                    "advisory": primary,
+                    "advisories": advisory_ids,
+                    "aliases": aliases,
+                    "legacy_fingerprints": _legacy_fingerprints(advisory_ids, primary, package),
+                    "severity_source": "cvss" if cvss_score is not None else "textual" if severity != Severity.UNKNOWN else "unknown",
                     "cvss": {"score": cvss_score, "vector": cvss_vector} if cvss_score is not None else None,
                 },
             ))

@@ -20,7 +20,7 @@ _TOOLING_PACKAGES = {
     "jest", "eslint", "typescript", "metro", "webpack", "vite", "rollup",
     "@expo/config", "@expo/config-plugins", "@expo/cli",
 }
-_SEVERITY_PRIORITY = {"critical": 90, "high": 70, "medium": 45, "low": 20, "info": 5}
+_SEVERITY_PRIORITY = {"critical": 90, "high": 70, "medium": 45, "low": 20, "info": 5, "unknown": 0}
 _DEPLOYMENT_FILES = {"vercel.json", "netlify.toml", "fly.toml", "render.yaml", "render.yml", "app.yaml", "serverless.yml", "serverless.yaml", "dockerfile", "containerfile"}
 _ROUTE_PATH = re.compile(r"(?:^|/)(?:api|routes?|pages/api|app/api|server|functions?)(?:/|$)", re.I)
 

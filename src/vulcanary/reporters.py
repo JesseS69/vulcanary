@@ -9,7 +9,7 @@ from .version import __version__
 
 
 def render_markdown_summary(findings: list[Finding], repository: str) -> str:
-    counts = {level: sum(finding.severity.name.lower() == level for finding in findings) for level in ("critical", "high", "medium", "low", "info")}
+    counts = {level: sum(finding.severity.name.lower() == level for finding in findings) for level in ("critical", "high", "medium", "low", "info", "unknown")}
     rows = "\n".join(f"| {level.title()} | {counts[level]} |" for level in counts)
     priority = sorted(findings, key=lambda item: (-int(item.severity), item.path, item.line))[:20]
     details = "\n".join(
@@ -53,7 +53,7 @@ def _github_property(value: str) -> str:
 
 
 def render_github_annotations(findings: list[Finding]) -> str:
-    levels = {"CRITICAL": "error", "HIGH": "error", "MEDIUM": "warning", "LOW": "notice", "INFO": "notice"}
+    levels = {"CRITICAL": "error", "HIGH": "error", "MEDIUM": "warning", "LOW": "notice", "INFO": "notice", "UNKNOWN": "notice"}
     lines = []
     for finding in findings:
         level = levels[finding.severity.name]
@@ -76,14 +76,14 @@ def write_json(findings: list[Finding], destination: Path, exceptions: list[dict
 def write_sarif(findings: list[Finding], destination: Path, policy: dict | None = None) -> None:
     rules = {}
     results = []
-    levels = {"info": "note", "low": "note", "medium": "warning", "high": "error", "critical": "error"}
+    levels = {"unknown": "note", "info": "note", "low": "note", "medium": "warning", "high": "error", "critical": "error"}
     for finding in findings:
         severity = finding.severity.name.lower()
         rules[finding.rule_id] = {
             "id": finding.rule_id,
             "shortDescription": {"text": finding.title},
             "help": {"text": finding.remediation},
-            "properties": {"security-severity": str(int(finding.severity) * 2.5)},
+            "properties": {"security-severity": str(max(0, int(finding.severity)) * 2.5)},
         }
         results.append({
             "ruleId": finding.rule_id,
@@ -105,6 +105,6 @@ def render_console(findings: list[Finding]) -> str:
     lines = []
     for f in findings:
         lines.append(f"{f.severity.name:<8} {f.rule_id:<24} {f.path}:{f.line}  {f.title}")
-    counts = {name: sum(f.severity.name == name for f in findings) for name in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO")}
+    counts = {name: sum(f.severity.name == name for f in findings) for name in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN")}
     summary = ", ".join(f"{value} {name.lower()}" for name, value in counts.items() if value)
     return "\n".join(lines) + f"\n\n{len(findings)} finding(s): {summary}"

@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote
 from uuid import uuid4
 
+from .dependencies import Package
+from .sbom import package_url
 from .version import __version__
 
 
@@ -13,9 +14,10 @@ def _purl(metadata: dict) -> str | None:
     name, version = str(metadata.get("package") or ""), str(metadata.get("current_version") or "")
     if not name or not version:
         return None
-    ecosystem = "npm" if str(metadata.get("ecosystem", "npm")).lower() == "npm" else "pypi"
-    encoded = "/".join(quote(part, safe="") for part in name.split("/"))
-    return f"pkg:{ecosystem}/{encoded}@{quote(version, safe='')}"
+    try:
+        return package_url(Package(name, version, str(metadata.get("ecosystem", "npm")), ""))
+    except ValueError:
+        return None
 
 
 def openvex_document(repository_name: str, findings: list[dict]) -> dict:

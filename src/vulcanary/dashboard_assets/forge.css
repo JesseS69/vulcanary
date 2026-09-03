@@ -178,6 +178,9 @@ tbody tr:hover { background: #e8ff5b08; }
 .threat-progress.low::-moz-progress-bar { background: var(--low); }
 .threat-progress.info::-webkit-progress-value { background: #929aa5; }
 .threat-progress.info::-moz-progress-bar { background: #929aa5; }
+.threat-progress.unknown::-webkit-progress-value { background: #69717d; }
+.threat-progress.unknown::-moz-progress-bar { background: #69717d; }
+.severity.unknown { background: #242930; color: #a6adb7; }
 .priority { display: inline-block; padding: 4px 7px; border: 1px solid #555; font-size: 10px; font-weight: 900; letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
 .priority.urgent { border-color: var(--critical); color: var(--critical); }
 .priority.high_priority { border-color: var(--high); color: var(--high); }
