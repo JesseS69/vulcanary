@@ -352,6 +352,8 @@ Composer inventory reads locked versions and runtime/development scope from `com
 
 Python inventory reads resolved default and development packages from `Pipfile.lock`, and accepts both exact `==` pins and arbitrary-equality `===` pins from `requirements*.txt`. Extras such as `celery[redis]` map to their base PyPI package. A range or bare requirement is a manifest constraint rather than an installed version, so Vulcanary does not guess or submit it to OSV: the repository receives an explicit scanner-health coverage warning until a lockfile or exact pin provides the resolved version.
 
+Repository scans compile their effective ruleset once, discover dependencies once for both OSV and inventory reporting, and build each npm dependency graph once for all vulnerable packages in that scan. Dependency-graph caches are scan-scoped rather than process-wide, so every rescan after a proposed fix reparses the current lockfile before producing reachability paths or remediation evidence.
+
 Exact Python pins in `requirements*.txt`, direct npm dependencies, and direct root-workspace pnpm dependencies can be upgraded locally when OSV identifies a same-major fix. pnpm uses `--lockfile-only --ignore-scripts`; every manager still requires an isolated branch, security rescan, configured project checks, and an explicit commit. Go, Cargo, Composer, Bundler, Yarn, nested pnpm workspaces, Poetry, uv, and PDM findings remain read-only until equivalent lockfile rollback and verification coverage is available.
 
 ## Security boundaries

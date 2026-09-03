@@ -328,7 +328,7 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
                     packages[(package.ecosystem, package.name, package.version, package.path)] = package
                 else:
                     unresolved.append(f"{relative_path(lock, root)}:{name}")
-    requirement = re.compile(r"^\s*([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?\s*(===|==|~=|!=|<=|>=|<|>)?\s*([^\s;#]+)?")
+    requirement = re.compile(r"^\s*([A-Za-z0-9_.-]+)\s*(?:\[[^\]]+\])?\s*(===|==|~=|!=|<=|>=|<|>)?\s*([^\s;#]+)?")
     for lock in _dependency_files(root, lambda name: name.startswith("requirements") and name.endswith(".txt")):
         try:
             lines = lock.read_text(encoding="utf-8").splitlines()
@@ -352,6 +352,11 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
 
 def discover_packages(root: Path) -> list[Package]:
     return _discover_packages(root)[0]
+
+
+def discover_dependency_state(root: Path) -> tuple[list[Package], list[str]]:
+    """Discover resolved packages and unresolved manifest entries in one tree walk."""
+    return _discover_packages(root)
 
 
 def _json_request(url: str, payload: dict | None = None, timeout: float = 10) -> dict:
@@ -609,40 +614,44 @@ def _resolve_lock_dependency(packages: dict, parent_key: str, dependency: str) -
     return None
 
 
-def dependency_context(root: Path, package: Package) -> tuple[list[str], list[list[str]], dict[str, str]]:
+def dependency_context(root: Path, package: Package, graph_cache: dict | None = None) -> tuple[list[str], list[list[str]], dict[str, str]]:
     lock = root / package.path
-    try:
-        data = json.loads(lock.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return [], [], {}
-    packages = data.get("packages", {})
-    if not isinstance(packages, dict):
-        return [], [], {}
-    root_package = packages.get("", {})
-    runtime_names = set(root_package.get("dependencies", {})) | set(root_package.get("optionalDependencies", {}))
-    development_names = set(root_package.get("devDependencies", {}))
-    direct_names = sorted(runtime_names | development_names)
-    graph: dict[str, list[str]] = {}
-    for key, value in packages.items():
-        if not isinstance(value, dict):
-            continue
-        dependencies = set(value.get("dependencies", {})) | set(value.get("optionalDependencies", {}))
-        graph[key] = [resolved for name in dependencies if (resolved := _resolve_lock_dependency(packages, key, name))]
-
-    def shortest_path(start: str) -> list[str] | None:
-        pending = [(start, [start])]
-        visited = set()
-        while pending:
-            key, path = pending.pop(0)
-            if key in visited:
+    cache = graph_cache if graph_cache is not None else {}
+    cache_key = str(lock.resolve())
+    prepared = cache.get(cache_key)
+    if prepared is None:
+        try:
+            data = json.loads(lock.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return [], [], {}
+        packages = data.get("packages", {})
+        if not isinstance(packages, dict):
+            return [], [], {}
+        root_package = packages.get("", {})
+        runtime_names = set(root_package.get("dependencies", {})) | set(root_package.get("optionalDependencies", {}))
+        development_names = set(root_package.get("devDependencies", {}))
+        graph: dict[str, list[str]] = {}
+        for key, value in packages.items():
+            if not isinstance(value, dict):
                 continue
-            visited.add(key)
-            value = packages.get(key, {})
-            name = key.rsplit("node_modules/", 1)[-1]
-            if name.lower() == package.name.lower() and value.get("version") == package.version:
-                return path
-            pending.extend((child, path + [child]) for child in graph.get(key, []))
-        return None
+            dependencies = set(value.get("dependencies", {})) | set(value.get("optionalDependencies", {}))
+            graph[key] = [resolved for name in dependencies if (resolved := _resolve_lock_dependency(packages, key, name))]
+        traversals = []
+        for name in sorted(runtime_names | development_names):
+            start = _resolve_lock_dependency(packages, "", name)
+            if not start:
+                continue
+            paths = {start: [start]}
+            pending = [start]
+            for key in pending:
+                for child in graph.get(key, []):
+                    if child not in paths:
+                        paths[child] = paths[key] + [child]
+                        pending.append(child)
+            traversals.append((name, "runtime" if name in runtime_names else "development", paths))
+        prepared = packages, traversals
+        cache[cache_key] = prepared
+    packages, traversals = prepared
 
     def label(key: str) -> str:
         value = packages.get(key, {})
@@ -653,13 +662,18 @@ def dependency_context(root: Path, package: Package) -> tuple[list[str], list[li
     parents = []
     paths = []
     scopes = {}
-    for name in direct_names:
-        key = _resolve_lock_dependency(packages, "", name)
-        path = shortest_path(key) if key else None
-        if path:
+    targets = {
+        key for key, value in packages.items() if isinstance(value, dict)
+        and key.rsplit("node_modules/", 1)[-1].lower() == package.name.lower()
+        and value.get("version") == package.version
+    }
+    for name, scope, reachable in traversals:
+        candidates = [reachable[target] for target in targets if target in reachable]
+        if candidates:
+            path = min(candidates, key=len)
             parents.append(name)
             paths.append([label(item) for item in path])
-            scopes[name] = "runtime" if name in runtime_names else "development"
+            scopes[name] = scope
     return parents, paths[:10], scopes
 
 
@@ -667,8 +681,8 @@ def direct_parent_packages(root: Path, package: Package) -> list[str]:
     return dependency_context(root, package)[0]
 
 
-def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | None = None) -> tuple[list[Finding], str | None]:
-    packages, unresolved = _discover_packages(root)
+def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | None = None, discovery: tuple[list[Package], list[str]] | None = None) -> tuple[list[Finding], str | None]:
+    packages, unresolved = discovery if discovery is not None else _discover_packages(root)
     coverage_warning = None
     if unresolved:
         locations = ", ".join(unresolved[:5])
@@ -707,6 +721,7 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
         unavailable = f"OSV dependency scan unavailable: {error}"
         return [], f"{coverage_warning}; {unavailable}" if coverage_warning else unavailable
     findings = []
+    graph_cache: dict = {}
     for package, result in zip(packages, normalized_results):
         active_ids = {
             summary["id"] for summary in result.get("vulns", [])
@@ -718,7 +733,7 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
             record = records.get(primary, {})
             fixed, fixed_candidates = _group_fixed_version(advisory_ids, records, package)
             same_major = _same_major(package.version, fixed)
-            parent_packages, dependency_paths, parent_scopes = dependency_context(root, package) if package.manager == "npm" and not package.direct else ([], [], {})
+            parent_packages, dependency_paths, parent_scopes = dependency_context(root, package, graph_cache) if package.manager == "npm" and not package.direct else ([], [], {})
             root_pnpm = package.manager == "pnpm" and package.path == "pnpm-lock.yaml"
             fix_eligible = bool(package.direct and same_major and (package.manager in {"npm", "pip"} or root_pnpm))
             if package.manager not in {"npm", "pip", "pnpm"}:

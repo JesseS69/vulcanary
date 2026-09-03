@@ -10,7 +10,7 @@ from pathlib import Path
 from .config import Config
 from .reporters import baseline_identities, findings_new_since, render_console, render_github_annotations, render_markdown_summary, write_json, write_sarif
 from .scanners import inline_suppression_register, is_excluded, ruleset_manifest, scan
-from .dependencies import discover_packages, scan_dependencies
+from .dependencies import discover_dependency_state, scan_dependencies
 from .reachability import analyze_reachability
 from .sbom import cyclonedx_document, spdx_document, write_cyclonedx, write_spdx
 from .governance import suppression_findings
@@ -248,8 +248,10 @@ def main(argv: list[str] | None = None) -> int:
     ]
     imported = list({finding.fingerprint: finding for finding in imported}.values())
     findings = findings + imported
+    dependency_state = discover_dependency_state(root) if not args.offline or args.sbom or args.spdx else ([], [])
+    packages, _unresolved = dependency_state
     if not args.offline:
-        dependency_findings, warning = scan_dependencies(root)
+        dependency_findings, warning = scan_dependencies(root, discovery=dependency_state)
         dependency_findings = [
             finding for finding in dependency_findings
             if not config.is_suppressed(finding.fingerprint)
@@ -273,9 +275,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.sarif:
         write_sarif(findings, args.sarif, report_policy)
     if args.sbom:
-        write_cyclonedx(cyclonedx_document(root.name, discover_packages(root), [finding.to_dict() for finding in findings]), args.sbom)
+        write_cyclonedx(cyclonedx_document(root.name, packages, [finding.to_dict() for finding in findings]), args.sbom)
     if args.spdx:
-        write_spdx(spdx_document(root.name, discover_packages(root), [finding.to_dict() for finding in findings]), args.spdx)
+        write_spdx(spdx_document(root.name, packages, [finding.to_dict() for finding in findings]), args.spdx)
     if args.openvex:
         write_openvex(openvex_document(root.name, [finding.to_dict() for finding in findings]), args.openvex)
     if args.ruleset_manifest:
