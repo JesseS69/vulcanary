@@ -338,7 +338,24 @@ class ScannerTests(unittest.TestCase):
                     self.assertEqual(refused.exception.code, 403, route)
                     refused.exception.close()
             state_url = f"http://127.0.0.1:{server.server_port}/api/state"
-            self.assertEqual(urlopen(state_url, timeout=5).status, 200)
+            for request in (state_url, Request(state_url, headers={"X-Vulcanary-Control": "wrong-token"})):
+                with self.assertRaises(HTTPError) as refused_state:
+                    urlopen(request, timeout=5)
+                self.assertEqual(refused_state.exception.code, 403)
+                refused_state.exception.close()
+            authorized = Request(state_url, headers={"X-Vulcanary-Control": state.control_token})
+            self.assertEqual(urlopen(authorized, timeout=5).status, 200)
+            ruleset_url = f"http://127.0.0.1:{server.server_port}/api/ruleset.json"
+            for request in (ruleset_url, Request(ruleset_url, headers={"X-Vulcanary-Control": "wrong-token"})):
+                with self.assertRaises(HTTPError) as protected_download:
+                    urlopen(request, timeout=5)
+                self.assertEqual(protected_download.exception.code, 403)
+                protected_download.exception.close()
+            ruleset = Request(ruleset_url, headers={"X-Vulcanary-Control": state.control_token})
+            self.assertEqual(urlopen(ruleset, timeout=5).status, 200)
+            health_url = f"http://127.0.0.1:{server.server_port}/api/health"
+            health = json.loads(urlopen(health_url, timeout=5).read())
+            self.assertEqual(health["status"], "ok")
         finally:
             server.shutdown()
             server.server_close()

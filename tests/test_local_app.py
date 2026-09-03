@@ -2,7 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from vulcanary.local_app import configure_app, export_app_config, import_app_config, load_app_config, save_watched_repositories, service_status, start_service
 
@@ -90,6 +90,14 @@ class LocalAppTests(unittest.TestCase):
             self.assertEqual(service_status(config), {
                 "running": False, "url": "http://127.0.0.1:8765", "repositories": 0,
             })
+
+    def test_status_authenticates_its_state_request(self) -> None:
+        config = {"host": "127.0.0.1", "port": 8765, "repositories": [], "monitor_interval": 300, "control_token": "x" * 43}
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"summary":{"total":2},"repositories":[{}],"monitor":{}}'
+        with patch("vulcanary.local_app.urlopen", return_value=response) as opened:
+            self.assertTrue(service_status(config)["running"])
+        self.assertEqual(opened.call_args.args[0].get_header("X-vulcanary-control"), config["control_token"])
 
 
 if __name__ == "__main__":
