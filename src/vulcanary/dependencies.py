@@ -223,6 +223,36 @@ def _composer_packages(lock: Path, root: Path) -> list[Package]:
     return found
 
 
+def _nuget_packages(lock: Path, root: Path) -> list[Package]:
+    """Read resolved NuGet packages without invoking restore or evaluating project files."""
+    try:
+        document = json.loads(lock.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    targets = document.get("dependencies", {})
+    if not isinstance(targets, dict):
+        return []
+    records: dict[tuple[str, str], Package] = {}
+    path = relative_path(lock, root)
+    for dependencies in targets.values():
+        if not isinstance(dependencies, dict):
+            continue
+        for name, record in dependencies.items():
+            if not isinstance(name, str) or not isinstance(record, dict):
+                continue
+            version, dependency_type = record.get("resolved"), str(record.get("type", "")).lower()
+            if not isinstance(version, str) or not version or dependency_type == "project":
+                continue
+            key = (name.lower(), version)
+            direct = dependency_type == "direct"
+            previous = records.get(key)
+            records[key] = Package(
+                previous.name if previous else name, version, "NuGet", path,
+                direct or bool(previous and previous.direct), "nuget",
+            )
+    return list(records.values())
+
+
 def _gem_packages(lock: Path, root: Path) -> list[Package]:
     lines = lock.read_text(encoding="utf-8").splitlines()
     section = None
@@ -304,6 +334,9 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
     for lock in _dependency_files(root, lambda name: name == "composer.lock"):
         for package in _composer_packages(lock, root):
             packages[(package.ecosystem, package.name, package.version, package.path)] = package
+    for lock in _dependency_files(root, lambda name: name == "packages.lock.json"):
+        for package in _nuget_packages(lock, root):
+            packages[(package.ecosystem, package.name.lower(), package.version, package.path)] = package
     for lock in _dependency_files(root, lambda name: name == "Gemfile.lock"):
         try:
             discovered = _gem_packages(lock, root)

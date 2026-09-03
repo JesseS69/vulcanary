@@ -12,7 +12,7 @@ from .version import __version__
 
 
 def package_url(package: Package) -> str:
-    package_type = {"npm": "npm", "pypi": "pypi", "go": "golang", "crates.io": "cargo", "packagist": "composer", "rubygems": "gem"}.get(package.ecosystem.lower())
+    package_type = {"npm": "npm", "pypi": "pypi", "go": "golang", "crates.io": "cargo", "packagist": "composer", "rubygems": "gem", "nuget": "nuget"}.get(package.ecosystem.lower())
     if package_type is None:
         raise ValueError(f"Unsupported package ecosystem: {package.ecosystem}")
     if package_type == "npm" and package.name.startswith("@") and "/" in package.name:

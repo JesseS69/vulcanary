@@ -4,10 +4,16 @@ import unittest
 from pathlib import Path
 
 from vulcanary.dependencies import Package
-from vulcanary.sbom import cyclonedx_document, spdx_document, write_cyclonedx
+from vulcanary.sbom import cyclonedx_document, package_url, spdx_document, write_cyclonedx
 
 
 class SbomTests(unittest.TestCase):
+    def test_nuget_packages_have_canonical_purls(self) -> None:
+        self.assertEqual(
+            package_url(Package("Newtonsoft.Json", "13.0.3", "NuGet", "packages.lock.json", True, "nuget")),
+            "pkg:nuget/Newtonsoft.Json@13.0.3",
+        )
+
     def test_generates_cyclonedx_inventory_and_advisory_relationships(self) -> None:
         packages = [
             Package("@scope/direct", "1.2.3", "npm", "private/package-lock.json", True, "npm"),

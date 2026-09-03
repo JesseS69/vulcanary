@@ -1,0 +1,14 @@
+[
+  {"name":"javascript object", "path":"src/config.js", "source":"export const config = {\"api_key\": \"s3cr3t_Qp9!zV2@Lm7#Nx4$Kd8\"};\n", "expected":true},
+  {"name":"typescript object", "path":"src/config.ts", "source":"export const config: Record<string, string> = {api_key: 's3cr3t_Qp9!zV2@Lm7#Nx4$Kd8'};\n", "expected":true},
+  {"name":"minified json", "path":"config.json", "source":"{\"service\":\"api\",\"access_token\":\"s3cr3t_Qp9!zV2@Lm7#Nx4$Kd8\"}\n", "expected":true},
+  {"name":"unquoted environment value", "path":"deploy.env", "source":"API_KEY=s3cr3t_Qp9zV2Lm7Nx4Kd8\n", "expected":true},
+  {"name":"embedded javascript example", "path":"src/help.js", "source":"const help = \"api_key = s3cr3t_Qp9!zV2@Lm7#Nx4$Kd8\";\n", "expected":false},
+  {"name":"embedded template literal example", "path":"src/help.ts", "source":"const help = `access_token: s3cr3t_Qp9!zV2@Lm7#Nx4$Kd8`;\n", "expected":false},
+  {"name":"environment reference", "path":"src/config.js", "source":"const config = {api_key: process.env.API_KEY};\n", "expected":false},
+  {"name":"placeholder", "path":"src/config.ts", "source":"const config = {api_key: \"replace_me_with_your_api_key\"};\n", "expected":false},
+  {"name":"url", "path":"src/client.ts", "source":"const client = {authorization: \"https://service.example/authorization\"};\n", "expected":false},
+  {"name":"hex digest", "path":"src/integrity.js", "source":"const integrity = {secret: \"0123456789abcdef0123456789abcdef\"};\n", "expected":false},
+  {"name":"dotted identifier", "path":"src/auth.ts", "source":"const password = credentialStore.find_user_password;\n", "expected":false},
+  {"name":"commented assignment", "path":"src/legacy.js", "source":"// api_key = s3cr3t_Qp9!zV2@Lm7#Nx4$Kd8\n", "expected":false}
+]
