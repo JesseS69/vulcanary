@@ -23,6 +23,7 @@ def _default_config() -> dict:
     return {
         "host": "127.0.0.1", "port": 8765, "monitor_interval": 300,
         "repositories": [], "control_token": secrets.token_urlsafe(32),
+        "history_secrets_enabled": False, "gitleaks_executable": None,
     }
 
 
@@ -49,6 +50,11 @@ def load_app_config() -> dict:
         raise ValueError("Invalid local app configuration: monitor interval must be 0 or 30-86400")
     if not isinstance(result.get("control_token"), str) or len(result["control_token"]) < 32:
         result["control_token"] = secrets.token_urlsafe(32)
+    if not isinstance(result.get("history_secrets_enabled"), bool):
+        raise ValueError("Invalid local app configuration: history_secrets_enabled must be a boolean")
+    executable = result.get("gitleaks_executable")
+    if executable is not None and (not isinstance(executable, str) or not Path(executable).is_absolute()):
+        raise ValueError("Invalid local app configuration: gitleaks_executable must be an absolute path")
     return result
 
 
@@ -76,6 +82,8 @@ def export_app_config(destination: Path) -> Path:
         "format": "vulcanary-config", "version": 1,
         "repositories": config["repositories"], "monitor_interval": config["monitor_interval"],
         "host": config["host"], "port": config["port"],
+        "history_secrets_enabled": config["history_secrets_enabled"],
+        "gitleaks_executable": config["gitleaks_executable"],
     }
     destination = destination.expanduser().resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -90,7 +98,7 @@ def import_app_config(source: Path) -> dict:
         document = json.loads(source.expanduser().read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError) as error:
         raise ValueError(f"Invalid configuration backup: {error}") from error
-    allowed = {"format", "version", "repositories", "monitor_interval", "host", "port"}
+    allowed = {"format", "version", "repositories", "monitor_interval", "host", "port", "history_secrets_enabled", "gitleaks_executable"}
     if not isinstance(document, dict) or set(document) - allowed or document.get("format") != "vulcanary-config" or document.get("version") != 1:
         raise ValueError("Invalid or unsupported Vulcanary configuration backup")
     repositories = document.get("repositories")
@@ -104,6 +112,13 @@ def import_app_config(source: Path) -> dict:
         raise ValueError("Configuration backup monitor interval must be 0 or 30-86400")
     if not isinstance(port, int) or not 1 <= port <= 65_535:
         raise ValueError("Configuration backup port must be between 1 and 65535")
+    history_enabled = document.get("history_secrets_enabled", False)
+    gitleaks_executable = document.get("gitleaks_executable")
+    if not isinstance(history_enabled, bool) or gitleaks_executable is not None and (not isinstance(gitleaks_executable, str) or not Path(gitleaks_executable).is_absolute()):
+        raise ValueError("Configuration backup history scanner settings are invalid")
+    if history_enabled:
+        from .history_secrets import validate_executable
+        gitleaks_executable = str(validate_executable(gitleaks_executable or ""))
     resolved = []
     for item in repositories:
         root = Path(item).expanduser().resolve()
@@ -114,12 +129,13 @@ def import_app_config(source: Path) -> dict:
     configured = current | {
         "repositories": list(dict.fromkeys(resolved)), "monitor_interval": interval,
         "host": document["host"], "port": port, "control_token": current["control_token"],
+        "history_secrets_enabled": history_enabled, "gitleaks_executable": gitleaks_executable,
     }
     save_app_config(configured)
     return configured
 
 
-def configure_app(repositories: list[Path], interval: int, port: int = 8765) -> dict:
+def configure_app(repositories: list[Path], interval: int, port: int = 8765, history_secrets_enabled: bool = False, gitleaks_executable: Path | None = None) -> dict:
     resolved = []
     for repository in repositories:
         root = repository.expanduser().resolve()
@@ -131,7 +147,11 @@ def configure_app(repositories: list[Path], interval: int, port: int = 8765) -> 
     if not 1 <= port <= 65_535:
         raise ValueError("Port must be between 1 and 65535")
     existing = load_app_config()
-    config = existing | {"repositories": list(dict.fromkeys(resolved)), "monitor_interval": interval, "port": port}
+    executable = str(gitleaks_executable.expanduser().resolve()) if gitleaks_executable else None
+    if history_secrets_enabled:
+        from .history_secrets import validate_executable
+        executable = str(validate_executable(executable or ""))
+    config = existing | {"repositories": list(dict.fromkeys(resolved)), "monitor_interval": interval, "port": port, "history_secrets_enabled": history_secrets_enabled, "gitleaks_executable": executable}
     save_app_config(config)
     return config
 
@@ -179,6 +199,8 @@ def start_service(config: dict | None = None) -> dict:
         sys.executable, "-m", "vulcanary", "dashboard", "--no-open", "--host", current["host"],
         "--port", str(current["port"]), "--monitor-interval", str(current["monitor_interval"]),
     ]
+    if current.get("history_secrets_enabled"):
+        arguments.extend(["--history-secrets", "--gitleaks-executable", current["gitleaks_executable"]])
     for repository in current["repositories"]:
         arguments.extend(["--repository", repository])
     environment = os.environ.copy()

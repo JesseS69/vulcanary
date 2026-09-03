@@ -47,6 +47,7 @@ function render() {
   renderRemediationHistory();
   renderResolvedFindings();
   renderMonitor();
+  renderHistorySecrets();
   renderFilterOptions();
   renderFindings();
   if (!controlToken) {
@@ -516,6 +517,20 @@ async function postJson(url, payload = {}) {
   return body;
 }
 
+function renderHistorySecrets() {
+  const history = state.history_secrets || {enabled:false, exposures:[], status:{}};
+  const exposures = history.exposures || [];
+  const open = exposures.filter(item => !item.acknowledgement).length;
+  $('#history-secret-summary').textContent = history.enabled ? `${open} rotation required · ${exposures.length} locations` : 'Disabled';
+  // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-09-03 -- History metadata is redacted by the backend and every displayed field is escaped.
+  $('#history-secret-list').innerHTML = exposures.map(item => {
+    const meta = item.metadata || {}; const acknowledgement = item.acknowledgement;
+    const status = acknowledgement ? `ROTATED · ${acknowledgement.owner} · ${acknowledgement.rotated_at}` : String(item.status || 'rotation_required').replaceAll('_', ' ').toUpperCase();
+    const action = acknowledgement ? '' : `<button class="secondary" type="button" data-history-ack="${escapeHtml(item.fingerprint)}" data-repository="${escapeHtml(item.repository_path)}">Acknowledge rotation</button>`;
+    return `<div class="fix-item ${acknowledgement ? '' : 'blocked'}"><strong>${escapeHtml(item.path)}:${Number(item.line) || 1} · ${escapeHtml(item.title)}</strong><span>${escapeHtml(status)} · ${Number(meta.occurrence_count) || 1} historical occurrence(s)</span><span>First commit ${escapeHtml(String(meta.first_commit || 'unknown').slice(0, 12))} · latest ${escapeHtml(String(meta.latest_commit || 'unknown').slice(0, 12))}</span><span class="mono">${escapeHtml(item.fingerprint)} · secret retained: no</span><div class="fix-actions">${action}</div></div>`;
+  }).join('') || `<p class="muted">${history.enabled ? 'No historical secret exposures detected yet. Initial scans may still be running.' : 'History scanning is opt-in. Configure an explicit trusted Gitleaks executable with vulcanary setup.'}</p>`;
+}
+
 async function authenticatedDownload(url) {
   if (!controlToken) throw new Error('Reopen Vulcanary from its authorized dashboard link to download this file.');
   const response = await fetch(url, {headers: readHeaders()});
@@ -637,6 +652,13 @@ $('#scan-now').addEventListener('click', async () => {
   try { await refresh({rescan:true}); }
   catch (error) { $('#scan-message').textContent = error.message; }
   finally { button.disabled = false; button.textContent = 'Scan now'; }
+});
+$('#history-secret-list').addEventListener('click', async event => {
+  const button = event.target.closest('[data-history-ack]'); if (!button) return;
+  const owner = window.prompt('Who verified that this credential was rotated?'); if (!owner) return;
+  const rotatedAt = window.prompt('Rotation date (YYYY-MM-DD):', new Date().toISOString().slice(0, 10)); if (!rotatedAt) return;
+  try { const body = await postJson('/api/history-secrets/acknowledge', {repository:button.dataset.repository, fingerprint:button.dataset.historyAck, owner, rotated_at:rotatedAt}); state = body.state; render(); }
+  catch (error) { $('#scan-message').textContent = error.message; }
 });
 $('#scan-form').addEventListener('submit', async event => {
   event.preventDefault();
