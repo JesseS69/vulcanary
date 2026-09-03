@@ -117,7 +117,7 @@ class ScannerTests(unittest.TestCase):
         self.assertTrue(all(isinstance(item["pattern_flags"], int) for item in first["rules"]))
         engines = {item["id"]: item["engine"] for item in first["rules"]}
         self.assertEqual(engines["CODE-PY-EVAL"], "python_ast_with_regex_fallback")
-        self.assertEqual(engines["CODE-JS-EVAL"], "regex")
+        self.assertEqual(engines["CODE-JS-EVAL"], "javascript_syntax_with_regex_fallback")
         self.assertEqual(engines["SECRET-HIGH-ENTROPY"], "contextual_entropy")
 
     def test_detects_code_secret_and_iac(self) -> None:
@@ -448,6 +448,80 @@ class ScannerTests(unittest.TestCase):
             (root / "dynamic.js").write_text("notice.innerHTML = `<strong>${message}</strong>`;\n", encoding="utf-8")
             findings = scan(root, Config())
         self.assertEqual([(item.rule_id, item.path) for item in findings], [("CODE-JS-INNERHTML", "dynamic.js")])
+
+    def test_javascript_syntax_ignores_comments_strings_regexes_and_property_eval(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "safe.ts").write_text(
+                "#!/usr/bin/env node\n"
+                "// eval(commentInput)\n"
+                "const documentation = 'eval(exampleInput)';\n"
+                "const matcher = /eval\\(/;\n"
+                "function matcherFactory() { return /eval\\(/; }\n"
+                "const arrowMatcher = () => /eval\\(/;\n"
+                "declare function eval(x: string): unknown;\n"
+                "function eval(value) { return value; }\n"
+                "const parser = { eval(value) { return value; } };\n"
+                "const execute = eval;\n"
+                "function shadowed(execute) { execute(input); }\n"
+                "parser.eval(input);\n"
+                "const property = 'innerHTML = input';\n"
+                "// node.innerHTML = commentInput;\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(scan(root, Config()), [])
+
+    def test_javascript_syntax_detects_multiline_global_and_aliased_eval_and_dynamic_html(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "unsafe.tsx").write_text(
+                "const execute = eval;\n"
+                "execute\n(userInput);\n"
+                "globalThis.eval(payload);\n"
+                "node.\ninnerHTML\n= rendered;\n",
+                encoding="utf-8",
+            )
+            findings = scan(root, Config())
+            self.assertEqual([(item.rule_id, item.line) for item in findings], [
+                ("CODE-JS-EVAL", 2),
+                ("CODE-JS-EVAL", 4),
+                ("CODE-JS-INNERHTML", 5),
+            ])
+
+    def test_javascript_syntax_accepts_multiline_static_inner_html_literal(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "static.js").write_text(
+                "node.innerHTML =\n  '<strong>Static notice</strong>';\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(scan(root, Config()), [])
+
+    def test_javascript_syntax_preserves_legacy_fingerprints(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.js").write_text("const x = eval(input);\nnode.innerHTML = input;\n", encoding="utf-8")
+            findings = scan(root, Config())
+            self.assertEqual([(item.rule_id, item.fingerprint) for item in findings], [
+                ("CODE-JS-EVAL", "9097745b55b7ac6b60bd"),
+                ("CODE-JS-INNERHTML", "c5d6d5c4ac9c32ddb4b9"),
+            ])
+
+    def test_invalid_javascript_uses_conservative_regex_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "broken.js").write_text("eval(input);\nconst unfinished = '\n", encoding="utf-8")
+            self.assertEqual([item.rule_id for item in scan(root, Config())], ["CODE-JS-EVAL"])
+
+    def test_template_literals_scan_expressions_but_ignore_literal_text(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "template.js").write_text(
+                "const documentation = `${name}: eval(exampleInput)`;\n"
+                "const rendered = `${eval(userInput)}`;\n",
+                encoding="utf-8",
+            )
+            self.assertEqual([(item.rule_id, item.line) for item in scan(root, Config())], [("CODE-JS-EVAL", 2)])
 
     def test_github_summary_is_source_free(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

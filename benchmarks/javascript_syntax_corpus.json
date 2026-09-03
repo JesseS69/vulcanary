@@ -1,0 +1,16 @@
+[
+  {"name":"direct eval", "path":"src/direct.js", "source":"const result = eval(input);\n", "rule_id":"CODE-JS-EVAL", "expected":true},
+  {"name":"global eval", "path":"src/global.ts", "source":"globalThis.eval(payload);\n", "rule_id":"CODE-JS-EVAL", "expected":true},
+  {"name":"aliased eval", "path":"src/alias.ts", "source":"const execute = eval;\nexecute(payload);\n", "rule_id":"CODE-JS-EVAL", "expected":true},
+  {"name":"multiline eval", "path":"src/multiline.js", "source":"eval\n(input);\n", "rule_id":"CODE-JS-EVAL", "expected":true},
+  {"name":"commented eval", "path":"src/comment.js", "source":"// eval(input)\n", "rule_id":"CODE-JS-EVAL", "expected":false},
+  {"name":"string eval", "path":"src/string.ts", "source":"const example = 'eval(input)';\n", "rule_id":"CODE-JS-EVAL", "expected":false},
+  {"name":"regex eval", "path":"src/regex.js", "source":"const matcher = /eval\\(/;\n", "rule_id":"CODE-JS-EVAL", "expected":false},
+  {"name":"property eval", "path":"src/property.ts", "source":"parser.eval(input);\n", "rule_id":"CODE-JS-EVAL", "expected":false},
+  {"name":"declared eval", "path":"src/types.d.ts", "source":"declare function eval(x: string): unknown;\n", "rule_id":"CODE-JS-EVAL", "expected":false},
+  {"name":"object eval method", "path":"src/object.ts", "source":"const parser = { eval(value: string) { return value; } };\n", "rule_id":"CODE-JS-EVAL", "expected":false},
+  {"name":"dynamic inner html", "path":"src/dynamic.js", "source":"node.innerHTML = rendered;\n", "rule_id":"CODE-JS-INNERHTML", "expected":true},
+  {"name":"multiline inner html", "path":"src/multiline.ts", "source":"node.\ninnerHTML\n= rendered;\n", "rule_id":"CODE-JS-INNERHTML", "expected":true},
+  {"name":"static inner html", "path":"src/static.js", "source":"node.innerHTML = '<strong>Safe</strong>';\n", "rule_id":"CODE-JS-INNERHTML", "expected":false},
+  {"name":"inner html string", "path":"src/example.ts", "source":"const example = 'node.innerHTML = input';\n", "rule_id":"CODE-JS-INNERHTML", "expected":false}
+]
