@@ -15,6 +15,8 @@ class SbomTests(unittest.TestCase):
             Package("requests", "2.32.0", "PyPI", "private/requirements.txt", True, "pip"),
             Package("github.com/gin-gonic/gin", "1.9.0", "Go", "private/go.mod", True, "go"),
             Package("regex", "1.5.1", "crates.io", "private/Cargo.lock", True, "cargo"),
+            Package("symfony/http-foundation", "5.4.0", "Packagist", "private/composer.lock", True, "composer"),
+            Package("rack", "2.2.3", "RubyGems", "private/Gemfile.lock", True, "bundler"),
         ]
         findings = [{
             "rule_id": "SCA-GHSA-demo", "title": "Demo advisory", "severity": "high", "category": "dependency",
@@ -31,6 +33,8 @@ class SbomTests(unittest.TestCase):
         self.assertIn("pkg:pypi/requests@2.32.0", references)
         self.assertIn("pkg:golang/github.com/gin-gonic/gin@1.9.0", references)
         self.assertIn("pkg:cargo/regex@1.5.1", references)
+        self.assertIn("pkg:composer/symfony/http-foundation@5.4.0", references)
+        self.assertIn("pkg:gem/rack@2.2.3", references)
         self.assertEqual(document["vulnerabilities"][0]["affects"], [{"ref": "pkg:npm/transitive@2.0.0"}])
         self.assertEqual(document["vulnerabilities"][0]["properties"][0]["value"], "parent_import_observed")
         root_dependencies = document["dependencies"][0]["dependsOn"]

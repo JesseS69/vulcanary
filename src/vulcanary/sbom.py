@@ -12,13 +12,13 @@ from .version import __version__
 
 
 def package_url(package: Package) -> str:
-    package_type = {"npm": "npm", "pypi": "pypi", "go": "golang", "crates.io": "cargo"}.get(package.ecosystem.lower())
+    package_type = {"npm": "npm", "pypi": "pypi", "go": "golang", "crates.io": "cargo", "packagist": "composer", "rubygems": "gem"}.get(package.ecosystem.lower())
     if package_type is None:
         raise ValueError(f"Unsupported package ecosystem: {package.ecosystem}")
     if package_type == "npm" and package.name.startswith("@") and "/" in package.name:
         namespace, name = package.name.split("/", 1)
         encoded_name = f"{quote(namespace, safe='')}/{quote(name, safe='')}"
-    elif package_type == "golang":
+    elif package_type in {"golang", "composer"}:
         encoded_name = "/".join(quote(part, safe="") for part in package.name.split("/"))
     else:
         encoded_name = quote(package.name, safe="")
@@ -38,9 +38,11 @@ def inventory_snapshot(packages: list[Package]) -> dict[str, dict]:
             "ecosystem": package.ecosystem,
             "direct": False,
             "managers": [],
+            "scopes": [],
         })
         item["direct"] = item["direct"] or package.direct
         item["managers"] = sorted(set(item["managers"]) | {package.manager})
+        item["scopes"] = sorted(set(item["scopes"]) | {package.scope})
     return dict(sorted(grouped.items()))
 
 
@@ -54,6 +56,7 @@ def cyclonedx_document(repository_name: str, packages: list[Package], findings: 
             "properties": [
                 {"name": "vulcanary:dependency:direct", "value": str(inventory["direct"]).lower()},
                 {"name": "vulcanary:dependency:managers", "value": ",".join(inventory["managers"])},
+                {"name": "vulcanary:dependency:scopes", "value": ",".join(inventory["scopes"])},
             ],
         })
     components.sort(key=lambda item: (item["name"].lower(), item["version"]))
@@ -130,7 +133,7 @@ def spdx_document(repository_name: str, packages: list[Package], findings: list[
             "licenseConcluded": "NOASSERTION", "licenseDeclared": "NOASSERTION", "copyrightText": "NOASSERTION",
             "primaryPackagePurpose": "LIBRARY",
             "externalRefs": [{"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": reference}],
-            "comment": f"Vulcanary managers: {','.join(inventory['managers'])}; direct: {str(inventory['direct']).lower()}",
+            "comment": f"Vulcanary managers: {','.join(inventory['managers'])}; scopes: {','.join(inventory['scopes'])}; direct: {str(inventory['direct']).lower()}",
         }
         advisories = sorted(set(advisory_by_ref.get(reference, [])))
         if advisories:
