@@ -15,7 +15,7 @@ from vulcanary.config import Config
 from vulcanary.dashboard import DashboardState, make_handler, resolution_record_valid, serve
 from vulcanary.dependencies import discover_packages, scan_dependencies
 from vulcanary.fixes import preview
-from vulcanary.models import Severity
+from vulcanary.models import Finding, Severity
 from vulcanary.scanners import ruleset_manifest, scan
 
 
@@ -729,6 +729,93 @@ class ScannerTests(unittest.TestCase):
                 findings, warning = scan_dependencies(root, cache_dir=False)
             self.assertIsNone(warning)
             self.assertEqual(findings, [])
+
+    def test_osv_collapses_alias_connected_records_and_unions_fixes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "requirements.txt").write_text("django==3.2.0\n", encoding="utf-8")
+            batch = {"results": [{"vulns": [{"id": "GHSA-django"}, {"id": "PYSEC-django"}]}]}
+            vector = "CVSS:3.1/AV:N/AC:H/PR:L/UI:N/S:U/C:L/I:L/A:N"
+            records = {
+                "GHSA-django": {
+                    "summary": "Django request vulnerability", "aliases": ["CVE-2026-0001"],
+                    "severity": [{"type": "CVSS_V3", "score": vector}],
+                    "affected": [{"package": {"name": "django"}, "ranges": [{"events": [{"fixed": "3.2.1"}]}]}],
+                },
+                "PYSEC-django": {
+                    "summary": "Duplicate Python advisory", "aliases": ["CVE-2026-0001"],
+                    "affected": [{"package": {"name": "django"}, "ranges": [{"events": [{"fixed": "3.2.2"}]}]}],
+                },
+            }
+            with patch("vulcanary.dependencies._json_request", side_effect=lambda url, payload=None, timeout=10: batch if url.endswith("querybatch") else records[url.rsplit("/", 1)[-1]]):
+                findings, warning = scan_dependencies(root, cache_dir=False)
+            self.assertIsNone(warning)
+            self.assertEqual(len(findings), 1)
+            finding = findings[0]
+            self.assertEqual(finding.rule_id, "SCA-GHSA-django")
+            self.assertEqual(finding.severity, Severity.MEDIUM)
+            self.assertEqual(finding.metadata["fixed_version"], "3.2.2")
+            self.assertEqual(finding.metadata["fixed_version_candidates"], ["3.2.1", "3.2.2"])
+            self.assertEqual(finding.metadata["advisories"], ["GHSA-django", "PYSEC-django"])
+            self.assertEqual(finding.metadata["aliases"], ["CVE-2026-0001", "GHSA-django", "PYSEC-django"])
+            self.assertEqual(finding.metadata["severity_source"], "cvss")
+            self.assertEqual(len(finding.metadata["legacy_fingerprints"]), 1)
+
+    def test_osv_alias_groups_are_transitive_and_missing_severity_is_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "requirements.txt").write_text("demo==1.0.0\n", encoding="utf-8")
+            ids = ["GO-demo", "GHSA-demo", "CVE-record"]
+            batch = {"results": [{"vulns": [{"id": item} for item in ids]}]}
+            records = {
+                "GO-demo": {"aliases": ["CVE-2026-1000"], "affected": [{"package": {"name": "demo"}}]},
+                "GHSA-demo": {"aliases": ["CVE-2026-1000", "CVE-2026-2000"], "affected": [{"package": {"name": "demo"}}]},
+                "CVE-record": {"aliases": ["CVE-2026-2000"], "affected": [{"package": {"name": "demo"}}]},
+            }
+            with patch("vulcanary.dependencies._json_request", side_effect=lambda url, payload=None, timeout=10: batch if url.endswith("querybatch") else records[url.rsplit("/", 1)[-1]]):
+                findings, warning = scan_dependencies(root, cache_dir=False)
+            self.assertIsNone(warning)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].severity, Severity.UNKNOWN)
+            self.assertEqual(findings[0].metadata["severity_source"], "unknown")
+            self.assertLess(findings[0].severity, Severity.HIGH)
+            with patch("vulcanary.dashboard.scan_dependencies", return_value=(findings, None)):
+                snapshot = DashboardState().scan_repository(root).to_dict()
+            self.assertEqual(snapshot["findings"][0]["metadata"]["policy"]["status"], "unknown")
+            self.assertIsNone(snapshot["findings"][0]["metadata"]["policy"]["deadline"])
+
+    def test_dashboard_migrates_alias_fingerprints_without_false_lifecycle_events(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old_primary = Finding("SCA-GHSA-demo", "Demo", "Demo", Severity.MEDIUM, "dependency", "requirements.txt", 1, "demo@1.0.0", scanner="osv")
+            old_duplicate = Finding("SCA-PYSEC-demo", "Demo", "Demo", Severity.HIGH, "dependency", "requirements.txt", 1, "demo@1.0.0", scanner="osv")
+            merged = Finding(
+                "SCA-GHSA-demo", "Demo", "Demo", Severity.MEDIUM, "dependency", "requirements.txt", 1,
+                "demo@1.0.0", scanner="osv", metadata={"legacy_fingerprints": [old_duplicate.fingerprint]},
+            )
+            state = DashboardState()
+            with patch("vulcanary.dashboard.scan_dependencies", side_effect=[([old_primary, old_duplicate], None), ([merged], None)]):
+                first = state.scan_repository(root)
+                first_seen = next(item for item in first.findings if item["fingerprint"] == old_primary.fingerprint)["metadata"]["policy"]["first_seen"]
+                second = state.scan_repository(root)
+            self.assertEqual(len(second.findings), 1)
+            self.assertEqual(second.findings[0]["metadata"]["policy"]["first_seen"], first_seen)
+            self.assertEqual(state.monitor_events, [])
+            self.assertEqual(state.resolved_findings, [])
+
+    def test_legacy_alias_suppression_still_suppresses_the_merged_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy = Finding("SCA-PYSEC-demo", "Demo", "Demo", Severity.HIGH, "dependency", "requirements.txt", 1, "demo@1.0.0", scanner="osv")
+            merged = Finding(
+                "SCA-GHSA-demo", "Demo", "Demo", Severity.MEDIUM, "dependency", "requirements.txt", 1,
+                "demo@1.0.0", scanner="osv", metadata={"legacy_fingerprints": [legacy.fingerprint]},
+            )
+            (root / ".vulcanary.json").write_text(json.dumps({"ignored_fingerprints": [legacy.fingerprint]}), encoding="utf-8")
+            with patch("vulcanary.dashboard.scan_dependencies", return_value=([merged], None)):
+                result = DashboardState().scan_repository(root)
+            self.assertFalse(any(finding["category"] == "dependency" for finding in result.findings))
+            self.assertEqual([finding["rule_id"] for finding in result.findings], ["GOV-LEGACY-SUPPRESSION"])
 
     def test_reuses_sanitized_osv_cache_without_network(self) -> None:
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as cache_directory:

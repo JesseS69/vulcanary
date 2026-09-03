@@ -13,6 +13,8 @@ class SbomTests(unittest.TestCase):
             Package("@scope/direct", "1.2.3", "npm", "private/package-lock.json", True, "npm"),
             Package("transitive", "2.0.0", "npm", "private/package-lock.json", False, "npm"),
             Package("requests", "2.32.0", "PyPI", "private/requirements.txt", True, "pip"),
+            Package("github.com/gin-gonic/gin", "1.9.0", "Go", "private/go.mod", True, "go"),
+            Package("regex", "1.5.1", "crates.io", "private/Cargo.lock", True, "cargo"),
         ]
         findings = [{
             "rule_id": "SCA-GHSA-demo", "title": "Demo advisory", "severity": "high", "category": "dependency",
@@ -27,6 +29,8 @@ class SbomTests(unittest.TestCase):
         references = {item["bom-ref"] for item in document["components"]}
         self.assertIn("pkg:npm/%40scope/direct@1.2.3", references)
         self.assertIn("pkg:pypi/requests@2.32.0", references)
+        self.assertIn("pkg:golang/github.com/gin-gonic/gin@1.9.0", references)
+        self.assertIn("pkg:cargo/regex@1.5.1", references)
         self.assertEqual(document["vulnerabilities"][0]["affects"], [{"ref": "pkg:npm/transitive@2.0.0"}])
         self.assertEqual(document["vulnerabilities"][0]["properties"][0]["value"], "parent_import_observed")
         root_dependencies = document["dependencies"][0]["dependsOn"]

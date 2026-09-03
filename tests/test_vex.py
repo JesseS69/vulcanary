@@ -13,6 +13,12 @@ class VexTests(unittest.TestCase):
         statement = document["statements"][0]
         self.assertEqual(statement["status"], "affected")
         self.assertIn("does not prove safety", statement["status_notes"])
+        ecosystem_findings = [
+            {"rule_id": "SCA-GO-demo", "category": "dependency", "metadata": {"advisory": "GO-demo", "package": "github.com/gin-gonic/gin", "current_version": "1.9.0", "ecosystem": "Go"}},
+            {"rule_id": "SCA-RUST-demo", "category": "dependency", "metadata": {"advisory": "RUST-demo", "package": "regex", "current_version": "1.5.1", "ecosystem": "crates.io"}},
+        ]
+        products = [item["products"][0]["@id"] for item in openvex_document("demo-repo", ecosystem_findings)["statements"]]
+        self.assertEqual(products, ["pkg:golang/github.com/gin-gonic/gin@1.9.0", "pkg:cargo/regex@1.5.1"])
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "vex.json"
             write_openvex(document, output)

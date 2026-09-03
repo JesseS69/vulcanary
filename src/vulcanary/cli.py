@@ -250,7 +250,11 @@ def main(argv: list[str] | None = None) -> int:
     findings = findings + imported
     if not args.offline:
         dependency_findings, warning = scan_dependencies(root)
-        dependency_findings = [finding for finding in dependency_findings if not config.is_suppressed(finding.fingerprint)]
+        dependency_findings = [
+            finding for finding in dependency_findings
+            if not config.is_suppressed(finding.fingerprint)
+            and not any(config.is_suppressed(alias) for alias in finding.metadata.get("legacy_fingerprints", []))
+        ]
         findings += dependency_findings
         if warning:
             print(f"warning: {warning}", file=sys.stderr)

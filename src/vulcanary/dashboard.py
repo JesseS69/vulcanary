@@ -18,6 +18,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .config import Config
+from .models import Severity
 from .scanners import inline_suppression_register, is_excluded, ruleset_manifest, scan
 from .dependencies import discover_packages, scan_dependencies
 from .reachability import analyze_reachability
@@ -246,7 +247,11 @@ class DashboardState:
         if external_reports is not None:
             self.external_reports[repository_key] = external_reports
         dependency_findings, dependency_warning = scan_dependencies(root)
-        dependency_findings = [finding for finding in dependency_findings if not config.is_suppressed(finding.fingerprint)]
+        dependency_findings = [
+            finding for finding in dependency_findings
+            if not config.is_suppressed(finding.fingerprint)
+            and not any(config.is_suppressed(alias) for alias in finding.metadata.get("legacy_fingerprints", []))
+        ]
         findings = analyze_reachability(root, findings + dependency_findings + imported, config)
         findings = sorted(findings + suppression_findings(config), key=lambda f: (-int(f.severity), f.path, f.line))
         current_inventory = inventory_snapshot(discover_packages(root))
@@ -281,17 +286,24 @@ class DashboardState:
             governed_findings = []
             overdue_count = 0
             for finding in findings:
-                first_seen = self.finding_first_seen.setdefault(finding.fingerprint, scanned_at)
-                first_seen_at = datetime.fromisoformat(first_seen)
-                sla_days = config.remediation_sla_days[finding.severity.name.lower()]
-                deadline = first_seen_at + timedelta(days=sla_days)
-                remaining_days = (deadline - datetime.fromisoformat(scanned_at)).total_seconds() / 86400
-                status = "overdue" if remaining_days < 0 else "due_soon" if remaining_days <= 3 else "on_track"
-                overdue_count += status == "overdue"
+                legacy_fingerprints = finding.metadata.get("legacy_fingerprints", [])
+                seen = [self.finding_first_seen[key] for key in [finding.fingerprint, *legacy_fingerprints] if key in self.finding_first_seen]
+                first_seen = min(seen) if seen else scanned_at
+                self.finding_first_seen[finding.fingerprint] = first_seen
+                if finding.severity == Severity.UNKNOWN:
+                    sla_days, deadline, remaining_days, status = None, None, None, "unknown"
+                else:
+                    first_seen_at = datetime.fromisoformat(first_seen)
+                    sla_days = config.remediation_sla_days[finding.severity.name.lower()]
+                    deadline_value = first_seen_at + timedelta(days=sla_days)
+                    remaining_days = (deadline_value - datetime.fromisoformat(scanned_at)).total_seconds() / 86400
+                    deadline = deadline_value.isoformat()
+                    status = "overdue" if remaining_days < 0 else "due_soon" if remaining_days <= 3 else "on_track"
+                    overdue_count += status == "overdue"
                 policy = {
                     "owner": config.repository_owner, "security_contact": config.security_contact,
-                    "first_seen": first_seen, "deadline": deadline.isoformat(), "sla_days": sla_days,
-                    "status": status, "days_remaining": max(0, int(remaining_days)),
+                    "first_seen": first_seen, "deadline": deadline, "sla_days": sla_days,
+                    "status": status, "days_remaining": max(0, int(remaining_days)) if remaining_days is not None else None,
                 }
                 governed_findings.append(finding.to_dict() | {"metadata": dict(finding.metadata, policy=policy)})
             for action, records in (("added", suppression_change["added"]), ("changed", suppression_change["changed"]), ("removed", suppression_change["removed"])):
@@ -341,7 +353,17 @@ class DashboardState:
                 for finding in result.findings
             }
             if previous_findings is not None:
-                severity_rank = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+                for finding in result.findings:
+                    fingerprint = finding["fingerprint"]
+                    aliases = finding.get("metadata", {}).get("legacy_fingerprints", [])
+                    migrated = [previous_findings.pop(alias) for alias in aliases if alias in previous_findings and alias != fingerprint]
+                    if fingerprint not in previous_findings and migrated:
+                        previous_findings[fingerprint] = min(migrated, key=lambda item: item.get("first_seen", scanned_at))
+                    if migrated:
+                        earliest = min([current_snapshot[fingerprint]["first_seen"], *(item.get("first_seen", scanned_at) for item in migrated)])
+                        current_snapshot[fingerprint]["first_seen"] = earliest
+                        self.finding_first_seen[fingerprint] = earliest
+                severity_rank = {"unknown": -1, "info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
                 for fingerprint in sorted(current_fingerprints - set(previous_findings)):
                     finding = current_snapshot[fingerprint]
                     prior_resolution = next((
@@ -439,7 +461,7 @@ class DashboardState:
                     finding.get("metadata", {}), fix_eligible=True, verified_fix=verified,
                     fix_strategy=verified.get("strategy", "platform"),
                 )
-        counts = {severity: sum(item["severity"] == severity for item in findings) for severity in ("critical", "high", "medium", "low", "info")}
+        counts = {severity: sum(item["severity"] == severity for item in findings) for severity in ("critical", "high", "medium", "low", "info", "unknown")}
         categories: dict[str, int] = {}
         scanners: dict[str, int] = {}
         for item in findings:
