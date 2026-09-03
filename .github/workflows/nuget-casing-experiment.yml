@@ -1,0 +1,45 @@
+name: NuGet casing experiment
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  observe-lockfile-id:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+      - name: Restore deliberately lowercased package reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          experiment="${RUNNER_TEMP}/nuget-casing"
+          mkdir -p "${experiment}"
+          printf '%s\n' \
+            '<Project Sdk="Microsoft.NET.Sdk">' \
+            '  <PropertyGroup>' \
+            '    <TargetFramework>net8.0</TargetFramework>' \
+            '    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>' \
+            '  </PropertyGroup>' \
+            '  <ItemGroup>' \
+            '    <PackageReference Include="newtonsoft.json" Version="12.0.3" />' \
+            '  </ItemGroup>' \
+            '</Project>' > "${experiment}/Casing.csproj"
+          dotnet restore "${experiment}/Casing.csproj" --use-lock-file
+          python - "${experiment}/packages.lock.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          document = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          names = sorted({name for target in document["dependencies"].values() for name in target if name.lower() == "newtonsoft.json"})
+          if len(names) != 1:
+              raise SystemExit(f"unexpected matching package IDs: {names}")
+          print(f"OBSERVED_PACKAGE_ID={names[0]}")
+          PY
