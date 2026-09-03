@@ -183,6 +183,7 @@ def _is_static_inner_html_assignment(text: str, match_end: int) -> bool:
 
 def scan(root: Path, config: Config) -> list[Finding]:
     findings: list[Finding] = []
+    rules = rules_for(config)
     for path in iter_files(root, config):
         try:
             text = path.read_text(encoding="utf-8")
@@ -206,7 +207,7 @@ def scan(root: Path, config: Config) -> list[Finding]:
                 "Complete or renew the exception after review, or remediate the underlying finding.",
                 "vulcanary-governance", record.to_dict(),
             ))
-        for rule in rules_for(config):
+        for rule in rules:
             if rule.id in config.ignored_rules:
                 continue
             if rule.extensions and path.suffix.lower() not in rule.extensions:

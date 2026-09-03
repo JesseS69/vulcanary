@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, urlparse
 from .config import Config
 from .models import Severity
 from .scanners import inline_suppression_register, is_excluded, ruleset_manifest, scan
-from .dependencies import discover_packages, scan_dependencies
+from .dependencies import Package, discover_dependency_state, discover_packages, scan_dependencies
 from .reachability import analyze_reachability
 from .sbom import cyclonedx_document, inventory_snapshot, spdx_document
 from .governance import suppression_findings
@@ -121,6 +121,7 @@ class DashboardState:
     def __init__(self, history_path: Path | None = None) -> None:
         self._lock = threading.Lock()
         self.repositories: dict[str, RepositoryScan] = {}
+        self.dependency_packages: dict[str, list[Package]] = {}
         self.history_path = history_path
         self.history: list[dict] = []
         self.inventory_snapshots: dict[str, dict[str, dict]] = {}
@@ -230,6 +231,7 @@ class DashboardState:
             raise ValueError(f"Repository does not exist: {root}")
         started = time.perf_counter()
         config = Config.load(root)
+        ruleset = ruleset_manifest(config)
         findings = scan(root, config)
         repository_key = str(root)
         reports = external_reports if external_reports is not None else self.external_reports.get(repository_key, {})
@@ -246,7 +248,9 @@ class DashboardState:
         imported = list({finding.fingerprint: finding for finding in imported}.values())
         if external_reports is not None:
             self.external_reports[repository_key] = external_reports
-        dependency_findings, dependency_warning = scan_dependencies(root)
+        dependency_state = discover_dependency_state(root)
+        packages, _unresolved = dependency_state
+        dependency_findings, dependency_warning = scan_dependencies(root, discovery=dependency_state)
         dependency_findings = [
             finding for finding in dependency_findings
             if not config.is_suppressed(finding.fingerprint)
@@ -254,7 +258,7 @@ class DashboardState:
         ]
         findings = analyze_reachability(root, findings + dependency_findings + imported, config)
         findings = sorted(findings + suppression_findings(config), key=lambda f: (-int(f.severity), f.path, f.line))
-        current_inventory = inventory_snapshot(discover_packages(root))
+        current_inventory = inventory_snapshot(packages)
         resolution_commit, resolution_branch = _git_identity(root)
         suppression_register = config.suppression_register() + inline_suppression_register(root, config)
         current_suppressions = {item["fingerprint"]: item for item in suppression_register}
@@ -327,7 +331,7 @@ class DashboardState:
                 policy={
                     "owner": config.repository_owner, "security_contact": config.security_contact,
                     "overdue_count": overdue_count, "sla_days": config.remediation_sla_days,
-                    "ruleset": {"digest": ruleset_manifest(config)["digest"], "rule_count": len(ruleset_manifest(config)["rules"])},
+                    "ruleset": {"digest": ruleset["digest"], "rule_count": len(ruleset["rules"])},
                     "custom_rules": {
                         "approved": sum(item["status"] == "approved" for item in config.custom_rules),
                         "draft": sum(item["status"] == "draft" for item in config.custom_rules),
@@ -341,6 +345,7 @@ class DashboardState:
                 },
             )
             self.repositories[str(root)] = result
+            self.dependency_packages[str(root)] = packages
             current_fingerprints = {finding["fingerprint"] for finding in result.findings}
             previous_findings = self.finding_snapshots.get(str(root))
             current_snapshot = {
@@ -408,7 +413,7 @@ class DashboardState:
                         "resolution_commit": resolution_commit, "resolution_branch": resolution_branch,
                         "resolution_type": "verified_vulcanary_fix" if receipt else "dependency_update" if dependency_changed else "observed_resolved",
                         "receipt_proof": receipt.get("proof") if receipt else None,
-                        "ruleset_digest": ruleset_manifest(config)["digest"], "recurrence_index": recurrence_index,
+                        "ruleset_digest": ruleset["digest"], "recurrence_index": recurrence_index,
                         "status": "resolved", "reopened_at": None,
                     }
                     _seal_resolution_record(record)
@@ -580,6 +585,7 @@ class DashboardState:
             if resolved not in self.repositories:
                 raise ValueError("Repository is not currently watched")
             self.repositories.pop(resolved)
+            self.dependency_packages.pop(resolved, None)
             self.external_reports.pop(resolved, None)
             self._persist_history()
 
@@ -745,10 +751,12 @@ def make_handler(state: DashboardState):
                     document = openvex_document(scan_result.name, scan_result.findings)
                     self._download_json(document, f"{safe_name}-vulcanary.openvex.json")
                 elif path.endswith("/spdx"):
-                    document = spdx_document(scan_result.name, discover_packages(Path(repository)), scan_result.findings)
+                    packages = state.dependency_packages[repository] if repository in state.dependency_packages else discover_packages(Path(repository))
+                    document = spdx_document(scan_result.name, packages, scan_result.findings)
                     self._download_json(document, f"{safe_name}-vulcanary.spdx.json")
                 else:
-                    document = cyclonedx_document(scan_result.name, discover_packages(Path(repository)), scan_result.findings)
+                    packages = state.dependency_packages[repository] if repository in state.dependency_packages else discover_packages(Path(repository))
+                    document = cyclonedx_document(scan_result.name, packages, scan_result.findings)
                     self._download_json(document, f"{safe_name}-vulcanary.cdx.json")
                 return
             if path == "/api/remediation/receipt.json":

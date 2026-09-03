@@ -13,13 +13,49 @@ from unittest.mock import patch
 from vulcanary.cli import main
 from vulcanary.config import Config
 from vulcanary.dashboard import DashboardState, make_handler, resolution_record_valid, serve
-from vulcanary.dependencies import discover_packages, scan_dependencies
+from vulcanary.dependencies import Package, dependency_context, discover_packages, scan_dependencies
 from vulcanary.fixes import preview
 from vulcanary.models import Finding, Severity
-from vulcanary.scanners import ruleset_manifest, scan
+from vulcanary.scanners import rules_for, ruleset_manifest, scan
 
 
 class ScannerTests(unittest.TestCase):
+    def test_source_rules_are_compiled_once_per_scan_not_once_per_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "one.py").write_text("value = 1\n", encoding="utf-8")
+            (root / "two.py").write_text("value = 2\n", encoding="utf-8")
+            with patch("vulcanary.scanners.rules_for", wraps=rules_for) as build_rules:
+                scan(root, Config())
+            build_rules.assert_called_once()
+
+    def test_dashboard_reuses_one_dependency_discovery_and_ruleset_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (
+                patch("vulcanary.dashboard.discover_dependency_state", return_value=([], [])) as discovery,
+                patch("vulcanary.dashboard.scan_dependencies", return_value=([], None)),
+                patch("vulcanary.dashboard.ruleset_manifest", wraps=ruleset_manifest) as manifest,
+            ):
+                DashboardState().scan_repository(root)
+            discovery.assert_called_once_with(root.resolve())
+            manifest.assert_called_once()
+
+    def test_dependency_graph_is_built_once_for_multiple_findings_in_one_lock(self) -> None:
+        lock = json.dumps({"packages": {
+            "": {"dependencies": {"parent": "1.0.0"}},
+            "node_modules/parent": {"version": "1.0.0", "dependencies": {"first": "1.0.0", "second": "2.0.0"}},
+            "node_modules/first": {"version": "1.0.0"},
+            "node_modules/second": {"version": "2.0.0"},
+        }})
+        cache = {}
+        with patch.object(Path, "read_text", return_value=lock) as read_lock:
+            first = dependency_context(Path("repo"), Package("first", "1.0.0", "npm", "package-lock.json"), cache)
+            second = dependency_context(Path("repo"), Package("second", "2.0.0", "npm", "package-lock.json"), cache)
+        self.assertEqual(first[0], ["parent"])
+        self.assertEqual(second[0], ["parent"])
+        read_lock.assert_called_once()
+
     def test_corrupt_history_fails_closed_to_empty_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             history = Path(directory) / "history.json"
@@ -785,7 +821,7 @@ class ScannerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "requirements.txt").write_text(
-                "PyYAML===5.4.1\ncelery[redis]==5.2.0\nrequests==2.31.0 ; python_version >= '3.9'\n",
+                "PyYAML===5.4.1\ncelery [redis]==5.2.0\nrequests==2.31.0 ; python_version >= '3.9'\n",
                 encoding="utf-8",
             )
             packages = sorted(discover_packages(root), key=lambda item: item.name)
