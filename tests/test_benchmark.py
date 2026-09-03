@@ -38,6 +38,18 @@ class AccuracyBenchmarkTests(unittest.TestCase):
                 detected = any(finding.rule_id == "SECRET-HIGH-ENTROPY" for finding in scan(root, Config()))
                 self.assertEqual(detected, case["expected"])
 
+    def test_javascript_syntax_corpus_preserves_realistic_boundaries(self) -> None:
+        corpus = json.loads((Path(__file__).parents[1] / "benchmarks" / "javascript_syntax_corpus.json").read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(corpus), 12)
+        for case in corpus:
+            with self.subTest(case=case["name"]), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                target = root / case["path"]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(case["source"], encoding="utf-8")
+                detected = any(finding.rule_id == case["rule_id"] for finding in scan(root, Config()))
+                self.assertEqual(detected, case["expected"])
+
 
 if __name__ == "__main__":
     unittest.main()

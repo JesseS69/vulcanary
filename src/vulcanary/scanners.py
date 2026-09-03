@@ -76,6 +76,7 @@ def ruleset_manifest(config: Config | None = None) -> dict:
         "category": rule.category, "extensions": sorted(rule.extensions),
         "engine": (
             "python_ast_with_regex_fallback" if rule.id in {"CODE-PY-EVAL", "CODE-PY-SHELL", "CODE-PY-PICKLE"}
+            else "javascript_syntax_with_regex_fallback" if rule.id in {"CODE-JS-EVAL", "CODE-JS-INNERHTML"}
             else "contextual_entropy" if rule.id == "SECRET-HIGH-ENTROPY" else "regex"
         ),
         "pattern": rule.pattern.pattern, "pattern_flags": rule.pattern.flags,
@@ -188,8 +189,6 @@ def iter_files(root: Path, config: Config) -> Iterable[Path]:
             yield path
 
 
-_STATIC_JS_STRING = re.compile(r'^\s*(?:"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|`(?:\\.|[^`\\])*`)\s*;?\s*(?://.*)?$')
-
 _SECRET_PLACEHOLDERS = (
     "changeme", "dummy", "example", "fake", "not-a-real", "not_a_real", "placeholder",
     "redacted", "replace-me", "replace_me", "sample", "test-token", "your-api", "your_api",
@@ -267,13 +266,272 @@ def _python_non_code_spans(text: str) -> list[tuple[int, int]]:
 
 
 def _is_static_inner_html_assignment(text: str, match_end: int) -> bool:
-    """Treat a single literal with no template interpolation as data, not an XSS flow."""
-    line_end = text.find("\n", match_end)
-    expression = text[match_end: line_end if line_end >= 0 else len(text)]
-    return "${" not in expression and _STATIC_JS_STRING.fullmatch(expression) is not None
+    """Treat one quoted literal with no template interpolation as data, not an XSS flow."""
+    index = match_end
+    while index < len(text) and text[index].isspace():
+        index += 1
+    if index >= len(text) or text[index] not in {'"', "'", "`"}:
+        return False
+    quote = text[index]
+    index += 1
+    escaped = False
+    while index < len(text):
+        character = text[index]
+        if escaped:
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        elif quote == "`" and text.startswith("${", index):
+            return False
+        elif character == quote:
+            index += 1
+            break
+        index += 1
+    else:
+        return False
+    while index < len(text) and text[index] in " \t":
+        index += 1
+    if index < len(text) and text[index] == ";":
+        index += 1
+    while index < len(text) and text[index] in " \t":
+        index += 1
+    return index >= len(text) or text[index] in "\r\n" or text.startswith("//", index)
 
 
 _PYTHON_AST_RULES = frozenset({"CODE-PY-EVAL", "CODE-PY-SHELL", "CODE-PY-PICKLE"})
+_JAVASCRIPT_SYNTAX_RULES = frozenset({"CODE-JS-EVAL", "CODE-JS-INNERHTML"})
+
+
+def _javascript_code_mask(text: str) -> str | None:
+    """Preserve executable character offsets while blanking JS/TS literals and comments."""
+    masked = list(text)
+    index = 0
+    significant = ""
+
+    def blank(start: int, end: int) -> None:
+        for offset in range(start, end):
+            if masked[offset] not in "\r\n":
+                masked[offset] = " "
+
+    def quoted_end(start: int, quote: str) -> int | None:
+        cursor = start + 1
+        escaped = False
+        while cursor < len(text):
+            if escaped:
+                escaped = False
+            elif text[cursor] == "\\":
+                escaped = True
+            elif text[cursor] == quote:
+                return cursor + 1
+            cursor += 1
+        return None
+
+    def expression_end(start: int) -> int | None:
+        cursor = start
+        depth = 1
+        while cursor < len(text):
+            character = text[cursor]
+            following = text[cursor + 1] if cursor + 1 < len(text) else ""
+            if character in {'"', "'"}:
+                cursor = quoted_end(cursor, character) or len(text)
+                continue
+            if character == "`":
+                parsed = template_end(cursor)
+                if parsed is None:
+                    return None
+                cursor = parsed[0]
+                continue
+            if character == "/" and following == "/":
+                line_end = text.find("\n", cursor + 2)
+                cursor = len(text) if line_end < 0 else line_end
+                continue
+            if character == "/" and following == "*":
+                comment_end = text.find("*/", cursor + 2)
+                if comment_end < 0:
+                    return None
+                cursor = comment_end + 2
+                continue
+            if character == "{":
+                depth += 1
+            elif character == "}":
+                depth -= 1
+                if depth == 0:
+                    return cursor
+            cursor += 1
+        return None
+
+    def template_end(start: int) -> tuple[int, list[tuple[int, int]]] | None:
+        cursor = start + 1
+        expressions = []
+        escaped = False
+        while cursor < len(text):
+            character = text[cursor]
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == "`":
+                return cursor + 1, expressions
+            elif character == "$" and cursor + 1 < len(text) and text[cursor + 1] == "{":
+                end = expression_end(cursor + 2)
+                if end is None:
+                    return None
+                expressions.append((cursor + 2, end))
+                cursor = end
+            cursor += 1
+        return None
+
+    while index < len(text):
+        character = text[index]
+        following = text[index + 1] if index + 1 < len(text) else ""
+        if index == 0 and character == "#" and following == "!":
+            end = text.find("\n", index + 2)
+            index = len(text) if end < 0 else end
+            blank(0, index)
+            continue
+        if character in {'"', "'"}:
+            start = index
+            end = quoted_end(start, character)
+            if end is None:
+                return None
+            index = end
+            blank(start, index)
+            significant = "literal"
+            continue
+        if character == "`":
+            start = index
+            parsed = template_end(start)
+            if parsed is None:
+                return None
+            index, expressions = parsed
+            blank(start, index)
+            for expression_start, expression_stop in expressions:
+                expression_mask = _javascript_code_mask(text[expression_start:expression_stop])
+                if expression_mask is None:
+                    return None
+                masked[expression_start:expression_stop] = expression_mask
+            significant = "literal"
+            continue
+        if character == "/" and following == "/":
+            start = index
+            end = text.find("\n", index + 2)
+            index = len(text) if end < 0 else end
+            blank(start, index)
+            continue
+        if character == "/" and following == "*":
+            start = index
+            end = text.find("*/", index + 2)
+            if end < 0:
+                return None
+            index = end + 2
+            blank(start, index)
+            continue
+        regex_context = (
+            not significant
+            or significant[-1:] in "=(:,[!&|?{};"
+            or significant.endswith("=>")
+            or re.search(r"(?:return|case|throw|yield|await)$", significant) is not None
+        )
+        if character == "/" and regex_context:
+            start = index
+            index += 1
+            escaped = False
+            in_class = False
+            while index < len(text):
+                current = text[index]
+                if current in "\r\n":
+                    return None
+                if escaped:
+                    escaped = False
+                elif current == "\\":
+                    escaped = True
+                elif current == "[":
+                    in_class = True
+                elif current == "]":
+                    in_class = False
+                elif current == "/" and not in_class:
+                    index += 1
+                    while index < len(text) and text[index].isalpha():
+                        index += 1
+                    blank(start, index)
+                    break
+                index += 1
+            else:
+                return None
+            significant = "literal"
+            continue
+        if not character.isspace():
+            significant = (significant + character)[-16:]
+        index += 1
+    return "".join(masked)
+
+
+def _javascript_syntax_matches(text: str) -> dict[str, list[tuple[int, str]]] | None:
+    masked = _javascript_code_mask(text)
+    if masked is None:
+        return None
+    matches: dict[str, list[tuple[int, str]]] = {rule_id: [] for rule_id in _JAVASCRIPT_SYNTAX_RULES}
+    def declaration(start: int, end: int) -> bool:
+        line_start = masked.rfind("\n", 0, start) + 1
+        if re.search(r"\b(?:declare\s+)?(?:async\s+)?function\s*\*?\s*$", masked[line_start:start]):
+            return True
+        depth = 1
+        index = end
+        while index < len(masked) and depth:
+            if masked[index] == "(":
+                depth += 1
+            elif masked[index] == ")":
+                depth -= 1
+            index += 1
+        while index < len(masked) and masked[index].isspace():
+            index += 1
+        return depth == 0 and index < len(masked) and masked[index] in "{:"
+
+    eval_spans: list[tuple[int, int, str]] = []
+    for pattern in (
+        re.compile(r"(?<![\w.$])eval\s*\("),
+        re.compile(r"\b(?:globalThis|window|self)\s*\.\s*eval\s*\("),
+    ):
+        eval_spans.extend(
+            (match.start(), match.end(), match.group(0))
+            for match in pattern.finditer(masked) if not declaration(match.start(), match.end())
+        )
+    brace_depths = []
+    brace_depth = 0
+    for character in masked:
+        brace_depths.append(brace_depth)
+        if character == "{":
+            brace_depth += 1
+        elif character == "}":
+            brace_depth = max(0, brace_depth - 1)
+    aliases: dict[str, list[tuple[int, int]]] = {}
+    for match in re.finditer(
+            r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:(?:globalThis|window|self)\s*\.\s*)?eval\s*;?",
+            masked,
+        ):
+        aliases.setdefault(match.group(1), []).append((match.end(), brace_depths[match.start()]))
+    for alias, declarations in aliases.items():
+        pattern = re.compile(rf"(?<![\w.$]){re.escape(alias)}\s*\(")
+        eval_spans.extend(
+            (match.start(), match.end(), f"{alias}(")
+            for match in pattern.finditer(masked)
+            if any(match.start() >= declared_at and brace_depths[match.start()] == depth for declared_at, depth in declarations)
+            and not declaration(match.start(), match.end())
+        )
+    eval_rule = next(rule for rule in RULES if rule.id == "CODE-JS-EVAL")
+    for start, end, fallback in sorted(set(eval_spans)):
+        legacy = eval_rule.pattern.search(text, start, end)
+        evidence = legacy.group(0) if legacy else fallback.replace("\n", " ")[:120]
+        matches["CODE-JS-EVAL"].append((text.count("\n", 0, start) + 1, evidence))
+
+    inner_rule = next(rule for rule in RULES if rule.id == "CODE-JS-INNERHTML")
+    for match in re.finditer(r"\.\s*innerHTML\s*=", masked):
+        if _is_static_inner_html_assignment(text, match.end()):
+            continue
+        legacy = inner_rule.pattern.search(text, match.start(), match.end())
+        evidence = legacy.group(0) if legacy else ".innerHTML ="
+        matches["CODE-JS-INNERHTML"].append((text.count("\n", 0, match.start()) + 1, evidence))
+    return matches
 
 
 def _python_ast_matches(text: str) -> dict[str, list[tuple[int, str]]] | None:
@@ -377,6 +635,7 @@ def scan(root: Path, config: Config) -> list[Finding]:
         rel = relative_path(path, root)
         lines = text.splitlines()
         python_ast_matches = _python_ast_matches(text) if path.suffix.lower() == ".py" else None
+        javascript_syntax_matches = _javascript_syntax_matches(text) if path.suffix.lower() in {".js", ".jsx", ".ts", ".tsx"} else None
         python_non_code_spans: list[tuple[int, int]] | None = None
         annotations = {
             number: record for number, line_text in enumerate(lines, 1)
@@ -407,6 +666,15 @@ def scan(root: Path, config: Config) -> list[Finding]:
                 continue
             if rule.id in _PYTHON_AST_RULES and python_ast_matches is not None:
                 for line, evidence in python_ast_matches[rule.id]:
+                    candidates = [annotations[number] for number in (line - 1, line) if number in annotations]
+                    if any(record.rule_id == rule.id and record.status in {"active", "expiring"} for record in candidates):
+                        continue
+                    finding = Finding(rule.id, rule.title, f"Matched security rule {rule.id}.", rule.severity, rule.category, rel, line, evidence, rule.remediation)
+                    if not config.is_suppressed(finding.fingerprint):
+                        findings.append(finding)
+                continue
+            if rule.id in _JAVASCRIPT_SYNTAX_RULES and javascript_syntax_matches is not None:
+                for line, evidence in javascript_syntax_matches[rule.id]:
                     candidates = [annotations[number] for number in (line - 1, line) if number in annotations]
                     if any(record.rule_id == rule.id and record.status in {"active", "expiring"} for record in candidates):
                         continue

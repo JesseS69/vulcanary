@@ -188,7 +188,7 @@ The rule ID, owner, ISO expiration date, and meaningful justification are mandat
 ## Current capabilities
 
 - Secret detection: exact AWS, GitHub, and private-key patterns plus contextual high-entropy credentials with fully redacted evidence
-- SAST analysis: AST-confirmed Python `eval`, shell-enabled subprocess, and pickle calls, plus selected JavaScript execution/XSS sinks
+- SAST analysis: AST-confirmed Python `eval`, shell-enabled subprocess, and pickle calls, plus syntax-aware JavaScript/TypeScript `eval` and `innerHTML` detection
 - IaC and CI patterns: root containers, floating base tags, download-to-shell builds, public Terraform ingress or storage ACLs, GitHub Actions `write-all` permissions, mutable action branches, and persisted checkout credentials
 - Dependency advisories: npm, Yarn Classic/Berry, pnpm, exact requirements pins, Pipenv, Poetry, uv, PDM, Go modules, crates.io, Packagist, RubyGems, and resolved NuGet packages queried against OSV
 - Conservative reachability context: observed JavaScript/TypeScript and Python imports, including imported direct parents of vulnerable transitive npm packages
@@ -207,6 +207,8 @@ The rule ID, owner, ISO expiration date, and meaningful justification are mandat
 The contextual entropy detector requires a secret-like assignment name, at least 20 characters, character diversity, and Shannon entropy rather than flagging random-looking text globally. Unquoted candidates must contain a digit so dotted identifiers and method calls are not mistaken for credentials; quoted candidates do not have that restriction. It excludes common placeholders, environment references, URLs, hashes, UUIDs, explicit example/template files, and test-fixture directories. Python comments and string-contained documentation examples are rejected using tokenizer spans. Findings retain only the path, line, rounded entropy score, and confidence metadata; the candidate value is replaced with `[redacted]` before reporting or persistence. This built-in detector scans the current working tree only—enable the separately installed Gitleaks history scanner for deleted or branch-only credentials.
 
 Local scans intentionally include gitignored files unless they match Vulcanary's configured exclusions. A plaintext `.env` can therefore appear in a developer's local dashboard even though CI cannot see a file that was never checked out. This reflects different scan scopes, not inconsistent detection; use managed secret injection and exclude a local file only after accepting that local exposure.
+
+The built-in JavaScript/TypeScript engine is a focused, zero-dependency syntax tokenizer rather than a complete language AST. It removes comments, strings, regular-expression literals, and non-executable template text before matching calls and assignments; recognizes direct, global, same-scope aliased, and multiline `eval` calls; and separates static literal `innerHTML` assignments from dynamic ones. Unsupported or malformed syntax falls back to the prior conservative regex rules. This improves the two built-in sinks without claiming dataflow, complete JavaScript grammar coverage, or taint propagation.
 
 - Fingerprint-scoped, owned, expiring security exceptions with a local audit trail
 - Pull-request dependency admission for denied packages/licenses, lifecycle scripts, non-registry sources, and missing npm integrity
@@ -355,7 +357,7 @@ GitHub workflows can pass `--github-summary` to append a sanitized severity tabl
 
 ## Public accuracy benchmark
 
-`benchmarks/cases.json` contains one synthetic vulnerable fixture and one closely related safe fixture for every built-in deterministic rule. `benchmarks/javascript_entropy_corpus.json` adds realistic JavaScript and TypeScript credential-handling boundaries, including inline objects, minified JSON, environment references, embedded examples, placeholders, hashes, URLs, and dotted identifiers. The suite fails when a rule misses its vulnerable case, fires on its safe neighbor, or lacks benchmark coverage. Run `python -m unittest tests.test_benchmark -v`. Passing these benchmarks proves the published fixture boundaries—not complete detection of every real-world vulnerability—and that limitation is intentional and documented.
+`benchmarks/cases.json` contains one synthetic vulnerable fixture and one closely related safe fixture for every built-in deterministic rule. `benchmarks/javascript_entropy_corpus.json` adds realistic JavaScript and TypeScript credential-handling boundaries, including inline objects, minified JSON, environment references, embedded examples, placeholders, hashes, URLs, and dotted identifiers. `benchmarks/javascript_syntax_corpus.json` covers direct, global, aliased, and multiline eval calls; comments, strings, regular expressions, declarations, and property methods; plus static and dynamic `innerHTML` assignments. The suite fails when a rule misses its vulnerable case, fires on its safe neighbor, or lacks benchmark coverage. Run `python -m unittest tests.test_benchmark -v`. Passing these benchmarks proves the published fixture boundaries—not complete detection of every real-world vulnerability—and that limitation is intentional and documented.
 
 ## Roadmap
 
