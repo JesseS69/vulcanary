@@ -941,6 +941,61 @@ class ScannerTests(unittest.TestCase):
                 ("rack", "2.2.3", True, "bundler"),
             ])
 
+    def test_discovers_resolved_nuget_packages_across_target_frameworks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "packages.lock.json").write_text(json.dumps({
+                "version": 1,
+                "dependencies": {
+                    ".NETCoreApp,Version=v8.0": {
+                        "Newtonsoft.Json": {"type": "Direct", "requested": "[13.0.3, )", "resolved": "13.0.3"},
+                        "System.Text.Encodings.Web": {"type": "Transitive", "resolved": "4.7.1"},
+                        "Local.Project": {"type": "Project", "resolved": "1.0.0"},
+                    },
+                    "net8.0/win-x64": {
+                        "newtonsoft.json": {"type": "Transitive", "resolved": "13.0.3"},
+                        "Runtime.Native.System": {"type": "Transitive", "resolved": "8.0.0"},
+                    },
+                },
+            }), encoding="utf-8")
+            packages = sorted(discover_packages(root), key=lambda item: item.name.lower())
+            self.assertEqual([(item.name, item.version, item.ecosystem, item.direct, item.manager) for item in packages], [
+                ("Newtonsoft.Json", "13.0.3", "NuGet", True, "nuget"),
+                ("Runtime.Native.System", "8.0.0", "NuGet", False, "nuget"),
+                ("System.Text.Encodings.Web", "4.7.1", "NuGet", False, "nuget"),
+            ])
+
+    def test_nuget_lock_reaches_osv_with_exact_identity_and_stays_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "packages.lock.json").write_text(json.dumps({
+                "version": 1,
+                "dependencies": {"net8.0": {
+                    "Example.Package": {"type": "Direct", "resolved": "1.2.3"},
+                }},
+            }), encoding="utf-8")
+            captured = {}
+
+            def osv(url, payload=None, timeout=10):
+                if url.endswith("querybatch"):
+                    captured["queries"] = payload["queries"]
+                    return {"results": [{"vulns": [{"id": "GHSA-nuget-known"}]}]}
+                return {
+                    "database_specific": {"severity": "HIGH"},
+                    "affected": [{"package": {"name": "Example.Package"}, "ranges": [{"events": [{"fixed": "1.2.4"}]}]}],
+                }
+
+            with patch("vulcanary.dependencies._json_request", side_effect=osv):
+                findings, warning = scan_dependencies(root, cache_dir=False)
+            self.assertIsNone(warning)
+            self.assertEqual(captured["queries"], [{
+                "package": {"name": "Example.Package", "ecosystem": "NuGet"}, "version": "1.2.3",
+            }])
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].metadata["manager"], "nuget")
+            self.assertFalse(findings[0].metadata["fix_eligible"])
+            self.assertIn("read-only", findings[0].metadata["fix_block_reason"])
+
     def test_composer_and_rubygems_known_vulnerabilities_use_exact_osv_identities(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

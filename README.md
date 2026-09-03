@@ -190,7 +190,7 @@ The rule ID, owner, ISO expiration date, and meaningful justification are mandat
 - Secret detection: exact AWS, GitHub, and private-key patterns plus contextual high-entropy credentials with fully redacted evidence
 - SAST analysis: AST-confirmed Python `eval`, shell-enabled subprocess, and pickle calls, plus selected JavaScript execution/XSS sinks
 - IaC and CI patterns: root containers, floating base tags, download-to-shell builds, public Terraform ingress or storage ACLs, GitHub Actions `write-all` permissions, mutable action branches, and persisted checkout credentials
-- Dependency advisories: npm, Yarn Classic/Berry, pnpm, exact requirements pins, Pipenv, Poetry, uv, PDM, Go modules, crates.io, Packagist, and RubyGems packages queried against OSV
+- Dependency advisories: npm, Yarn Classic/Berry, pnpm, exact requirements pins, Pipenv, Poetry, uv, PDM, Go modules, crates.io, Packagist, RubyGems, and resolved NuGet packages queried against OSV
 - Conservative reachability context: observed JavaScript/TypeScript and Python imports, including imported direct parents of vulnerable transitive npm packages
 - Shortest npm dependency chains with runtime/development parent scope and explicit tooling-path classification
 - Read-only remediation recommendations that prefer verified parent or platform upgrades over unscoped transitive overrides
@@ -355,7 +355,7 @@ GitHub workflows can pass `--github-summary` to append a sanitized severity tabl
 
 ## Public accuracy benchmark
 
-`benchmarks/cases.json` contains one synthetic vulnerable fixture and one closely related safe fixture for every built-in deterministic rule. The suite fails when a rule misses its vulnerable case, fires on its safe neighbor, or lacks benchmark coverage. Run `python -m unittest tests.test_benchmark -v`. Passing this benchmark proves the published fixture boundary—not complete detection of every real-world vulnerability—and that limitation is intentional and documented.
+`benchmarks/cases.json` contains one synthetic vulnerable fixture and one closely related safe fixture for every built-in deterministic rule. `benchmarks/javascript_entropy_corpus.json` adds realistic JavaScript and TypeScript credential-handling boundaries, including inline objects, minified JSON, environment references, embedded examples, placeholders, hashes, URLs, and dotted identifiers. The suite fails when a rule misses its vulnerable case, fires on its safe neighbor, or lacks benchmark coverage. Run `python -m unittest tests.test_benchmark -v`. Passing these benchmarks proves the published fixture boundaries—not complete detection of every real-world vulnerability—and that limitation is intentional and documented.
 
 ## Roadmap
 
@@ -368,6 +368,8 @@ GitHub workflows can pass `--github-summary` to append a sanitized severity tabl
 Vulcanary consumes OSV rather than maintaining a private vulnerability database, preserving advisory identifiers and fixed versions in its normalized findings. Go inventory comes from `go.mod` requirements—not the historical superset in `go.sum`—and preserves direct versus `// indirect` classification without invoking the Go toolchain. Cargo inventory includes only crates.io records from `Cargo.lock`, excludes local workspace and Git packages, and derives direct declarations from `Cargo.toml`, including renamed and target-specific dependencies.
 
 Composer inventory reads locked versions and runtime/development scope from `composer.lock`, while deriving true directness from `composer.json` because both lockfile arrays may contain transitive packages. Bundler inventory parses the indentation-defined `GEM` and `DEPENDENCIES` sections in `Gemfile.lock`, excludes Git and path sources from RubyGems queries, and removes only platform suffixes declared by the lockfile. Neither parser invokes PHP, Composer, Ruby, or Bundler.
+
+NuGet inventory reads resolved package identities from `packages.lock.json` across target frameworks, deduplicates case-insensitive package IDs, preserves directness when any target marks a package direct, and excludes local project references. Vulcanary does not run restore or evaluate MSBuild project files; repositories without a committed NuGet lock remain outside this deterministic coverage.
 
 Python inventory reads resolved default and development packages from `Pipfile.lock`, and accepts both exact `==` pins and arbitrary-equality `===` pins from `requirements*.txt`. Extras such as `celery[redis]` map to their base PyPI package. A range or bare requirement is a manifest constraint rather than an installed version, so Vulcanary does not guess or submit it to OSV: the repository receives an explicit scanner-health coverage warning until a lockfile or exact pin provides the resolved version.
 
