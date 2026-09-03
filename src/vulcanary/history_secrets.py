@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,8 +64,14 @@ def scan_history(root: Path, executable: str | Path, previous_head: str | None =
         str(binary), "git", "--no-banner", "--no-color", "--redact=100",
         "--report-format=json", "--report-path=-", f"--log-opts={log_opts}", str(repository),
     ]
+    environment = os.environ.copy()
+    configured_count = environment.get("GIT_CONFIG_COUNT", "0")
+    count = int(configured_count) if configured_count.isdigit() else 0
+    environment["GIT_CONFIG_COUNT"] = str(count + 1)
+    environment[f"GIT_CONFIG_KEY_{count}"] = "safe.directory"
+    environment[f"GIT_CONFIG_VALUE_{count}"] = repository.as_posix()
     try:
-        completed = subprocess.run(command, cwd=Path.home(), text=True, capture_output=True, timeout=timeout)
+        completed = subprocess.run(command, cwd=Path.home(), env=environment, text=True, capture_output=True, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise HistoryScanError(f"Gitleaks history scan failed: {error}") from error
     if completed.returncode not in {0, 1}:

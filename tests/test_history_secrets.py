@@ -42,6 +42,10 @@ class HistorySecretTests(unittest.TestCase):
             self.assertIn("--report-path=-", command)
             self.assertIn("--log-opts=--no-textconv --full-history --all --diff-filter=tuxdb", command)
             self.assertEqual(run.call_args.kwargs["cwd"], Path.home())
+            environment = run.call_args.kwargs["env"]
+            safe_index = str(int(environment["GIT_CONFIG_COUNT"]) - 1)
+            self.assertEqual(environment[f"GIT_CONFIG_KEY_{safe_index}"], "safe.directory")
+            self.assertEqual(environment[f"GIT_CONFIG_VALUE_{safe_index}"], root.resolve().as_posix())
 
     def test_incremental_scan_uses_only_the_new_commit_range(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
