@@ -768,6 +768,54 @@ class ScannerTests(unittest.TestCase):
             self.assertIsNone(warning)
             self.assertEqual(findings[0].metadata["fixed_version"], "1.0.0")
 
+    def test_discovers_pipfile_lock_default_and_development_packages(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Pipfile.lock").write_text(json.dumps({
+                "default": {"Requests": {"version": "==2.31.0"}},
+                "develop": {"PyTest": {"version": "===8.3.1"}},
+            }), encoding="utf-8")
+            packages = sorted(discover_packages(root), key=lambda item: item.name)
+            self.assertEqual([(item.name, item.version, item.manager, item.scope) for item in packages], [
+                ("pytest", "8.3.1", "pipenv", "development"),
+                ("requests", "2.31.0", "pipenv", "runtime"),
+            ])
+
+    def test_requirements_exact_pins_support_extras_and_arbitrary_equality(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "requirements.txt").write_text(
+                "PyYAML===5.4.1\ncelery[redis]==5.2.0\nrequests==2.31.0 ; python_version >= '3.9'\n",
+                encoding="utf-8",
+            )
+            packages = sorted(discover_packages(root), key=lambda item: item.name)
+            self.assertEqual([(item.name, item.version) for item in packages], [
+                ("celery", "5.2.0"), ("pyyaml", "5.4.1"), ("requests", "2.31.0"),
+            ])
+
+    def test_unpinned_python_requirements_are_reported_as_coverage_gaps(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "requirements.txt").write_text(
+                "requests>=2.20.0\nflask~=2.0.1\nurllib3<2.0,>=1.26\njinja2\n",
+                encoding="utf-8",
+            )
+            findings, warning = scan_dependencies(root, cache_dir=False)
+            self.assertEqual(findings, [])
+            self.assertIn("4 unpinned Python requirement(s) were not evaluated", warning)
+            self.assertIn("requirements.txt:requests", warning)
+            self.assertIn("requirements.txt:jinja2", warning)
+
+    def test_pipfile_non_exact_versions_are_reported_not_guessed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Pipfile.lock").write_text(json.dumps({
+                "default": {"requests": {"version": ">=2.20"}, "flask": {"git": "https://example.test/flask.git"}},
+            }), encoding="utf-8")
+            findings, warning = scan_dependencies(root, cache_dir=False)
+            self.assertEqual(findings, [])
+            self.assertIn("2 unpinned Python requirement(s) were not evaluated", warning)
+
     def test_normalizes_osv_advisories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -178,7 +178,7 @@ The rule ID, owner, ISO expiration date, and meaningful justification are mandat
 - Secret patterns: AWS access keys, GitHub tokens, and private keys
 - SAST patterns: selected Python and JavaScript execution/XSS sinks plus unsafe Python deserialization
 - IaC and CI patterns: root containers, floating base tags, download-to-shell builds, public Terraform ingress or storage ACLs, GitHub Actions `write-all` permissions, mutable action branches, and persisted checkout credentials
-- Dependency advisories: npm, Yarn Classic/Berry, pnpm, pinned requirements, Poetry, uv, PDM, Go modules, crates.io, Packagist, and RubyGems packages queried against OSV
+- Dependency advisories: npm, Yarn Classic/Berry, pnpm, exact requirements pins, Pipenv, Poetry, uv, PDM, Go modules, crates.io, Packagist, and RubyGems packages queried against OSV
 - Conservative reachability context: observed JavaScript/TypeScript and Python imports, including imported direct parents of vulnerable transitive npm packages
 - Shortest npm dependency chains with runtime/development parent scope and explicit tooling-path classification
 - Read-only remediation recommendations that prefer verified parent or platform upgrades over unscoped transitive overrides
@@ -349,6 +349,8 @@ GitHub workflows can pass `--github-summary` to append a sanitized severity tabl
 Vulcanary consumes OSV rather than maintaining a private vulnerability database, preserving advisory identifiers and fixed versions in its normalized findings. Go inventory comes from `go.mod` requirements—not the historical superset in `go.sum`—and preserves direct versus `// indirect` classification without invoking the Go toolchain. Cargo inventory includes only crates.io records from `Cargo.lock`, excludes local workspace and Git packages, and derives direct declarations from `Cargo.toml`, including renamed and target-specific dependencies.
 
 Composer inventory reads locked versions and runtime/development scope from `composer.lock`, while deriving true directness from `composer.json` because both lockfile arrays may contain transitive packages. Bundler inventory parses the indentation-defined `GEM` and `DEPENDENCIES` sections in `Gemfile.lock`, excludes Git and path sources from RubyGems queries, and removes only platform suffixes declared by the lockfile. Neither parser invokes PHP, Composer, Ruby, or Bundler.
+
+Python inventory reads resolved default and development packages from `Pipfile.lock`, and accepts both exact `==` pins and arbitrary-equality `===` pins from `requirements*.txt`. Extras such as `celery[redis]` map to their base PyPI package. A range or bare requirement is a manifest constraint rather than an installed version, so Vulcanary does not guess or submit it to OSV: the repository receives an explicit scanner-health coverage warning until a lockfile or exact pin provides the resolved version.
 
 Exact Python pins in `requirements*.txt`, direct npm dependencies, and direct root-workspace pnpm dependencies can be upgraded locally when OSV identifies a same-major fix. pnpm uses `--lockfile-only --ignore-scripts`; every manager still requires an isolated branch, security rescan, configured project checks, and an explicit commit. Go, Cargo, Composer, Bundler, Yarn, nested pnpm workspaces, Poetry, uv, and PDM findings remain read-only until equivalent lockfile rollback and verification coverage is available.
 

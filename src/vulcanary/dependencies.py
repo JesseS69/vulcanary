@@ -257,8 +257,9 @@ def _gem_packages(lock: Path, root: Path) -> list[Package]:
     return found
 
 
-def discover_packages(root: Path) -> list[Package]:
+def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
     packages: dict[tuple[str, str, str, str], Package] = {}
+    unresolved: list[str] = []
     for lock in _dependency_files(root, lambda name: name == "package-lock.json"):
         try:
             data = json.loads(lock.read_text(encoding="utf-8"))
@@ -310,18 +311,47 @@ def discover_packages(root: Path) -> list[Package]:
             continue
         for package in discovered:
             packages[(package.ecosystem, package.name, package.version, package.path)] = package
-    requirement = re.compile(r"^\s*([A-Za-z0-9_.-]+)==([^\s;]+)")
+    for lock in _dependency_files(root, lambda name: name == "Pipfile.lock"):
+        try:
+            document = json.loads(lock.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for section, scope in (("default", "runtime"), ("develop", "development")):
+            records = document.get(section, {})
+            if not isinstance(records, dict):
+                continue
+            for name, record in records.items():
+                version = record.get("version") if isinstance(record, dict) else None
+                match = re.fullmatch(r"={2,3}([^\s;*]+)", version or "")
+                if match:
+                    package = Package(str(name).lower(), match.group(1), "PyPI", relative_path(lock, root), True, "pipenv", scope)
+                    packages[(package.ecosystem, package.name, package.version, package.path)] = package
+                else:
+                    unresolved.append(f"{relative_path(lock, root)}:{name}")
+    requirement = re.compile(r"^\s*([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?\s*(===|==|~=|!=|<=|>=|<|>)?\s*([^\s;#]+)?")
     for lock in _dependency_files(root, lambda name: name.startswith("requirements") and name.endswith(".txt")):
         try:
             lines = lock.read_text(encoding="utf-8").splitlines()
         except OSError:
             continue
         for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith(("#", "-")):
+                continue
             match = requirement.match(line)
-            if match:
-                package = Package(match.group(1), match.group(2), "PyPI", relative_path(lock, root), True, "pip")
+            if not match:
+                continue
+            name, operator, version = match.groups()
+            if operator in {"==", "==="} and version and "*" not in version:
+                package = Package(name.lower(), version, "PyPI", relative_path(lock, root), True, "pip")
                 packages[(package.ecosystem, package.name.lower(), package.version, package.path)] = package
-    return list(packages.values())
+            else:
+                unresolved.append(f"{relative_path(lock, root)}:{name.lower()}")
+    return list(packages.values()), unresolved
+
+
+def discover_packages(root: Path) -> list[Package]:
+    return _discover_packages(root)[0]
 
 
 def _json_request(url: str, payload: dict | None = None, timeout: float = 10) -> dict:
@@ -638,9 +668,14 @@ def direct_parent_packages(root: Path, package: Package) -> list[str]:
 
 
 def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | None = None) -> tuple[list[Finding], str | None]:
-    packages = discover_packages(root)
+    packages, unresolved = _discover_packages(root)
+    coverage_warning = None
+    if unresolved:
+        locations = ", ".join(unresolved[:5])
+        remainder = f" and {len(unresolved) - 5} more" if len(unresolved) > 5 else ""
+        coverage_warning = f"{len(unresolved)} unpinned Python requirement(s) were not evaluated: {locations}{remainder}"
     if not packages:
-        return [], None
+        return [], coverage_warning
     cache = _cache_directory(cache_dir)
     results: list[dict | None] = []
     missing: list[tuple[int, Package, str]] = []
@@ -669,7 +704,8 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
                 _cache_write(cache, "advisories", advisory_id, record)
             records[advisory_id] = record
     except (OSError, URLError, ValueError, json.JSONDecodeError) as error:
-        return [], f"OSV dependency scan unavailable: {error}"
+        unavailable = f"OSV dependency scan unavailable: {error}"
+        return [], f"{coverage_warning}; {unavailable}" if coverage_warning else unavailable
     findings = []
     for package, result in zip(packages, normalized_results):
         active_ids = {
@@ -730,4 +766,4 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
                     "cvss": {"score": cvss_score, "vector": cvss_vector} if cvss_score is not None else None,
                 },
             ))
-    return findings, None
+    return findings, coverage_warning
