@@ -32,6 +32,7 @@ from .tickets import finding_ticket, ticket_csv, ticket_markdown
 from .vex import openvex_document
 from .webaudit import audit_web_target
 from .version import __version__
+from .history_secrets import HistoryScanError, scan_history
 
 
 REMEDIATION_RECEIPT_FIELDS = (
@@ -143,6 +144,12 @@ class DashboardState:
         self.finding_snapshots: dict[str, dict[str, dict]] = {}
         self.resolved_findings: list[dict] = []
         self.monitor_events: list[dict] = []
+        self.history_exposures: dict[str, dict[str, dict]] = {}
+        self.history_scan_heads: dict[str, str] = {}
+        self.history_acknowledgements: dict[str, dict] = {}
+        self.history_scan_status: dict[str, dict] = {}
+        self.history_secrets_enabled = False
+        self.gitleaks_executable: Path | None = None
         self.monitor_enabled = True
         self.monitor_interval_seconds = 300
         self.monitor_last_scan: str | None = None
@@ -152,6 +159,7 @@ class DashboardState:
         self._monitor_stop = threading.Event()
         self._monitor_thread: threading.Thread | None = None
         self._rescan_lock = threading.Lock()
+        self._history_scan_lock = threading.Lock()
         self.control_token: str | None = None
         self.shutdown_callback = None
         if history_path and history_path.exists():
@@ -178,6 +186,12 @@ class DashboardState:
                 self.resolved_findings = list(resolved_findings)[-500:] if isinstance(resolved_findings, list) else []
                 monitor_events = payload.get("monitor_events", [])
                 self.monitor_events = list(monitor_events)[-500:] if isinstance(monitor_events, list) else []
+                exposures = payload.get("history_exposures", {})
+                self.history_exposures = exposures if isinstance(exposures, dict) else {}
+                heads = payload.get("history_scan_heads", {})
+                self.history_scan_heads = heads if isinstance(heads, dict) else {}
+                acknowledgements = payload.get("history_acknowledgements", {})
+                self.history_acknowledgements = acknowledgements if isinstance(acknowledgements, dict) else {}
                 monitor = payload.get("monitor", {})
                 if isinstance(monitor, dict):
                     self.monitor_enabled = monitor.get("enabled", True) is True
@@ -194,6 +208,9 @@ class DashboardState:
                 self.resolved_findings = []
                 self.monitor_events = []
                 self.web_audits = {}
+                self.history_exposures = {}
+                self.history_scan_heads = {}
+                self.history_acknowledgements = {}
 
     def _persist_history(self) -> None:
         """Replace the local state file atomically so an interrupted write cannot truncate it."""
@@ -215,6 +232,9 @@ class DashboardState:
                 "monitor": {"enabled": self.monitor_enabled, "interval_seconds": self.monitor_interval_seconds},
                 "verified_fixes": self.verified_fixes,
                 "web_audits": self.web_audits,
+                "history_exposures": self.history_exposures,
+                "history_scan_heads": self.history_scan_heads,
+                "history_acknowledgements": self.history_acknowledgements,
             }, indent=2) + "\n", encoding="utf-8")
             temporary.replace(self.history_path)
         except OSError:
@@ -483,6 +503,14 @@ class DashboardState:
             "remediation_audit": [dict(item, receipt_valid=remediation_receipt_valid(item)) for item in reversed(self.remediation_audit)],
             "resolved_findings": [dict(item, proof_valid=resolution_record_valid(item)) for item in reversed(self.resolved_findings)],
             "monitor_events": list(reversed(self.monitor_events)),
+            "history_secrets": {
+                "enabled": self.history_secrets_enabled,
+                "exposures": [
+                    dict(item, repository_path=repository, acknowledgement=self.history_acknowledgements.get(repository, {}).get(item["fingerprint"]))
+                    for repository, records in self.history_exposures.items() for item in records.values()
+                ],
+                "status": self.history_scan_status,
+            },
             "monitor": {
                 "enabled": self.monitor_enabled, "interval_seconds": self.monitor_interval_seconds,
                 "last_scan": self.monitor_last_scan, "next_scan": self.monitor_next_scan,
@@ -573,6 +601,8 @@ class DashboardState:
             with self._lock:
                 repositories = [Path(repository) for repository in self.repositories]
             results = [self.scan_repository(repository) for repository in repositories]
+            if self.history_secrets_enabled:
+                self.scan_all_history_async(repositories)
             self.monitor_last_scan = datetime.now(timezone.utc).isoformat()
             self.monitor_error = None
             return results
@@ -587,6 +617,76 @@ class DashboardState:
             self.repositories.pop(resolved)
             self.dependency_packages.pop(resolved, None)
             self.external_reports.pop(resolved, None)
+            self._persist_history()
+
+    def scan_repository_history(self, repository: Path) -> dict:
+        if not self.history_secrets_enabled or not self.gitleaks_executable:
+            raise ValueError("Git-history secret scanning is not enabled")
+        root = repository.resolve()
+        key = str(root)
+        self.history_scan_status[key] = {"state": "scanning", "started_at": datetime.now(timezone.utc).isoformat()}
+        try:
+            result = scan_history(root, self.gitleaks_executable, self.history_scan_heads.get(key))
+            current = self.history_exposures.setdefault(key, {})
+            observed = set()
+            for exposure in result["findings"]:
+                fingerprint = exposure["fingerprint"]
+                observed.add(fingerprint)
+                prior = current.get(fingerprint)
+                if prior and result["mode"] == "incremental":
+                    old_meta, new_meta = prior.get("metadata", {}), exposure.get("metadata", {})
+                    if (str(old_meta.get("first_observed_at") or "9999"), str(old_meta.get("first_commit") or "")) <= (str(new_meta.get("first_observed_at") or "9999"), str(new_meta.get("first_commit") or "")):
+                        exposure["metadata"]["first_commit"] = old_meta.get("first_commit")
+                        exposure["metadata"]["first_observed_at"] = old_meta.get("first_observed_at")
+                    exposure["metadata"]["occurrence_count"] = int(old_meta.get("occurrence_count", 0)) + int(new_meta.get("occurrence_count", 0))
+                exposure["status"] = "acknowledged_rotated" if fingerprint in self.history_acknowledgements.get(key, {}) else "rotation_required"
+                current[fingerprint] = exposure
+            if result["mode"] == "full":
+                for fingerprint, exposure in current.items():
+                    if fingerprint not in observed:
+                        exposure["status"] = "history_rewritten_after_acknowledgement" if fingerprint in self.history_acknowledgements.get(key, {}) else "history_rewritten_rotation_unverified"
+            self.history_scan_heads[key] = result["head"]
+            self.history_scan_status[key] = {"state": "complete", "mode": result["mode"], "scanned_at": result["scanned_at"], "exposures": len(current)}
+            with self._lock:
+                self._persist_history()
+            return result
+        except (HistoryScanError, OSError, ValueError) as error:
+            self.history_scan_status[key] = {"state": "error", "error": str(error), "scanned_at": datetime.now(timezone.utc).isoformat()}
+            raise
+
+    def scan_all_history_async(self, repositories: list[Path] | None = None) -> bool:
+        if not self.history_secrets_enabled or not self.gitleaks_executable or not self._history_scan_lock.acquire(blocking=False):
+            return False
+        targets = repositories or [Path(repository) for repository in self.repositories]
+
+        def worker() -> None:
+            try:
+                for repository in targets:
+                    try:
+                        self.scan_repository_history(repository)
+                    except (OSError, ValueError):
+                        continue
+            finally:
+                self._history_scan_lock.release()
+
+        threading.Thread(target=worker, name="vulcanary-history-scan", daemon=True).start()
+        return True
+
+    def acknowledge_history_rotation(self, repository: str, fingerprint: str, owner: str, rotated_at: str) -> None:
+        if not re.fullmatch(r"[0-9a-f]{20}", str(fingerprint)):
+            raise ValueError("A valid history-exposure fingerprint is required")
+        if not isinstance(owner, str) or len(owner.strip()) < 2:
+            raise ValueError("Rotation acknowledgement requires an owner")
+        try:
+            rotation_date = datetime.fromisoformat(rotated_at).date().isoformat()
+        except (TypeError, ValueError) as error:
+            raise ValueError("rotated_at must be an ISO date") from error
+        repository_key = str(Path(repository).resolve())
+        if fingerprint not in self.history_exposures.get(repository_key, {}):
+            raise ValueError("History exposure is not known")
+        with self._lock:
+            self.history_acknowledgements.setdefault(repository_key, {})[fingerprint] = {"owner": owner.strip(), "rotated_at": rotation_date, "acknowledged_at": datetime.now(timezone.utc).isoformat()}
+            self.history_exposures[repository_key][fingerprint]["status"] = "acknowledged_rotated"
             self._persist_history()
 
     def configure_monitor(self, enabled: bool, interval_seconds: int) -> None:
@@ -844,7 +944,7 @@ def make_handler(state: DashboardState):
                 self.send_error(HTTPStatus.BAD_REQUEST, "Dashboard Host header must be loopback")
                 return
             route = urlparse(self.path).path
-            if route not in {"/api/scan", "/api/discover", "/api/web-audit", "/api/web-audits/remove", "/api/rescan", "/api/monitor", "/api/repositories/remove", "/api/control/shutdown", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/source/preview", "/api/source/apply", "/api/parents/evaluate", "/api/overrides/evaluate", "/api/platform/evaluate", "/api/platform/create-branch"}:
+            if route not in {"/api/scan", "/api/discover", "/api/web-audit", "/api/web-audits/remove", "/api/rescan", "/api/monitor", "/api/repositories/remove", "/api/control/shutdown", "/api/fixes/preview", "/api/fixes/apply", "/api/fixes/commit", "/api/source/preview", "/api/source/apply", "/api/parents/evaluate", "/api/overrides/evaluate", "/api/platform/evaluate", "/api/platform/create-branch", "/api/history-secrets/scan", "/api/history-secrets/acknowledge"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             if not self._authorized():
@@ -882,6 +982,16 @@ def make_handler(state: DashboardState):
                     self._json({"state": state.snapshot()})
                 elif route == "/api/monitor":
                     state.configure_monitor(payload.get("enabled"), payload.get("interval_seconds"))
+                    self._json({"state": state.snapshot()})
+                elif route == "/api/history-secrets/scan":
+                    repository = Path(payload.get("repository", ""))
+                    resolved = str(repository.resolve())
+                    if resolved not in state.repositories:
+                        raise ValueError("Repository is not currently watched")
+                    accepted = state.scan_all_history_async([repository])
+                    self._json({"accepted": accepted, "state": state.snapshot()}, HTTPStatus.ACCEPTED if accepted else HTTPStatus.CONFLICT)
+                elif route == "/api/history-secrets/acknowledge":
+                    state.acknowledge_history_rotation(payload.get("repository"), payload.get("fingerprint"), payload.get("owner"), payload.get("rotated_at"))
                     self._json({"state": state.snapshot()})
                 elif route == "/api/repositories/remove":
                     state.remove_repository(payload["repository"])
@@ -1038,11 +1148,15 @@ def make_handler(state: DashboardState):
     return Handler
 
 
-def serve(host: str, port: int, repositories: list[Path], open_browser: bool = True, monitor_interval: int | None = None) -> int:
+def serve(host: str, port: int, repositories: list[Path], open_browser: bool = True, monitor_interval: int | None = None, history_secrets: bool = False, gitleaks_executable: Path | None = None) -> int:
     if host not in {"127.0.0.1", "localhost", "::1"}:
         raise ValueError("The dashboard is local-only; bind to a loopback address")
     state = DashboardState(Path.home() / ".vulcanary" / "dashboard-history.json")
     state.control_token = os.environ.get("VULCANARY_CONTROL_TOKEN") or secrets.token_urlsafe(32)
+    if history_secrets:
+        from .history_secrets import validate_executable
+        state.gitleaks_executable = validate_executable(gitleaks_executable or "")
+        state.history_secrets_enabled = True
     state.startup_total = len(repositories)
     if monitor_interval is not None:
         state.configure_monitor(monitor_interval > 0, monitor_interval if monitor_interval > 0 else state.monitor_interval_seconds)
@@ -1070,6 +1184,8 @@ def serve(host: str, port: int, repositories: list[Path], open_browser: bool = T
                 state.startup_errors.append({"repository": "configuration", "error": str(error)})
         finally:
             state.start_monitor()
+            if state.history_secrets_enabled:
+                state.scan_all_history_async(repositories)
 
     threading.Thread(target=initial_scan, name="vulcanary-initial-scan", daemon=True).start()
     url = f"http://{host}:{server.server_port}"

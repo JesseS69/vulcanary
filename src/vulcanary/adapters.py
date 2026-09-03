@@ -253,3 +253,11 @@ def import_report(scanner: str, report: Path, root: Path) -> list[Finding]:
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise AdapterError(f"{scanner} report is not readable JSON: {report}") from error
     return parser(document, root)
+
+
+def import_document(scanner: str, document: Any, root: Path) -> list[Finding]:
+    """Normalize an in-memory scanner report without writing sensitive content to disk."""
+    parser = PARSERS.get(scanner)
+    if parser is None:
+        raise AdapterError(f"Unsupported scanner: {scanner}")
+    return parser(document, root)

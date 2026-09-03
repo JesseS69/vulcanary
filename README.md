@@ -34,6 +34,14 @@ vulcanary status
 vulcanary stop
 ```
 
+Git-history secret scanning is an optional local-service feature. Install Gitleaks independently, verify the binary you intend to trust, and opt in with its explicit absolute path:
+
+```powershell
+vulcanary setup --repository C:\path\to\repo --history-secrets --gitleaks-executable C:\Tools\gitleaks.exe
+```
+
+Vulcanary never resolves this binary by name or from a scanned checkout. The setting belongs to user-local `app.json`, not repository-controlled `.vulcanary.json`.
+
 `start` binds the loopback dashboard first, then loads initial repository scans in a background worker so a large dependency graph cannot produce a false startup failure. The dashboard's **Diagnostics** panel reports startup progress, scanner warnings, runtime versions, and local-history availability. The control token is generated locally, stored in the user-local application configuration with restrictive permissions where the operating system supports them, and passed to the child process through its environment rather than command-line arguments.
 
 Every dashboard API endpoint containing findings, repository metadata, reports, or state changes requires that token in an `X-Vulcanary-Control` header. The only unauthenticated API is `/api/health`, which returns only service health and the Vulcanary version. A loopback bind is a reachability limit, not an authorization boundary: on a shared or multi-user machine any local process can connect to `127.0.0.1`, and remediation can execute repository-defined verification commands. `start` therefore opens the dashboard at a URL carrying the token once; the page keeps it for that tab only and immediately removes it from the address bar so it is not retained in browser history. With `--no-open`, the authorized URL is printed for you to paste. Opening the dashboard without a token renders a locked shell without loading findings. `vulcanary status` reads the locally stored token and authenticates its state request.
@@ -83,6 +91,10 @@ On first run, **Find nearby repositories** looks for Git directory markers and o
 Continuous watch rescans every five minutes by default. The dashboard can pause or resume it, change the interval from one minute to 24 hours, or trigger an immediate cycle. Only new, reopened, and severity-increased findings create monitor alerts; the first scan is a quiet baseline. Alerts retain a source-free finding identity, repository-relative path, timestamp, and Git commit when available. The browser polls local state for status updates, while all scanning remains inside the loopback process. Start paused with `--monitor-interval 0`, or choose a 30–86400 second interval on the command line.
 
 Repositories can be added and removed directly from **Repository watch**. The local application configuration is updated atomically, while scan history and closure evidence remain available after a repository is removed. Each card reports builtin/dependency scanner health, Git branch and commit, scan duration, inventory state, ownership, and finding counts. Browser desktop alerts are optional, require an explicit permission click, and are generated locally only for new monitor events.
+
+When history scanning is enabled, the first full Gitleaks pass runs on a separate worker after ordinary startup scans complete. Later monitor cycles scan only the verified `previous_HEAD..current_HEAD` range; a rewritten or invalid range fails back to a full scan. Repeated discoveries at the same rule, path, and line intentionally form one exposure whose first commit is selected deterministically by date and commit ID. Gitleaks JSON is captured in memory with full redaction and never written as a report file. Vulcanary retains only the redacted location, rule, first/latest commit, date, and occurrence count.
+
+Historical exposures have a separate rotation lifecycle. They are unrated, never enter severity gates or SLA clocks, and cannot be closed by deleting a file. The dashboard accepts an owner and rotation date as an operator acknowledgement that the credential was revoked or rotated. If an exposure disappears after a full scan, Vulcanary labels that as history-rewrite evidence—not proof of credential rotation.
 
 ### Guarded fixes
 
@@ -269,6 +281,8 @@ vulcanary . --semgrep-json semgrep.json --gitleaks-json gitleaks.json `
 ```
 
 Each option can be repeated. Imported paths are constrained to the scanned repository, malformed reports fail closed, and Gitleaks secret values are never retained in Vulcanary output.
+
+The integrated history runner is a distinct opt-in path. It invokes only the absolute Gitleaks executable configured by the local operator, runs from Vulcanary's application context rather than the scanned repository, supplies `--no-textconv` to prevent repository Git text-conversion helpers, forces full redaction, and consumes the JSON report from memory. Treat replacing that configured executable as a code-execution trust decision.
 
 Container images are opt-in and report-driven: generate a Trivy image report separately and import it with `--trivy-image-json report.json`, or provide the report path in the dashboard scan form. Vulcanary normalizes the image package inventory and vulnerabilities under the `container` category. It never starts Docker, mounts the Docker socket, pulls an image, contacts a registry, or executes anything from the report.
 

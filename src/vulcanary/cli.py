@@ -51,6 +51,8 @@ def dashboard_parser() -> argparse.ArgumentParser:
     result.add_argument("--port", type=int, default=8765, help="Dashboard port")
     result.add_argument("--no-open", action="store_true", help="Do not open a browser automatically")
     result.add_argument("--monitor-interval", type=int, help="Automatic rescan interval in seconds (30-86400); use 0 to start paused")
+    result.add_argument("--history-secrets", action="store_true", help="Opt in to out-of-band Git-history secret scanning")
+    result.add_argument("--gitleaks-executable", type=Path, help="Explicit absolute path to the trusted Gitleaks executable")
     return result
 
 
@@ -59,6 +61,8 @@ def setup_parser() -> argparse.ArgumentParser:
     result.add_argument("--repository", "-r", action="append", type=Path, default=[], help="Repository to watch; repeat for multiple repositories")
     result.add_argument("--monitor-interval", type=int, default=300, help="Automatic scan interval in seconds, or 0 to start paused")
     result.add_argument("--port", type=int, default=8765, help="Loopback dashboard port")
+    result.add_argument("--history-secrets", action="store_true", help="Opt in to out-of-band Git-history secret scanning")
+    result.add_argument("--gitleaks-executable", type=Path, help="Explicit absolute path to the trusted Gitleaks executable")
     return result
 
 
@@ -166,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
                 except ValueError:
                     setup_parser().error("monitoring interval must be an integer")
         try:
-            configured = configure_app(repositories, args.monitor_interval, args.port)
+            configured = configure_app(repositories, args.monitor_interval, args.port, args.history_secrets, args.gitleaks_executable)
         except ValueError as error:
             setup_parser().error(str(error))
         print(f"Configured {len(configured['repositories'])} repositories in {config_path()}")
@@ -222,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
         from .dashboard import serve
         if args.monitor_interval is not None and args.monitor_interval != 0 and not 30 <= args.monitor_interval <= 86_400:
             dashboard_parser().error("--monitor-interval must be 0 or between 30 and 86400")
-        return serve(args.host, args.port, args.repository, open_browser=not args.no_open, monitor_interval=args.monitor_interval)
+        return serve(args.host, args.port, args.repository, open_browser=not args.no_open, monitor_interval=args.monitor_interval, history_secrets=args.history_secrets, gitleaks_executable=args.gitleaks_executable)
     args = scan_parser().parse_args(argv)
     root = Path(args.path).resolve()
     if not root.is_dir():
