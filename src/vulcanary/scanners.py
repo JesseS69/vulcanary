@@ -222,9 +222,9 @@ def _entropy_secret_candidate(match: re.Match[str], path: str = "") -> tuple[boo
     return accepted, entropy
 
 
-def _entropy_match_has_assignment_context(text: str, start: int) -> bool:
-    line_start = text.rfind("\n", 0, start) + 1
-    prefix = text[line_start:start]
+def _entropy_match_has_assignment_context(text: str, key_end: int) -> bool:
+    line_start = text.rfind("\n", 0, key_end) + 1
+    prefix = text[line_start:key_end]
     stripped = prefix.lstrip()
     if stripped.startswith(("#", "//", "*", "<!--")):
         return False
@@ -424,7 +424,7 @@ def scan(root: Path, config: Config) -> list[Finding]:
                             python_non_code_spans = _python_non_code_spans(text)
                         if any(start <= match.start() and match.end() <= end for start, end in python_non_code_spans):
                             continue
-                    if not _entropy_match_has_assignment_context(text, match.start()):
+                    if not _entropy_match_has_assignment_context(text, match.end("key")):
                         continue
                     accepted, entropy = _entropy_secret_candidate(match, rel)
                     if not accepted:

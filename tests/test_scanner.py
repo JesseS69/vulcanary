@@ -207,6 +207,23 @@ class ScannerTests(unittest.TestCase):
                 ("config.py", "SECRET-HIGH-ENTROPY"),
             ])
 
+    def test_contextual_entropy_ignores_non_python_string_examples(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            secret = "s3cr3t_Qp9!zV2@Lm7#Nx4$Kd8"
+            for filename in ("docs.js", "docs.go", "Docs.java", "docs.rb", "docs.php", "docs.sh"):
+                (root / filename).write_text(
+                    f'example = "api_key = {secret}"\n'
+                    f'config = {{"api_key": "{secret}"}}\n',
+                    encoding="utf-8",
+                )
+            findings = scan(root, Config())
+            self.assertEqual(
+                [(item.path, item.line, item.rule_id) for item in findings],
+                [(filename, 2, "SECRET-HIGH-ENTROPY") for filename in
+                 ("Docs.java", "docs.go", "docs.js", "docs.php", "docs.rb", "docs.sh")],
+            )
+
     def test_contextual_entropy_tokenizes_python_only_after_a_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch("vulcanary.scanners._python_non_code_spans") as spans:
             root = Path(directory)
