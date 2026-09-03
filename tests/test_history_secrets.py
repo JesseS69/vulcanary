@@ -58,20 +58,21 @@ class HistorySecretTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state = DashboardState(Path(directory) / "history.json")
             fingerprint = "a" * 20
-            state.history_exposures = {directory: {fingerprint: {"fingerprint": fingerprint, "status": "rotation_required", "metadata": {"history_exposure": True}}}}
+            repository = str(Path(directory).resolve())
+            state.history_exposures = {repository: {fingerprint: {"fingerprint": fingerprint, "status": "rotation_required", "metadata": {"history_exposure": True}}}}
             state.acknowledge_history_rotation(directory, fingerprint, "security owner", "2026-09-03")
             restored = DashboardState(Path(directory) / "history.json")
-            acknowledgement = restored.history_acknowledgements[directory][fingerprint]
+            acknowledgement = restored.history_acknowledgements[repository][fingerprint]
             self.assertEqual(acknowledgement["owner"], "security owner")
             self.assertEqual(acknowledgement["rotated_at"], "2026-09-03")
-            exposure = restored.history_exposures[directory][fingerprint]
+            exposure = restored.history_exposures[repository][fingerprint]
             self.assertNotIn("deadline", exposure)
             self.assertNotIn("sla_days", exposure)
 
     def test_rotation_acknowledgement_is_repository_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            first = str(Path(directory) / "first")
-            second = str(Path(directory) / "second")
+            first = str((Path(directory) / "first").resolve())
+            second = str((Path(directory) / "second").resolve())
             fingerprint = "b" * 20
             record = {"fingerprint": fingerprint, "status": "rotation_required", "metadata": {"history_exposure": True}}
             state = DashboardState()
