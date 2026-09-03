@@ -47,7 +47,7 @@ class HistorySecretTests(unittest.TestCase):
             self.assertEqual(environment[f"GIT_CONFIG_KEY_{safe_index}"], "safe.directory")
             self.assertEqual(environment[f"GIT_CONFIG_VALUE_{safe_index}"], root.resolve().as_posix())
 
-    def test_incremental_scan_uses_only_the_new_commit_range(self) -> None:
+    def test_incremental_scan_covers_new_commits_on_every_ref(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); (root / ".git").mkdir()
             executable = root / "gitleaks"; executable.write_bytes(b"binary")
@@ -56,7 +56,18 @@ class HistorySecretTests(unittest.TestCase):
             with patch("vulcanary.history_secrets.git_head", return_value=newer), patch("vulcanary.history_secrets._is_ancestor", return_value=True), patch("vulcanary.history_secrets.subprocess.run", return_value=completed) as run:
                 result = scan_history(root, executable, older)
             self.assertEqual(result["mode"], "incremental")
-            self.assertIn(f"--log-opts=--no-textconv {older}..{newer}", run.call_args.args[0])
+            self.assertIn(f"--log-opts=--no-textconv {older}.. --all --diff-filter=tuxdb", run.call_args.args[0])
+
+    def test_unchanged_head_still_scans_new_commits_on_other_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root / ".git").mkdir()
+            executable = root / "gitleaks"; executable.write_bytes(b"binary")
+            head = "a" * 40
+            completed = CompletedProcess([], 0, "[]", "")
+            with patch("vulcanary.history_secrets.git_head", return_value=head), patch("vulcanary.history_secrets._is_ancestor", return_value=True), patch("vulcanary.history_secrets.subprocess.run", return_value=completed) as run:
+                result = scan_history(root, executable, head)
+            self.assertEqual(result["mode"], "incremental")
+            self.assertIn(f"--log-opts=--no-textconv {head}.. --all --diff-filter=tuxdb", run.call_args.args[0])
 
     def test_rotation_acknowledgement_has_no_sla_and_survives_history_rewrite(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

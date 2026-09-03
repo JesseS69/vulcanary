@@ -55,11 +55,8 @@ def scan_history(root: Path, executable: str | Path, previous_head: str | None =
     head = git_head(repository)
     if previous_head and (len(previous_head) != 40 or any(character not in "0123456789abcdef" for character in previous_head.lower())):
         previous_head = None
-    incremental = bool(previous_head and previous_head != head and _is_ancestor(repository, previous_head, head))
-    unchanged = previous_head == head
-    if unchanged:
-        return {"head": head, "mode": "unchanged", "findings": [], "scanned_at": datetime.now(timezone.utc).isoformat()}
-    log_opts = f"--no-textconv {previous_head}..{head}" if incremental else "--no-textconv --full-history --all --diff-filter=tuxdb"
+    incremental = bool(previous_head and _is_ancestor(repository, previous_head, head))
+    log_opts = f"--no-textconv {previous_head}.. --all --diff-filter=tuxdb" if incremental else "--no-textconv --full-history --all --diff-filter=tuxdb"
     command = [
         str(binary), "git", "--no-banner", "--no-color", "--redact=100",
         "--report-format=json", "--report-path=-", f"--log-opts={log_opts}", str(repository),
