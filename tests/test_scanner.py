@@ -13,7 +13,7 @@ from unittest.mock import patch
 from vulcanary.cli import main
 from vulcanary.config import Config
 from vulcanary.dashboard import DashboardState, make_handler, resolution_record_valid, serve
-from vulcanary.dependencies import Package, dependency_context, discover_packages, scan_dependencies
+from vulcanary.dependencies import Package, dependency_context, discover_dependency_state, discover_packages, scan_dependencies
 from vulcanary.fixes import preview
 from vulcanary.models import Finding, Severity
 from vulcanary.scanners import rules_for, ruleset_manifest, scan
@@ -1069,6 +1069,80 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(findings[0].metadata["manager"], "nuget")
             self.assertFalse(findings[0].metadata["fix_eligible"])
             self.assertIn("read-only", findings[0].metadata["fix_block_reason"])
+
+    def test_discovers_resolved_maven_tree_with_depth_scope_and_deduplication(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "pom.xml").write_text("<project/>", encoding="utf-8")
+            (root / "dependency-tree.json").write_text(json.dumps({
+                "groupId": "com.example", "artifactId": "app", "version": "1.0.0", "children": [
+                    {"groupId": "org.apache.logging.log4j", "artifactId": "log4j-core", "version": "2.14.1", "scope": "compile", "children": [
+                        {"groupId": "com.fasterxml.jackson.core", "artifactId": "jackson-databind", "version": "2.12.0", "scope": "runtime"},
+                    ]},
+                    {"groupId": "com.fasterxml.jackson.core", "artifactId": "jackson-databind", "version": "2.12.0", "scope": "test"},
+                ],
+            }), encoding="utf-8")
+            packages = sorted(discover_packages(root), key=lambda item: item.name)
+            self.assertEqual([(item.name, item.version, item.direct, item.manager, item.scope) for item in packages], [
+                ("com.fasterxml.jackson.core:jackson-databind", "2.12.0", True, "maven", "runtime"),
+                ("org.apache.logging.log4j:log4j-core", "2.14.1", True, "maven", "runtime"),
+            ])
+
+    def test_discovers_gradle_lock_and_reports_missing_resolved_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "build.gradle.kts").write_text("plugins { java }", encoding="utf-8")
+            (root / "gradle.lockfile").write_text(
+                "# This is a Gradle generated file\n"
+                "com.fasterxml.jackson.core:jackson-databind:2.12.0=runtimeClasspath,testRuntimeClasspath\n"
+                "org.junit.jupiter:junit-jupiter-api:5.10.0=testCompileClasspath,testRuntimeClasspath\n"
+                "empty=annotationProcessor\n",
+                encoding="utf-8",
+            )
+            packages = sorted(discover_packages(root), key=lambda item: item.name)
+            self.assertEqual([(item.name, item.version, item.direct, item.manager, item.scope) for item in packages], [
+                ("com.fasterxml.jackson.core:jackson-databind", "2.12.0", False, "gradle", "runtime"),
+                ("org.junit.jupiter:junit-jupiter-api", "5.10.0", False, "gradle", "development"),
+            ])
+            (root / "gradle.lockfile").unlink()
+            packages, unresolved = discover_dependency_state(root)
+            self.assertEqual(packages, [])
+            self.assertEqual(unresolved, ["build.gradle.kts: Gradle dependency locking missing"])
+
+    def test_maven_resolved_dependency_reaches_osv_and_stays_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "dependency-tree.json").write_text(json.dumps({
+                "groupId": "com.example", "artifactId": "app", "version": "1.0.0", "children": [
+                    {"groupId": "org.example", "artifactId": "unsafe", "version": "1.2.3", "scope": "compile"},
+                ],
+            }), encoding="utf-8")
+            captured = {}
+            def osv(url, payload=None, timeout=10):
+                if url.endswith("querybatch"):
+                    captured["queries"] = payload["queries"]
+                    return {"results": [{"vulns": [{"id": "GHSA-maven-known"}]}]}
+                return {"database_specific": {"severity": "HIGH"}, "affected": [{
+                    "package": {"name": "org.example:unsafe"}, "ranges": [{"events": [{"fixed": "1.2.4"}]}],
+                }]}
+            with patch("vulcanary.dependencies._json_request", side_effect=osv):
+                findings, warning = scan_dependencies(root, cache_dir=False)
+            self.assertIsNone(warning)
+            self.assertEqual(captured["queries"], [{
+                "package": {"name": "org.example:unsafe", "ecosystem": "Maven"}, "version": "1.2.3",
+            }])
+            self.assertEqual(findings[0].metadata["manager"], "maven")
+            self.assertFalse(findings[0].metadata["fix_eligible"])
+            self.assertIn("read-only", findings[0].metadata["fix_block_reason"])
+
+    def test_malformed_maven_tree_does_not_suppress_coverage_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "pom.xml").write_text("<project/>", encoding="utf-8")
+            (root / "dependency-tree.json").write_text("not json", encoding="utf-8")
+            packages, unresolved = discover_dependency_state(root)
+            self.assertEqual(packages, [])
+            self.assertEqual(unresolved, ["dependency-tree.json: invalid Maven dependency tree"])
 
     def test_composer_and_rubygems_known_vulnerabilities_use_exact_osv_identities(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -12,7 +12,7 @@ from .version import __version__
 
 
 def package_url(package: Package) -> str:
-    package_type = {"npm": "npm", "pypi": "pypi", "go": "golang", "crates.io": "cargo", "packagist": "composer", "rubygems": "gem", "nuget": "nuget"}.get(package.ecosystem.lower())
+    package_type = {"npm": "npm", "pypi": "pypi", "go": "golang", "crates.io": "cargo", "packagist": "composer", "rubygems": "gem", "nuget": "nuget", "maven": "maven"}.get(package.ecosystem.lower())
     if package_type is None:
         raise ValueError(f"Unsupported package ecosystem: {package.ecosystem}")
     if package_type == "npm" and package.name.startswith("@") and "/" in package.name:
@@ -20,6 +20,9 @@ def package_url(package: Package) -> str:
         encoded_name = f"{quote(namespace, safe='')}/{quote(name, safe='')}"
     elif package_type in {"golang", "composer"}:
         encoded_name = "/".join(quote(part, safe="") for part in package.name.split("/"))
+    elif package_type == "maven" and ":" in package.name:
+        namespace, name = package.name.split(":", 1)
+        encoded_name = f"{quote(namespace, safe='')}/{quote(name, safe='')}"
     else:
         encoded_name = quote(package.name, safe="")
     return f"pkg:{package_type}/{encoded_name}@{quote(package.version, safe='')}"
