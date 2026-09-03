@@ -15,6 +15,7 @@ const controlToken = (() => {
 })();
 
 const actionHeaders = () => ({'Content-Type': 'application/json', 'X-Vulcanary-Control': controlToken});
+const readHeaders = () => ({'X-Vulcanary-Control': controlToken});
 let state = {repositories: [], findings: [], summary: {total: 0, counts: {}, categories: {}}};
 const selectedFixes = new Set();
 let appliedBatch = null;
@@ -207,7 +208,7 @@ function renderRemediationHistory() {
     const status = item.receipt_valid ? (item.action === 'committed' ? 'COMMITTED' : item.action === 'rolled_back' ? 'ROLLED BACK' : 'VERIFIED') : 'INVALID PROOF';
     const blocked = item.receipt_valid && item.action !== 'rolled_back' ? '' : 'blocked';
     const checks = item.checks_skipped ? 'checks skipped' : item.checks_passed ? `${Number(item.checks?.length) || 0} checks passed` : 'project checks failed';
-    const download = item.receipt_valid ? `<a class="secondary" href="/api/remediation/receipt.json?proof=${encodeURIComponent(item.proof)}" download>Download receipt</a>` : '';
+    const download = item.receipt_valid ? `<a class="secondary" href="#" data-auth-download="/api/remediation/receipt.json?proof=${encodeURIComponent(item.proof)}">Download receipt</a>` : '';
     return `<div class="fix-item ${blocked}"><strong>${escapeHtml(item.repository)} · ${escapeHtml(status)}</strong><span>${escapeHtml(new Date(item.created_at).toLocaleString())} · ${escapeHtml(checks)} · ${Number(item.finding_count) || 0} findings remain</span><span>${escapeHtml((item.changed_files || []).join(' · ') || 'No tracked files')}</span><span class="mono">SHA-256 ${escapeHtml(item.proof || 'missing')}</span><div class="fix-actions">${download}</div></div>`;
   }).join('') || '<p class="muted">No remediation receipts yet. A receipt appears after a dashboard fix passes its rescan and project checks.</p>';
 }
@@ -225,7 +226,7 @@ function renderResolvedFindings() {
     const commit = item.resolution_commit ? item.resolution_commit.slice(0, 10) : 'unavailable';
     const receipt = item.receipt_proof ? ` · receipt ${item.receipt_proof.slice(0, 12)}` : '';
     const recurrence = item.recurrence_index ? ` · recurrence ${item.recurrence_index}` : '';
-    const download = item.proof_valid ? `<a class="secondary" href="/api/resolutions/record.json?proof=${encodeURIComponent(item.proof)}" download>Download closure</a>` : '';
+    const download = item.proof_valid ? `<a class="secondary" href="#" data-auth-download="/api/resolutions/record.json?proof=${encodeURIComponent(item.proof)}">Download closure</a>` : '';
     const status = String(item.status || 'unknown');
     const resolutionType = String(item.resolution_type || 'unknown').replaceAll('_', ' ');
     return `<div class="fix-item ${blocked}"><strong>${escapeHtml(item.repository)} · ${escapeHtml(item.title)}</strong><span>${escapeHtml(status.toUpperCase())} · ${escapeHtml(item.severity)} · ${escapeHtml(resolutionType)}</span><span>${escapeHtml(item.path)}:${Number(item.line) || 1} · commit ${escapeHtml(commit)}${escapeHtml(receipt)}${escapeHtml(recurrence)}</span><span class="mono">SHA-256 ${escapeHtml(item.proof || 'missing')}</span><div class="fix-actions">${download}</div></div>`;
@@ -250,9 +251,9 @@ function renderRepositories() {
     const parentCount = repo.findings.filter(f => f.metadata?.parent_packages?.length).length;
     const evaluate = parentCount ? `<button class="parent-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Evaluate ${parentCount} upgrade path${parentCount === 1 ? '' : 's'}</button>` : '';
     const platform = repo.findings.some(f => f.metadata?.parent_packages?.includes('expo')) ? `<button class="platform-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Evaluate Expo platform set</button><button class="platform-evaluate secondary" data-repository="${escapeHtml(repo.repository)}" data-migration="true" type="button">Evaluate next Expo SDK migration</button>` : '';
-    const sbom = `<a class="secondary" href="/api/repositories/sbom?repository=${encodeURIComponent(repo.repository)}" download>Download SBOM</a>`;
-    const spdx = `<a class="secondary" href="/api/repositories/spdx?repository=${encodeURIComponent(repo.repository)}" download>Download SPDX</a>`;
-    const openvex = `<a class="secondary" href="/api/repositories/openvex?repository=${encodeURIComponent(repo.repository)}" download>Download VEX</a>`;
+    const sbom = `<a class="secondary" href="#" data-auth-download="/api/repositories/sbom?repository=${encodeURIComponent(repo.repository)}">Download SBOM</a>`;
+    const spdx = `<a class="secondary" href="#" data-auth-download="/api/repositories/spdx?repository=${encodeURIComponent(repo.repository)}">Download SPDX</a>`;
+    const openvex = `<a class="secondary" href="#" data-auth-download="/api/repositories/openvex?repository=${encodeURIComponent(repo.repository)}">Download VEX</a>`;
     const changes = repo.inventory_change || {added:[],removed:[]};
     const inventoryLabel = changes.baseline ? `${changes.current_count || 0} components · baseline` : `${changes.current_count || 0} components · +${changes.added.length} / −${changes.removed.length}`;
     const inventoryButton = `<button class="inventory-change secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Inventory changes</button>`;
@@ -514,6 +515,21 @@ async function postJson(url, payload = {}) {
   return body;
 }
 
+async function authenticatedDownload(url) {
+  if (!controlToken) throw new Error('Reopen Vulcanary from its authorized dashboard link to download this file.');
+  const response = await fetch(url, {headers: readHeaders()});
+  if (!response.ok) {
+    let message = `Download failed (${response.status})`;
+    try { message = (await response.json()).error || message; } catch (error) { /* non-JSON error */ }
+    throw new Error(message);
+  }
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const filename = disposition.match(/filename="([^"]+)"/)?.[1] || 'vulcanary-export';
+  const objectUrl = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a'); link.href = objectUrl; link.download = filename;
+  document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(objectUrl);
+}
+
 function renderFixPlan(plan) {
   $('#fix-summary').textContent = `${plan.changes.length} safe upgrade${plan.changes.length === 1 ? '' : 's'} · ${plan.blocked.length} manual review`;
   // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Every fix-plan field is escaped and structural labels are static.
@@ -558,16 +574,16 @@ function openFinding(fingerprint) {
   const recommendation = f.metadata?.recommendation;
   $('#dialog-recommendation').textContent = recommendation ? `${recommendation.action.replaceAll('_', ' ')}. ${recommendation.reason}` : 'Review the finding and choose the least disruptive verified remediation.';
   $('#dialog-fingerprint').textContent = f.fingerprint;
-  $('#ticket-markdown').href = `/api/ticket.md?fingerprint=${encodeURIComponent(f.fingerprint)}`;
-  $('#ticket-json').href = `/api/ticket.json?fingerprint=${encodeURIComponent(f.fingerprint)}`;
-  $('#ticket-csv').href = `/api/ticket.csv?fingerprint=${encodeURIComponent(f.fingerprint)}`;
+  $('#ticket-markdown').href = '#'; $('#ticket-markdown').dataset.authDownload = `/api/ticket.md?fingerprint=${encodeURIComponent(f.fingerprint)}`;
+  $('#ticket-json').href = '#'; $('#ticket-json').dataset.authDownload = `/api/ticket.json?fingerprint=${encodeURIComponent(f.fingerprint)}`;
+  $('#ticket-csv').href = '#'; $('#ticket-csv').dataset.authDownload = `/api/ticket.csv?fingerprint=${encodeURIComponent(f.fingerprint)}`;
   $('#finding-dialog').showModal();
 }
 
 async function refresh({rescan = false} = {}) {
   const response = await fetch(rescan ? '/api/rescan' : '/api/state', rescan ? {
     method: 'POST', headers: actionHeaders(), body: '{}'
-  } : undefined);
+  } : {headers: readHeaders()});
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || 'Refresh failed');
   state = rescan ? payload.state : payload;
@@ -575,6 +591,13 @@ async function refresh({rescan = false} = {}) {
 }
 
 $('#scan-toggle').addEventListener('click', () => $('#scan-form').classList.toggle('hidden'));
+document.addEventListener('click', async event => {
+  const link = event.target.closest('[data-auth-download]');
+  if (!link) return;
+  event.preventDefault();
+  try { await authenticatedDownload(link.dataset.authDownload); }
+  catch (error) { $('#updated').textContent = `Download error: ${error.message}`; }
+});
 $('#onboarding-discover').addEventListener('click', async () => { const body = await postJson('/api/discover', {}); state = body.state; render(); });
 $('#onboarding-manual').addEventListener('click', () => { $('#scan-form').classList.remove('hidden'); $('#repository').focus(); });
 $('#open-scan-form').addEventListener('click', () => { $('#scan-form').classList.remove('hidden'); $('#scan-form').scrollIntoView({behavior:'smooth'}); });
@@ -683,5 +706,6 @@ $('#commit-fixes').addEventListener('click', async () => {
   try { const body = await postJson('/api/fixes/commit'); $('#fix-message').textContent = `Committed ${body.committed.commit.slice(0, 8)} on ${body.committed.branch}. Proof ${body.committed.receipt.proof.slice(0, 12)} recorded.`; button.classList.add('hidden'); selectedFixes.clear(); updateFixBar(); }
   catch(error) { $('#fix-message').textContent = error.message; button.disabled = false; button.textContent = 'Commit verified fixes'; }
 });
-refresh({rescan: Boolean(controlToken)}).catch(error => { $('#updated').textContent = `Dashboard error: ${error.message}`; });
-setInterval(() => refresh().catch(error => { $('#updated').textContent = `Dashboard error: ${error.message}`; }), 10000);
+if (controlToken) refresh({rescan: true}).catch(error => { $('#updated').textContent = `Dashboard error: ${error.message}`; });
+else render();
+setInterval(() => { if (controlToken) refresh().catch(error => { $('#updated').textContent = `Dashboard error: ${error.message}`; }); }, 10000);

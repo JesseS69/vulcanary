@@ -678,7 +678,9 @@ def make_handler(state: DashboardState):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
             self.end_headers()
             self.wfile.write(body)
 
@@ -700,6 +702,12 @@ def make_handler(state: DashboardState):
                 return
             parsed = urlparse(self.path)
             path = parsed.path
+            if path == "/api/health":
+                self._json({"status": "ok", "version": __version__})
+                return
+            if path.startswith("/api/") and not self._authorized():
+                self._json({"error": "A valid local control token is required"}, HTTPStatus.FORBIDDEN)
+                return
             if path == "/api/state":
                 self._json(state.snapshot())
                 return

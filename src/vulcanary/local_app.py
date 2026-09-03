@@ -152,8 +152,9 @@ def service_status(config: dict | None = None, timeout: float = 1.5) -> dict:
     current = config or load_app_config()
     url = f"http://{current['host']}:{current['port']}"
     state_url = f"{url}/api/state"
+    request = Request(state_url, headers={"X-Vulcanary-Control": current["control_token"]})
     try:
-        with urlopen(state_url, timeout=timeout) as response:  # nosec B310 -- URL is validated loopback configuration only.
+        with urlopen(request, timeout=timeout) as response:  # nosec B310 -- URL is validated loopback configuration only.
             payload = json.loads(response.read())
     except (OSError, URLError, ValueError, json.JSONDecodeError):
         return {"running": False, "url": url, "repositories": len(current["repositories"])}
