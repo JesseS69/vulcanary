@@ -30,9 +30,10 @@ class Package:
     path: str
     direct: bool = False
     manager: str = "npm"
+    scope: str = "runtime"
 
 
-_SKIPPED_PARTS = {"node_modules", ".git", ".expo", ".pnpm-store", ".uv-cache", ".venv", "venv", ".vercel", "dist", "build", "coverage"}
+_SKIPPED_PARTS = {"node_modules", "vendor", ".bundle", ".git", ".expo", ".pnpm-store", ".uv-cache", ".venv", "venv", ".vercel", "dist", "build", "coverage"}
 
 
 def _dependency_files(root: Path, accepted: Callable[[str], bool]) -> list[Path]:
@@ -194,6 +195,68 @@ def _go_packages(manifest: Path, root: Path) -> list[Package]:
     return found
 
 
+def _composer_packages(lock: Path, root: Path) -> list[Package]:
+    try:
+        document = json.loads(lock.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    try:
+        manifest = json.loads((lock.parent / "composer.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        manifest = {}
+    runtime_direct = {str(name).lower() for name in manifest.get("require", {}) if name != "php" and not str(name).startswith(("ext-", "lib-"))}
+    development_direct = {str(name).lower() for name in manifest.get("require-dev", {})}
+    found = []
+    for section, scope in (("packages", "runtime"), ("packages-dev", "development")):
+        records = document.get(section, [])
+        if not isinstance(records, list):
+            continue
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            name, version = record.get("name"), record.get("version")
+            if not isinstance(name, str) or not isinstance(version, str) or "/" not in name:
+                continue
+            normalized_name = name.lower()
+            direct = normalized_name in runtime_direct or normalized_name in development_direct
+            found.append(Package(normalized_name, version, "Packagist", relative_path(lock, root), direct, "composer", scope))
+    return found
+
+
+def _gem_packages(lock: Path, root: Path) -> list[Package]:
+    lines = lock.read_text(encoding="utf-8").splitlines()
+    section = None
+    platforms = set()
+    direct = set()
+    raw_specs: list[tuple[str, str]] = []
+    for raw in lines:
+        if raw and not raw[0].isspace():
+            section = raw.strip()
+            continue
+        if section == "PLATFORMS":
+            match = re.match(r"^\s{2}(\S+)\s*$", raw)
+            if match and match.group(1) != "ruby":
+                platforms.add(match.group(1))
+        elif section == "DEPENDENCIES":
+            match = re.match(r"^\s{2}([A-Za-z0-9_.-]+)(?:\s|!|$)", raw)
+            if match:
+                direct.add(match.group(1))
+        elif section == "GEM":
+            match = re.match(r"^\s{4}([A-Za-z0-9_.-]+)\s+\(([^ ()]+)\)\s*$", raw)
+            if match:
+                raw_specs.append((match.group(1), match.group(2)))
+    found = []
+    for name, version in raw_specs:
+        normalized = version
+        for platform_name in sorted(platforms, key=len, reverse=True):
+            suffix = f"-{platform_name}"
+            if normalized.endswith(suffix):
+                normalized = normalized[:-len(suffix)]
+                break
+        found.append(Package(name, normalized, "RubyGems", relative_path(lock, root), name in direct, "bundler"))
+    return found
+
+
 def discover_packages(root: Path) -> list[Package]:
     packages: dict[tuple[str, str, str, str], Package] = {}
     for lock in _dependency_files(root, lambda name: name == "package-lock.json"):
@@ -233,6 +296,16 @@ def discover_packages(root: Path) -> list[Package]:
     for manifest in _dependency_files(root, lambda name: name == "go.mod"):
         try:
             discovered = _go_packages(manifest, root)
+        except OSError:
+            continue
+        for package in discovered:
+            packages[(package.ecosystem, package.name, package.version, package.path)] = package
+    for lock in _dependency_files(root, lambda name: name == "composer.lock"):
+        for package in _composer_packages(lock, root):
+            packages[(package.ecosystem, package.name, package.version, package.path)] = package
+    for lock in _dependency_files(root, lambda name: name == "Gemfile.lock"):
+        try:
+            discovered = _gem_packages(lock, root)
         except OSError:
             continue
         for package in discovered:
@@ -640,6 +713,7 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
                     "fixed_version_candidates": fixed_candidates,
                     "ecosystem": package.ecosystem,
                     "manager": package.manager,
+                    "scope": package.scope,
                     "direct": package.direct,
                     "fix_eligible": fix_eligible,
                     "fix_block_reason": fix_block_reason,

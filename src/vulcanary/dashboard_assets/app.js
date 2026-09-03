@@ -282,7 +282,7 @@ function showInventoryChange(repository) {
   const change = repo.inventory_change || {baseline:true,current_count:0,added:[],removed:[]};
   $('#inventory-title').textContent = `${repo.name} dependency inventory`;
   $('#inventory-summary').textContent = change.baseline ? `Baseline established with ${change.current_count} components. Future scans will be compared with this snapshot.` : `${change.previous_count} → ${change.current_count} components · ${change.added.length} added · ${change.removed.length} removed`;
-  const renderItems = (items, label, className) => items.map(item => `<div class="fix-item ${className}"><strong>${escapeHtml(item.name)} ${escapeHtml(item.version)}</strong><span>${label} · ${escapeHtml(item.ecosystem)} · ${item.direct ? 'direct' : 'transitive'}</span><span class="mono">${escapeHtml(item.ref)}</span></div>`).join('');
+  const renderItems = (items, label, className) => items.map(item => `<div class="fix-item ${className}"><strong>${escapeHtml(item.name)} ${escapeHtml(item.version)}</strong><span>${label} · ${escapeHtml(item.ecosystem)} · ${item.direct ? 'direct' : 'transitive'} · ${escapeHtml((item.scopes || ['runtime']).join(', '))}</span><span class="mono">${escapeHtml(item.ref)}</span></div>`).join('');
   // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-08-28 -- Inventory fields are escaped and labels/classes are fixed call-site constants.
   $('#inventory-results').innerHTML = renderItems(change.added, 'ADDED', '') + renderItems(change.removed, 'REMOVED', 'blocked') || '<p class="muted">No dependency inventory changes since the previous scan.</p>';
   $('#inventory-dialog').showModal();

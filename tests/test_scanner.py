@@ -685,6 +685,89 @@ class ScannerTests(unittest.TestCase):
             self.assertTrue(all(not item.metadata["fix_eligible"] for item in findings))
             self.assertTrue(all("read-only" in item.metadata["fix_block_reason"] for item in findings))
 
+    def test_discovers_composer_runtime_and_development_packages_with_true_directness(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "composer.json").write_text(json.dumps({
+                "require": {"php": "^8.2", "ext-json": "*", "Symfony/Http-Foundation": "5.4.0"},
+                "require-dev": {"phpunit/phpunit": "^10"},
+            }), encoding="utf-8")
+            (root / "composer.lock").write_text(json.dumps({
+                "packages": [
+                    {"name": "symfony/http-foundation", "version": "v5.4.0"},
+                    {"name": "psr/log", "version": "3.0.0"},
+                ],
+                "packages-dev": [
+                    {"name": "phpunit/phpunit", "version": "10.5.0"},
+                    {"name": "fakerphp/faker", "version": "1.23.0"},
+                ],
+            }), encoding="utf-8")
+            packages = sorted(discover_packages(root), key=lambda item: item.name)
+            self.assertEqual([(item.name, item.version, item.direct, item.scope) for item in packages], [
+                ("fakerphp/faker", "1.23.0", False, "development"),
+                ("phpunit/phpunit", "10.5.0", True, "development"),
+                ("psr/log", "3.0.0", False, "runtime"),
+                ("symfony/http-foundation", "v5.4.0", True, "runtime"),
+            ])
+
+    def test_discovers_registry_gems_by_indent_and_normalizes_platform_versions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Gemfile.lock").write_text(
+                "GIT\n  remote: https://example.test/private.git\n  revision: abcdef\n  specs:\n    private-gem (1.0.0)\n\n"
+                "PATH\n  remote: local\n  specs:\n    local-gem (1.0.0)\n\n"
+                "GEM\n  remote: https://rubygems.org/\n  specs:\n    nokogiri (1.16.5-x86_64-linux)\n      mini_portile2 (~> 2.8)\n"
+                "    rack (2.2.3)\n    mini_portile2 (2.8.7)\n\nPLATFORMS\n  ruby\n  x86_64-linux\n\n"
+                "DEPENDENCIES\n  nokogiri (~> 1.16)\n  private-gem!\n  rack\n\nBUNDLED WITH\n   2.5.9\n",
+                encoding="utf-8",
+            )
+            packages = sorted(discover_packages(root), key=lambda item: item.name)
+            self.assertEqual([(item.name, item.version, item.direct, item.manager) for item in packages], [
+                ("mini_portile2", "2.8.7", False, "bundler"),
+                ("nokogiri", "1.16.5", True, "bundler"),
+                ("rack", "2.2.3", True, "bundler"),
+            ])
+
+    def test_composer_and_rubygems_known_vulnerabilities_use_exact_osv_identities(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "composer.json").write_text(json.dumps({"require": {"symfony/http-foundation": "5.4.0"}}), encoding="utf-8")
+            (root / "composer.lock").write_text(json.dumps({"packages": [{"name": "symfony/http-foundation", "version": "5.4.0"}]}), encoding="utf-8")
+            (root / "Gemfile.lock").write_text("GEM\n  specs:\n    rack (2.2.3)\n\nDEPENDENCIES\n  rack\n", encoding="utf-8")
+            captured = {}
+            def osv(url, payload=None, timeout=10):
+                if url.endswith("querybatch"):
+                    captured["queries"] = payload["queries"]
+                    return {"results": [
+                        {"vulns": [{"id": "GHSA-composer-known"}]},
+                        {"vulns": [{"id": "GHSA-ruby-known"}]},
+                    ]}
+                advisory = url.rsplit("/", 1)[-1]
+                package = "symfony/http-foundation" if advisory == "GHSA-composer-known" else "rack"
+                return {"database_specific": {"severity": "HIGH"}, "affected": [{"package": {"name": package}, "ranges": [{"events": [{"fixed": "9.9.9"}]}]}]}
+            with patch("vulcanary.dependencies._json_request", side_effect=osv):
+                findings, warning = scan_dependencies(root, cache_dir=False)
+            self.assertIsNone(warning)
+            self.assertEqual(captured["queries"], [
+                {"package": {"name": "symfony/http-foundation", "ecosystem": "Packagist"}, "version": "5.4.0"},
+                {"package": {"name": "rack", "ecosystem": "RubyGems"}, "version": "2.2.3"},
+            ])
+            self.assertEqual({item.metadata["manager"] for item in findings}, {"composer", "bundler"})
+            self.assertTrue(all(not item.metadata["fix_eligible"] for item in findings))
+
+    def test_rubygems_stable_fix_wins_over_dot_separated_prerelease(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Gemfile.lock").write_text("GEM\n  specs:\n    demo (1.0.0.beta1)\n\nDEPENDENCIES\n  demo\n", encoding="utf-8")
+            batch = {"results": [{"vulns": [{"id": "GHSA-ruby-prerelease"}]}]}
+            record = {"affected": [{"package": {"name": "demo"}, "ranges": [
+                {"events": [{"fixed": "1.0.0.beta2"}]}, {"events": [{"fixed": "1.0.0"}]},
+            ]}]}
+            with patch("vulcanary.dependencies._json_request", side_effect=[batch, record]):
+                findings, warning = scan_dependencies(root, cache_dir=False)
+            self.assertIsNone(warning)
+            self.assertEqual(findings[0].metadata["fixed_version"], "1.0.0")
+
     def test_normalizes_osv_advisories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
