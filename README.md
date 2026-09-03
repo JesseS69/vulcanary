@@ -187,7 +187,7 @@ The rule ID, owner, ISO expiration date, and meaningful justification are mandat
 
 ## Current capabilities
 
-- Secret patterns: AWS access keys, GitHub tokens, and private keys
+- Secret detection: exact AWS, GitHub, and private-key patterns plus contextual high-entropy credentials with fully redacted evidence
 - SAST analysis: AST-confirmed Python `eval`, shell-enabled subprocess, and pickle calls, plus selected JavaScript execution/XSS sinks
 - IaC and CI patterns: root containers, floating base tags, download-to-shell builds, public Terraform ingress or storage ACLs, GitHub Actions `write-all` permissions, mutable action branches, and persisted checkout credentials
 - Dependency advisories: npm, Yarn Classic/Berry, pnpm, exact requirements pins, Pipenv, Poetry, uv, PDM, Go modules, crates.io, Packagist, and RubyGems packages queried against OSV
@@ -203,6 +203,8 @@ The rule ID, owner, ISO expiration date, and meaningful justification are mandat
 - Isolated parent-package and coordinated Expo upgrade evaluation
 - Verified dependency, platform, and supported source-fix branches with rollback, project checks, rescanning, and guarded commits
 - CycloneDX dependency inventory and change tracking
+
+The contextual entropy detector requires a secret-like assignment name, a minimum length, character diversity, and Shannon entropy rather than flagging random-looking text globally. It excludes common placeholders, environment references, URLs, hashes, UUIDs, explicit example/template files, and test-fixture directories. Python comments and string-contained documentation examples are rejected using tokenizer spans. Findings retain only the path, line, rounded entropy score, and confidence metadata; the candidate value is replaced with `[redacted]` before reporting or persistence. This built-in detector scans the current working tree only—enable the separately installed Gitleaks history scanner for deleted or branch-only credentials.
 - Fingerprint-scoped, owned, expiring security exceptions with a local audit trail
 - Pull-request dependency admission for denied packages/licenses, lifecycle scripts, non-registry sources, and missing npm integrity
 - Permission-gated passive HTTP header and cookie audits

@@ -118,6 +118,7 @@ class ScannerTests(unittest.TestCase):
         engines = {item["id"]: item["engine"] for item in first["rules"]}
         self.assertEqual(engines["CODE-PY-EVAL"], "python_ast_with_regex_fallback")
         self.assertEqual(engines["CODE-JS-EVAL"], "regex")
+        self.assertEqual(engines["SECRET-HIGH-ENTROPY"], "contextual_entropy")
 
     def test_detects_code_secret_and_iac(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -128,6 +129,59 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual({f.rule_id for f in findings}, {"SECRET-AWS-KEY", "CODE-PY-EVAL", "IAC-DOCKER-ROOT"})
             secret = next(f for f in findings if f.category == "secret")
             self.assertEqual(secret.evidence, "[redacted]")
+
+    def test_contextual_entropy_detects_and_redacts_unknown_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            secret_value = "s3cr3t_Qp9!zV2@Lm7#Nx4$Kd8"
+            (root / "settings.toml").write_text(f'client_secret = "{secret_value}"\n', encoding="utf-8")
+            findings = scan(root, Config())
+            self.assertEqual(len(findings), 1)
+            finding = findings[0]
+            self.assertEqual((finding.rule_id, finding.severity, finding.evidence), ("SECRET-HIGH-ENTROPY", Severity.HIGH, "[redacted]"))
+            self.assertEqual((finding.metadata["confidence"], finding.metadata["detector"]), ("high", "contextual_entropy"))
+            self.assertGreaterEqual(finding.metadata["entropy"], 3.7)
+            self.assertNotIn(secret_value, json.dumps(finding.to_dict()))
+
+    def test_contextual_entropy_ignores_common_non_secret_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "safe.env").write_text(
+                "API_KEY=replace_me_with_your_api_key\n"
+                "TOKEN=${TOKEN_FROM_ENVIRONMENT}\n"
+                "PASSWORD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+                "SECRET=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n"
+                "CREDENTIAL=550e8400-e29b-41d4-a716-446655440000\n"
+                "AUTHORIZATION=https://example.invalid/oauth/callback\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(scan(root, Config()), [])
+
+    def test_contextual_entropy_ignores_explicit_example_and_fixture_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixtures = root / "tests" / "fixtures"
+            fixtures.mkdir(parents=True)
+            content = 'client_secret = "s3cr3t_Qp9!zV2@Lm7#Nx4$Kd8"\n'
+            (root / ".env.example").write_text(content, encoding="utf-8")
+            (fixtures / "credentials.toml").write_text(content, encoding="utf-8")
+            self.assertEqual(scan(root, Config()), [])
+
+    def test_contextual_entropy_ignores_comments_and_embedded_documentation_strings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            content = "s3cr3t_Qp9!zV2@Lm7#Nx4$Kd8"
+            (root / "docs.py").write_text(
+                f'# client_secret = "{content}"\nexample = \'api_key="{content}"\'\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(scan(root, Config()), [])
+
+    def test_contextual_entropy_does_not_duplicate_exact_secret_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "aws.env").write_text("API_KEY=AKIAABCDEFGHIJKLMNOP\n", encoding="utf-8")  # gitleaks:allow
+            self.assertEqual([item.rule_id for item in scan(root, Config())], ["SECRET-AWS-KEY"])
 
     def test_detects_high_confidence_python_container_terraform_and_ci_risks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
