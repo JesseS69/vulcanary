@@ -176,7 +176,7 @@ The rule ID, owner, ISO expiration date, and meaningful justification are mandat
 - Secret patterns: AWS access keys, GitHub tokens, and private keys
 - SAST patterns: selected Python and JavaScript execution/XSS sinks plus unsafe Python deserialization
 - IaC and CI patterns: root containers, floating base tags, download-to-shell builds, public Terraform ingress or storage ACLs, GitHub Actions `write-all` permissions, mutable action branches, and persisted checkout credentials
-- Dependency advisories: npm, Yarn Classic/Berry, pnpm, pinned requirements, Poetry, uv, and PDM lockfile packages queried against OSV
+- Dependency advisories: npm, Yarn Classic/Berry, pnpm, pinned requirements, Poetry, uv, PDM, Go modules, and crates.io packages queried against OSV
 - Conservative reachability context: observed JavaScript/TypeScript and Python imports, including imported direct parents of vulnerable transitive npm packages
 - Shortest npm dependency chains with runtime/development parent scope and explicit tooling-path classification
 - Read-only remediation recommendations that prefer verified parent or platform upgrades over unscoped transitive overrides
@@ -344,7 +344,9 @@ GitHub workflows can pass `--github-summary` to append a sanitized severity tabl
 4. **Dependency remediation:** add rollback-proven lockfile updates for Yarn, nested pnpm workspaces, Poetry, uv, and PDM, plus API-level compatibility smokes for known high-risk overrides.
 5. **Hosted control plane:** only if needed, add authenticated workers, tenant isolation, RBAC, durable audit storage, and explicit source-retention controls without weakening local-first mode.
 
-Vulcanary consumes OSV rather than maintaining a private vulnerability database, preserving advisory identifiers and fixed versions in its normalized findings. Exact Python pins in `requirements*.txt`, direct npm dependencies, and direct root-workspace pnpm dependencies can be upgraded locally when OSV identifies a same-major fix. pnpm uses `--lockfile-only --ignore-scripts`; every manager still requires an isolated branch, security rescan, configured project checks, and an explicit commit. Yarn, nested pnpm workspaces, Poetry, uv, and PDM findings remain read-only until equivalent lockfile rollback and verification coverage is available.
+Vulcanary consumes OSV rather than maintaining a private vulnerability database, preserving advisory identifiers and fixed versions in its normalized findings. Go inventory comes from `go.mod` requirements—not the historical superset in `go.sum`—and preserves direct versus `// indirect` classification without invoking the Go toolchain. Cargo inventory includes only crates.io records from `Cargo.lock`, excludes local workspace and Git packages, and derives direct declarations from `Cargo.toml`, including renamed and target-specific dependencies.
+
+Exact Python pins in `requirements*.txt`, direct npm dependencies, and direct root-workspace pnpm dependencies can be upgraded locally when OSV identifies a same-major fix. pnpm uses `--lockfile-only --ignore-scripts`; every manager still requires an isolated branch, security rescan, configured project checks, and an explicit commit. Go, Cargo, Yarn, nested pnpm workspaces, Poetry, uv, and PDM findings remain read-only until equivalent lockfile rollback and verification coverage is available.
 
 ## Security boundaries
 

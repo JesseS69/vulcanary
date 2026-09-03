@@ -7,6 +7,7 @@ import os
 import re
 import tempfile
 import time
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -119,6 +120,80 @@ def _python_toml_lock_packages(lock: Path, root: Path, manager: str) -> list[Pac
     return found
 
 
+def _cargo_declared_names(directory: Path) -> set[str]:
+    """Collect actual crate names declared by manifests governed by one Cargo lock."""
+    names = set()
+    for manifest in _dependency_files(directory, lambda name: name == "Cargo.toml"):
+        try:
+            document = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError):
+            continue
+
+        def collect(value: dict) -> None:
+            for key in ("dependencies", "dev-dependencies", "build-dependencies"):
+                declarations = value.get(key, {})
+                if not isinstance(declarations, dict):
+                    continue
+                for alias, declaration in declarations.items():
+                    actual = declaration.get("package", alias) if isinstance(declaration, dict) else alias
+                    if isinstance(actual, str):
+                        names.add(actual)
+
+        collect(document)
+        targets = document.get("target", {})
+        if isinstance(targets, dict):
+            for target in targets.values():
+                if isinstance(target, dict):
+                    collect(target)
+    return names
+
+
+def _cargo_packages(lock: Path, root: Path) -> list[Package]:
+    try:
+        document = tomllib.loads(lock.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    direct = _cargo_declared_names(lock.parent)
+    found = []
+    for record in document.get("package", []):
+        if not isinstance(record, dict):
+            continue
+        name, version, source = record.get("name"), record.get("version"), record.get("source")
+        # No source means a local workspace crate. Git and alternate-registry packages
+        # do not have crates.io identities and must not be queried as though they do.
+        if not (isinstance(name, str) and isinstance(version, str) and isinstance(source, str)):
+            continue
+        if not source.startswith("registry+") or "crates.io-index" not in source:
+            continue
+        found.append(Package(name, version, "crates.io", relative_path(lock, root), name in direct, "cargo"))
+    return found
+
+
+def _go_packages(manifest: Path, root: Path) -> list[Package]:
+    """Read resolved module requirements without invoking the Go toolchain."""
+    found = []
+    in_require = False
+    for raw in manifest.read_text(encoding="utf-8").splitlines():
+        stripped = raw.strip()
+        if stripped == "require (":
+            in_require = True
+            continue
+        if in_require and stripped == ")":
+            in_require = False
+            continue
+        if not in_require:
+            match = re.match(r"^require\s+(\S+)\s+(v\S+)(?:\s+//\s*(.*))?$", stripped)
+        else:
+            match = re.match(r"^(\S+)\s+(v\S+)(?:\s+//\s*(.*))?$", stripped)
+        if not match:
+            continue
+        name, version, comment = match.groups()
+        if not re.match(r"^v\d", version):
+            continue
+        found.append(Package(name, version[1:], "Go", relative_path(manifest, root), comment != "indirect", "go"))
+    return found
+
+
 def discover_packages(root: Path) -> list[Package]:
     packages: dict[tuple[str, str, str, str], Package] = {}
     for lock in _dependency_files(root, lambda name: name == "package-lock.json"):
@@ -152,6 +227,16 @@ def discover_packages(root: Path) -> list[Package]:
                 continue
             for package in discovered:
                 packages[(package.ecosystem, package.name.lower(), package.version, package.path)] = package
+    for lock in _dependency_files(root, lambda name: name == "Cargo.lock"):
+        for package in _cargo_packages(lock, root):
+            packages[(package.ecosystem, package.name, package.version, package.path)] = package
+    for manifest in _dependency_files(root, lambda name: name == "go.mod"):
+        try:
+            discovered = _go_packages(manifest, root)
+        except OSError:
+            continue
+        for package in discovered:
+            packages[(package.ecosystem, package.name, package.version, package.path)] = package
     requirement = re.compile(r"^\s*([A-Za-z0-9_.-]+)==([^\s;]+)")
     for lock in _dependency_files(root, lambda name: name.startswith("requirements") and name.endswith(".txt")):
         try:

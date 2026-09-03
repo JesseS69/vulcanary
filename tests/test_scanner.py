@@ -613,6 +613,78 @@ class ScannerTests(unittest.TestCase):
                 },
             )
 
+    def test_discovers_go_requirements_with_directness_and_major_module_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "go.mod").write_text(
+                "module example.test/app\n\ngo 1.23\n\nrequire github.com/gogo/protobuf v1.3.1\n"
+                "require (\n  golang.org/x/text v0.3.7 // indirect\n  example.test/library/v2 v2.4.0+incompatible\n)\n",
+                encoding="utf-8",
+            )
+            packages = sorted(discover_packages(root), key=lambda item: item.name)
+            self.assertEqual([(item.name, item.version, item.ecosystem, item.direct) for item in packages], [
+                ("example.test/library/v2", "2.4.0+incompatible", "Go", True),
+                ("github.com/gogo/protobuf", "1.3.1", "Go", True),
+                ("golang.org/x/text", "0.3.7", "Go", False),
+            ])
+
+    def test_discovers_only_crates_io_packages_and_derives_cargo_directness(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Cargo.toml").write_text(
+                '[dependencies]\nregex = "1"\nrenamed = { package = "serde", version = "1" }\n'
+                '[target.\'cfg(unix)\'.dev-dependencies]\ntempfile = "3"\n'
+                '[workspace.dependencies]\ncatalog-only = "1"\n',
+                encoding="utf-8",
+            )
+            (root / "Cargo.lock").write_text(
+                'version = 4\n\n[[package]]\nname = "workspace-app"\nversion = "0.1.0"\n'
+                '\n[[package]]\nname = "regex"\nversion = "1.5.1"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n'
+                '\n[[package]]\nname = "serde"\nversion = "1.0.100"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n'
+                '\n[[package]]\nname = "tempfile"\nversion = "3.8.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n'
+                '\n[[package]]\nname = "catalog-only"\nversion = "1.0.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n'
+                '\n[[package]]\nname = "git-only"\nversion = "1.0.0"\nsource = "git+https://example.test/repo"\n',
+                encoding="utf-8",
+            )
+            packages = sorted(discover_packages(root), key=lambda item: item.name)
+            self.assertEqual([(item.name, item.ecosystem, item.manager, item.direct) for item in packages], [
+                ("catalog-only", "crates.io", "cargo", False),
+                ("regex", "crates.io", "cargo", True),
+                ("serde", "crates.io", "cargo", True),
+                ("tempfile", "crates.io", "cargo", True),
+            ])
+
+    def test_go_and_cargo_known_vulnerabilities_reach_osv_with_exact_identities(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "go.mod").write_text("module example.test/app\nrequire github.com/gogo/protobuf v1.3.1\n", encoding="utf-8")
+            (root / "Cargo.toml").write_text('[dependencies]\nregex = "1.5.1"\n', encoding="utf-8")
+            (root / "Cargo.lock").write_text(
+                'version = 4\n[[package]]\nname = "regex"\nversion = "1.5.1"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n',
+                encoding="utf-8",
+            )
+            captured = {}
+            def osv(url, payload=None, timeout=10):
+                if url.endswith("querybatch"):
+                    captured["queries"] = payload["queries"]
+                    return {"results": [
+                        {"vulns": [{"id": "GHSA-rust-known"}]},
+                        {"vulns": [{"id": "GHSA-go-known"}]},
+                    ]}
+                advisory = url.rsplit("/", 1)[-1]
+                package = "regex" if advisory == "GHSA-rust-known" else "github.com/gogo/protobuf"
+                return {"summary": "Known vulnerable fixture", "affected": [{"package": {"name": package}, "ranges": [{"events": [{"fixed": "9.9.9"}]}]}]}
+            with patch("vulcanary.dependencies._json_request", side_effect=osv):
+                findings, warning = scan_dependencies(root, cache_dir=False)
+            self.assertIsNone(warning)
+            self.assertEqual(captured["queries"], [
+                {"package": {"name": "regex", "ecosystem": "crates.io"}, "version": "1.5.1"},
+                {"package": {"name": "github.com/gogo/protobuf", "ecosystem": "Go"}, "version": "1.3.1"},
+            ])
+            self.assertEqual({item.metadata["manager"] for item in findings}, {"cargo", "go"})
+            self.assertTrue(all(not item.metadata["fix_eligible"] for item in findings))
+            self.assertTrue(all("read-only" in item.metadata["fix_block_reason"] for item in findings))
+
     def test_normalizes_osv_advisories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
