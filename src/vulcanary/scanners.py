@@ -37,7 +37,7 @@ RULES = [
     Rule(
         "SECRET-HIGH-ENTROPY", "High-entropy credential in secret-like assignment",
         re.compile(
-            r'''(?im)(?P<key>["']?(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer[_-]?token|client[_-]?secret|credential|password|passwd|secret|token)["']?)\s*(?:=|:)\s*(?P<value>"[^"\r\n]{20,200}"|'[^'\r\n]{20,200}'|[A-Za-z0-9_./+=:@-]{20,200})'''
+            r'''(?im)(?P<key>["']?(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer[_-]?token|client[_-]?secret|credential|password|passwd|secret|token)["']?)\s*(?:=|:)\s*(?P<value>"[^"\r\n]{20,200}"|'[^'\r\n]{20,200}'|(?=[A-Za-z0-9_./+=:@-]{0,199}\d)[A-Za-z0-9_./+=:@-]{20,200})'''
         ),
         Severity.HIGH, "secret",
         "Rotate the credential, remove it from source and history, and load it from a managed secret store.",
@@ -226,7 +226,21 @@ def _entropy_match_has_assignment_context(text: str, start: int) -> bool:
     line_start = text.rfind("\n", 0, start) + 1
     prefix = text[line_start:start]
     stripped = prefix.lstrip()
-    return not stripped.startswith(("#", "//", "*", "<!--")) and not any(quote in prefix for quote in ("\"", "'", "`"))
+    if stripped.startswith(("#", "//", "*", "<!--")):
+        return False
+    quote = None
+    escaped = False
+    for character in prefix:
+        if escaped:
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        elif quote is not None:
+            if character == quote:
+                quote = None
+        elif character in {"\"", "'", "`"}:
+            quote = character
+    return quote is None
 
 
 def _python_non_code_spans(text: str) -> list[tuple[int, int]]:
@@ -363,7 +377,7 @@ def scan(root: Path, config: Config) -> list[Finding]:
         rel = relative_path(path, root)
         lines = text.splitlines()
         python_ast_matches = _python_ast_matches(text) if path.suffix.lower() == ".py" else None
-        python_non_code_spans = _python_non_code_spans(text) if path.suffix.lower() == ".py" else []
+        python_non_code_spans: list[tuple[int, int]] | None = None
         annotations = {
             number: record for number, line_text in enumerate(lines, 1)
             if (record := _parse_inline_suppression(line_text, rel, number))
@@ -405,7 +419,12 @@ def scan(root: Path, config: Config) -> list[Finding]:
                     continue
                 entropy = None
                 if rule.id == "SECRET-HIGH-ENTROPY":
-                    if any(start <= match.start() < end for start, end in python_non_code_spans) or not _entropy_match_has_assignment_context(text, match.start()):
+                    if path.suffix.lower() == ".py":
+                        if python_non_code_spans is None:
+                            python_non_code_spans = _python_non_code_spans(text)
+                        if any(start <= match.start() and match.end() <= end for start, end in python_non_code_spans):
+                            continue
+                    if not _entropy_match_has_assignment_context(text, match.start()):
                         continue
                     accepted, entropy = _entropy_secret_candidate(match, rel)
                     if not accepted:

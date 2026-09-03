@@ -177,6 +177,43 @@ class ScannerTests(unittest.TestCase):
             )
             self.assertEqual(scan(root, Config()), [])
 
+    def test_contextual_entropy_rejects_unquoted_identifier_expressions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "auth.py").write_text(
+                "password = HTTPPasswordMgr.find_user_password(request)\n"
+                "auth = urllib.parse.unquote_to_bytes(value)\n"
+                "self.auth = MultiDomainBasicAuth(request)\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(scan(root, Config()), [])
+
+    def test_contextual_entropy_accepts_unquoted_values_with_digits(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".env").write_text("API_KEY=s3cr3t_Qp9zV2Lm7Nx4Kd8\n", encoding="utf-8")
+            findings = scan(root, Config())
+            self.assertEqual([item.rule_id for item in findings], ["SECRET-HIGH-ENTROPY"])
+
+    def test_contextual_entropy_detects_balanced_quoted_keys_inline(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            secret = "s3cr3t_Qp9!zV2@Lm7#Nx4$Kd8"
+            (root / "config.json").write_text(f'{{"name":"service", "api_key":"{secret}"}}\n', encoding="utf-8")
+            (root / "config.py").write_text(f'config = {{"name": "service", "api_key": "{secret}"}}\n', encoding="utf-8")
+            findings = scan(root, Config())
+            self.assertEqual([(item.path, item.rule_id) for item in findings], [
+                ("config.json", "SECRET-HIGH-ENTROPY"),
+                ("config.py", "SECRET-HIGH-ENTROPY"),
+            ])
+
+    def test_contextual_entropy_tokenizes_python_only_after_a_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch("vulcanary.scanners._python_non_code_spans") as spans:
+            root = Path(directory)
+            (root / "plain.py").write_text("value = HTTPPasswordMgr.find_user_password(request)\n", encoding="utf-8")
+            scan(root, Config())
+            spans.assert_not_called()
+
     def test_contextual_entropy_does_not_duplicate_exact_secret_rules(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
