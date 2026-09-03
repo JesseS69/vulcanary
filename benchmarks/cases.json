@@ -2,6 +2,7 @@
   {"rule_id":"SECRET-AWS-KEY","path":"app.txt","vulnerable":"key = AKIAABCDEFGHIJKLMNOP\n","safe":"key = ${AWS_ACCESS_KEY_ID}\n"},
   {"rule_id":"SECRET-PRIVATE-KEY","path":"app.txt","vulnerable":"-----BEGIN PRIVATE KEY-----\nsynthetic fixture\n","safe":"private_key = load_from_secret_store()\n"},
   {"rule_id":"SECRET-GITHUB-TOKEN","path":"app.txt","vulnerable":"token = ghp_abcdefghijklmnopqrstuvwxyz1234567890\n","safe":"token = os.environ['GITHUB_TOKEN']\n"},
+  {"rule_id":"SECRET-HIGH-ENTROPY","path":"settings.toml","vulnerable":"client_secret = \"s3cr3t_Qp9!zV2@Lm7#Nx4$Kd8\"\n","safe":"client_secret = \"replace_me_with_your_api_key\"\n"},
   {"rule_id":"CODE-PY-EVAL","path":"app.py","vulnerable":"value = eval(user_input)\n","safe":"value = json.loads(user_input)\n"},
   {"rule_id":"CODE-PY-SHELL","path":"app.py","vulnerable":"subprocess.run(['tool', 'arg'], shell=True)\n","safe":"subprocess.run(['tool', 'arg'], check=True)\n"},
   {"rule_id":"CODE-PY-PICKLE","path":"app.py","vulnerable":"value = pickle.loads(payload)\n","safe":"value = json.loads(payload)\n"},

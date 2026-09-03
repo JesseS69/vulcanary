@@ -3,9 +3,13 @@ from __future__ import annotations
 import ast
 import fnmatch
 import hashlib
+import io
 import json
+import math
 import os
 import re
+import tokenize
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -30,6 +34,14 @@ RULES = [
     Rule("SECRET-AWS-KEY", "AWS access key in source", re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"), Severity.CRITICAL, "secret", "Revoke the key, remove it from history, and use a secret manager."),
     Rule("SECRET-PRIVATE-KEY", "Private key in source", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"), Severity.CRITICAL, "secret", "Remove and rotate the key; load it from a managed secret store."),
     Rule("SECRET-GITHUB-TOKEN", "GitHub token in source", re.compile(r"\b(?:ghp|github_pat)_[A-Za-z0-9_]{30,255}\b"), Severity.CRITICAL, "secret", "Revoke the token and replace it with a short-lived credential."),
+    Rule(
+        "SECRET-HIGH-ENTROPY", "High-entropy credential in secret-like assignment",
+        re.compile(
+            r'''(?im)(?P<key>["']?(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer[_-]?token|client[_-]?secret|credential|password|passwd|secret|token)["']?)\s*(?:=|:)\s*(?P<value>"[^"\r\n]{20,200}"|'[^'\r\n]{20,200}'|(?=[A-Za-z0-9_./+=:@-]{0,199}\d)[A-Za-z0-9_./+=:@-]{20,200})'''
+        ),
+        Severity.HIGH, "secret",
+        "Rotate the credential, remove it from source and history, and load it from a managed secret store.",
+    ),
     Rule("CODE-PY-EVAL", "Dynamic Python eval", re.compile(r"(?<![\w.])eval\s*\("), Severity.HIGH, "sast", "Avoid eval; parse and validate structured input explicitly.", frozenset({".py"})),
     Rule("CODE-PY-SHELL", "Shell command execution enabled", re.compile(r"subprocess\.(?:run|Popen|call)\s*\([^\n]*shell\s*=\s*True"), Severity.HIGH, "sast", "Pass an argument list with shell=False and validate all user-controlled values.", frozenset({".py"})),
     Rule("CODE-PY-PICKLE", "Unsafe Python deserialization", re.compile(r"(?<![\w.])pickle\.(?:load|loads)\s*\("), Severity.HIGH, "sast", "Do not deserialize untrusted pickle data; use a constrained data format such as JSON and validate its schema.", frozenset({".py"})),
@@ -62,7 +74,10 @@ def ruleset_manifest(config: Config | None = None) -> dict:
     rules = [{
         "id": rule.id, "title": rule.title, "severity": rule.severity.name.lower(),
         "category": rule.category, "extensions": sorted(rule.extensions),
-        "engine": "python_ast_with_regex_fallback" if rule.id in {"CODE-PY-EVAL", "CODE-PY-SHELL", "CODE-PY-PICKLE"} else "regex",
+        "engine": (
+            "python_ast_with_regex_fallback" if rule.id in {"CODE-PY-EVAL", "CODE-PY-SHELL", "CODE-PY-PICKLE"}
+            else "contextual_entropy" if rule.id == "SECRET-HIGH-ENTROPY" else "regex"
+        ),
         "pattern": rule.pattern.pattern, "pattern_flags": rule.pattern.flags,
         "remediation": rule.remediation,
     } for rule in sorted(rules_for(config), key=lambda item: item.id)]
@@ -174,6 +189,81 @@ def iter_files(root: Path, config: Config) -> Iterable[Path]:
 
 
 _STATIC_JS_STRING = re.compile(r'^\s*(?:"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|`(?:\\.|[^`\\])*`)\s*;?\s*(?://.*)?$')
+
+_SECRET_PLACEHOLDERS = (
+    "changeme", "dummy", "example", "fake", "not-a-real", "not_a_real", "placeholder",
+    "redacted", "replace-me", "replace_me", "sample", "test-token", "your-api", "your_api",
+)
+
+
+def _entropy_secret_candidate(match: re.Match[str], path: str = "") -> tuple[bool, float]:
+    value = match.group("value").strip().strip("\"'")
+    value = re.sub(r"^(?:bearer|basic)\s+", "", value, flags=re.I)
+    lowered = value.lower()
+    normalized_path = "/" + path.lower().replace("\\", "/")
+    filename = Path(path).name.lower()
+    fixture_path = (
+        any(part in normalized_path for part in ("/test/", "/tests/", "/fixtures/", "/examples/", "/testdata/"))
+        or any(marker in filename for marker in (".example", ".sample", ".template"))
+    )
+    if (
+        fixture_path
+        or any(marker in lowered for marker in _SECRET_PLACEHOLDERS)
+        or any(marker in value for marker in ("${", "{{", "<%", "process.env", "os.environ"))
+        or lowered.startswith(("http://", "https://", "file://"))
+        or re.fullmatch(r"[0-9a-f]{32,128}", value, re.I)
+        or re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", value, re.I)
+    ):
+        return False, 0.0
+    counts = Counter(value)
+    entropy = -sum((count / len(value)) * math.log2(count / len(value)) for count in counts.values())
+    classes = sum(bool(re.search(pattern, value)) for pattern in (r"[a-z]", r"[A-Z]", r"\d", r"[^A-Za-z0-9]"))
+    accepted = entropy >= 3.7 and len(counts) / len(value) >= 0.35 and classes >= 2
+    return accepted, entropy
+
+
+def _entropy_match_has_assignment_context(text: str, key_end: int) -> bool:
+    line_start = text.rfind("\n", 0, key_end) + 1
+    prefix = text[line_start:key_end]
+    stripped = prefix.lstrip()
+    if stripped.startswith(("#", "//", "*", "<!--")):
+        return False
+    quote = None
+    escaped = False
+    for character in prefix:
+        if escaped:
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        elif quote is not None:
+            if character == quote:
+                quote = None
+        elif character in {"\"", "'", "`"}:
+            quote = character
+    return quote is None
+
+
+def _python_non_code_spans(text: str) -> list[tuple[int, int]]:
+    lines = text.splitlines(keepends=True)
+    offsets = []
+    total = 0
+    for line in lines:
+        offsets.append(total)
+        total += len(line)
+
+    def absolute(position: tuple[int, int]) -> int:
+        line, column = position
+        return (offsets[line - 1] if 0 < line <= len(offsets) else len(text)) + column
+
+    spans = []
+    try:
+        tokens = tokenize.generate_tokens(io.StringIO(text).readline)
+        for token in tokens:
+            if token.type in {tokenize.STRING, tokenize.COMMENT}:
+                spans.append((absolute(token.start), absolute(token.end)))
+    except (IndentationError, tokenize.TokenError):
+        pass
+    return spans
 
 
 def _is_static_inner_html_assignment(text: str, match_end: int) -> bool:
@@ -287,6 +377,7 @@ def scan(root: Path, config: Config) -> list[Finding]:
         rel = relative_path(path, root)
         lines = text.splitlines()
         python_ast_matches = _python_ast_matches(text) if path.suffix.lower() == ".py" else None
+        python_non_code_spans: list[tuple[int, int]] | None = None
         annotations = {
             number: record for number, line_text in enumerate(lines, 1)
             if (record := _parse_inline_suppression(line_text, rel, number))
@@ -326,6 +417,21 @@ def scan(root: Path, config: Config) -> list[Finding]:
             for match in rule.pattern.finditer(text):
                 if rule.id == "CODE-JS-INNERHTML" and _is_static_inner_html_assignment(text, match.end()):
                     continue
+                entropy = None
+                if rule.id == "SECRET-HIGH-ENTROPY":
+                    if path.suffix.lower() == ".py":
+                        if python_non_code_spans is None:
+                            python_non_code_spans = _python_non_code_spans(text)
+                        if any(start <= match.start() and match.end() <= end for start, end in python_non_code_spans):
+                            continue
+                    if not _entropy_match_has_assignment_context(text, match.end("key")):
+                        continue
+                    accepted, entropy = _entropy_secret_candidate(match, rel)
+                    if not accepted:
+                        continue
+                    value = match.group("value").strip().strip("\"'")
+                    if any(item.id != rule.id and item.category == "secret" and item.pattern.search(value) for item in rules):
+                        continue
                 line = text.count("\n", 0, match.start()) + 1
                 candidates = [annotations[number] for number in (line - 1, line) if number in annotations]
                 if any(record.rule_id == rule.id and record.status in {"active", "expiring"} for record in candidates):
@@ -333,7 +439,8 @@ def scan(root: Path, config: Config) -> list[Finding]:
                 evidence = match.group(0).replace("\n", " ")[:120]
                 if rule.category == "secret":
                     evidence = "[redacted]"
-                finding = Finding(rule.id, rule.title, f"Matched security rule {rule.id}.", rule.severity, rule.category, rel, line, evidence, rule.remediation)
+                metadata = {"confidence": "high", "detector": "contextual_entropy", "entropy": round(entropy, 2)} if entropy is not None else {}
+                finding = Finding(rule.id, rule.title, f"Matched security rule {rule.id}.", rule.severity, rule.category, rel, line, evidence, rule.remediation, metadata=metadata)
                 if not config.is_suppressed(finding.fingerprint):
                     findings.append(finding)
     return sorted({item.fingerprint: item for item in findings}.values(), key=lambda f: (-int(f.severity), f.path, f.line))
