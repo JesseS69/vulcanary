@@ -115,6 +115,9 @@ class ScannerTests(unittest.TestCase):
         self.assertIn("CODE-PY-EVAL", {item["id"] for item in first["rules"]})
         self.assertTrue(all(item["pattern"] for item in first["rules"]))
         self.assertTrue(all(isinstance(item["pattern_flags"], int) for item in first["rules"]))
+        engines = {item["id"]: item["engine"] for item in first["rules"]}
+        self.assertEqual(engines["CODE-PY-EVAL"], "python_ast_with_regex_fallback")
+        self.assertEqual(engines["CODE-JS-EVAL"], "regex")
 
     def test_detects_code_secret_and_iac(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -149,6 +152,72 @@ class ScannerTests(unittest.TestCase):
                 "IAC-TF-PUBLIC-ACL", "CI-GHA-WRITE-ALL", "CI-GHA-MUTABLE-ACTION",
                 "CI-GHA-PERSIST-CREDENTIALS",
             })
+
+    def test_python_ast_ignores_security_words_in_comments_and_strings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "docs.py").write_text(
+                '# eval(user_input)\n'
+                'example = "pickle.loads(payload)"\n'
+                'command = "subprocess.run([tool], shell=True)"\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(scan(root, Config()), [])
+
+    def test_python_ast_preserves_existing_fingerprints_for_existing_call_shapes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "stable.py"
+            source.write_text(
+                "import pickle\nimport subprocess\n"
+                "value = eval(user_input)\n"
+                "data = pickle.loads(payload)\n"
+                "subprocess.run(['tool'], shell=True)\n",
+                encoding="utf-8",
+            )
+            ast_findings = scan(root, Config())
+            with patch("vulcanary.scanners._python_ast_matches", return_value=None):
+                regex_findings = scan(root, Config())
+            self.assertEqual(
+                {(item.rule_id, item.fingerprint) for item in ast_findings},
+                {(item.rule_id, item.fingerprint) for item in regex_findings},
+            )
+
+    def test_python_ast_detects_aliases_direct_imports_and_multiline_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "unsafe.py").write_text(
+                "import subprocess as process\n"
+                "from pickle import loads as restore\n"
+                "process.run(\n    ['tool', value],\n    shell=True,\n)\n"
+                "result = restore(payload)\n",
+                encoding="utf-8",
+            )
+            findings = scan(root, Config())
+            self.assertEqual(
+                [(item.rule_id, item.line) for item in findings],
+                [("CODE-PY-SHELL", 3), ("CODE-PY-PICKLE", 7)],
+            )
+
+    def test_python_ast_keeps_function_local_import_aliases_scoped(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scoped.py").write_text(
+                "def checked(value):\n"
+                "    import subprocess as process\n"
+                "    process.run(['tool', value], shell=True)\n"
+                "\n"
+                "process.run(['safe'], check=True)\n",
+                encoding="utf-8",
+            )
+            findings = scan(root, Config())
+            self.assertEqual([(item.rule_id, item.line) for item in findings], [("CODE-PY-SHELL", 3)])
+
+    def test_invalid_python_keeps_conservative_regex_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "broken.py").write_text("if (:  # incomplete\nvalue = eval(user_input)\n", encoding="utf-8")
+            self.assertEqual([item.rule_id for item in scan(root, Config())], ["CODE-PY-EVAL"])
 
     def test_exclusions_and_ignored_rules(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

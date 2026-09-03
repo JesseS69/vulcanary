@@ -18,7 +18,7 @@ Install a tagged Windows release by downloading `install-windows.ps1` from that 
 powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
 ```
 
-The installer downloads the release wheel and checksum manifest, refuses a checksum mismatch, installs for the current user, and opens guided setup. To install from a local checkout instead:
+The installer downloads the release wheel and checksum manifest, refuses a checksum mismatch, installs for the current user, and opens guided setup. `SHA256SUMS.txt` covers the wheel, source archive, installer, and uninstaller; when the manifest is obtained through a separately trusted channel, it can also verify the bootstrap scripts before execution. To install from a local checkout instead:
 
 ```powershell
 cd vulcanary
@@ -188,7 +188,7 @@ The rule ID, owner, ISO expiration date, and meaningful justification are mandat
 ## Current capabilities
 
 - Secret patterns: AWS access keys, GitHub tokens, and private keys
-- SAST patterns: selected Python and JavaScript execution/XSS sinks plus unsafe Python deserialization
+- SAST analysis: AST-confirmed Python `eval`, shell-enabled subprocess, and pickle calls, plus selected JavaScript execution/XSS sinks
 - IaC and CI patterns: root containers, floating base tags, download-to-shell builds, public Terraform ingress or storage ACLs, GitHub Actions `write-all` permissions, mutable action branches, and persisted checkout credentials
 - Dependency advisories: npm, Yarn Classic/Berry, pnpm, exact requirements pins, Pipenv, Poetry, uv, PDM, Go modules, crates.io, Packagist, and RubyGems packages queried against OSV
 - Conservative reachability context: observed JavaScript/TypeScript and Python imports, including imported direct parents of vulnerable transitive npm packages
@@ -298,7 +298,7 @@ Other public repositories can call `.github/workflows/security-scan.yml` as a re
 
 The included GitHub Actions workflow automatically runs pinned Semgrep Community Edition, Gitleaks, Trivy, and Checkov containers. Source is mounted read-only, temporary reports stay outside the checkout, Semgrep metrics are disabled, Gitleaks output is fully redacted, and no scanner receives the Docker socket. Vulcanary applies one policy gate to all four reports. No scanner account or API token is required.
 
-Every scan can export `--ruleset-manifest vulcanary-ruleset.json`. The canonical manifest lists each built-in rule's identifier, severity, category, supported extensions, detector pattern and flags, and remediation text with a deterministic SHA-256 digest. JSON/SARIF metadata, the dashboard, and CI artifacts carry the same digest so rule changes are reviewable rather than silent.
+Every scan can export `--ruleset-manifest vulcanary-ruleset.json`. The canonical manifest lists each built-in rule's identifier, severity, category, supported extensions, detector engine, fallback pattern and flags, and remediation text with a deterministic SHA-256 digest. JSON/SARIF metadata, the dashboard, and CI artifacts carry the same digest so rule changes are reviewable rather than silent.
 
 `--provenance vulcanary-provenance.json` creates an in-toto Statement v1 containing SHA-256 subjects for the generated JSON, SARIF, CycloneDX, SPDX, and ruleset artifacts. The statement explicitly marks itself unsigned; a trusted CI identity or key-backed signer must sign it externally before it should be treated as an attestation. Vulcanary never invents or stores signing keys.
 

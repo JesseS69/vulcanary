@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import fnmatch
 import hashlib
 import json
@@ -61,6 +62,7 @@ def ruleset_manifest(config: Config | None = None) -> dict:
     rules = [{
         "id": rule.id, "title": rule.title, "severity": rule.severity.name.lower(),
         "category": rule.category, "extensions": sorted(rule.extensions),
+        "engine": "python_ast_with_regex_fallback" if rule.id in {"CODE-PY-EVAL", "CODE-PY-SHELL", "CODE-PY-PICKLE"} else "regex",
         "pattern": rule.pattern.pattern, "pattern_flags": rule.pattern.flags,
         "remediation": rule.remediation,
     } for rule in sorted(rules_for(config), key=lambda item: item.id)]
@@ -181,6 +183,99 @@ def _is_static_inner_html_assignment(text: str, match_end: int) -> bool:
     return "${" not in expression and _STATIC_JS_STRING.fullmatch(expression) is not None
 
 
+_PYTHON_AST_RULES = frozenset({"CODE-PY-EVAL", "CODE-PY-SHELL", "CODE-PY-PICKLE"})
+
+
+def _python_ast_matches(text: str) -> dict[str, list[tuple[int, str]]] | None:
+    """Return confirmed Python call sites, or None when regex fallback is required."""
+    try:
+        module = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None
+
+    parents = {child: parent for parent in ast.walk(module) for child in ast.iter_child_nodes(parent)}
+    scope_types = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+    scopes: dict[ast.AST, dict[str, object]] = {
+        node: {"subprocess_modules": set(), "pickle_modules": set(), "subprocess_functions": {}, "pickle_functions": {}}
+        for node in ast.walk(module) if isinstance(node, scope_types)
+    }
+    scopes[module]["subprocess_modules"] = {"subprocess"}
+    scopes[module]["pickle_modules"] = {"pickle"}
+    matches: dict[str, list[tuple[int, str]]] = {rule_id: [] for rule_id in _PYTHON_AST_RULES}
+
+    def evidence(rule_id: str, node: ast.Call, fallback: str) -> str:
+        segment = ast.get_source_segment(text, node) or ""
+        rule = next(item for item in RULES if item.id == rule_id)
+        legacy = rule.pattern.search(segment)
+        return legacy.group(0).replace("\n", " ")[:120] if legacy else fallback
+
+    def containing_scopes(node: ast.AST) -> list[dict[str, object]]:
+        found = []
+        current = node
+        while current in parents:
+            current = parents[current]
+            if current in scopes:
+                found.append(scopes[current])
+        return found
+
+    for node in ast.walk(module):
+        containing = containing_scopes(node)
+        scope = containing[0] if containing else scopes[module]
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "subprocess":
+                    scope["subprocess_modules"].add(alias.asname or alias.name)
+                elif alias.name in {"pickle", "_pickle"}:
+                    scope["pickle_modules"].add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "subprocess":
+                for alias in node.names:
+                    if alias.name in {"run", "Popen", "call"}:
+                        scope["subprocess_functions"][alias.asname or alias.name] = alias.name
+            elif node.module in {"pickle", "_pickle"}:
+                for alias in node.names:
+                    if alias.name in {"load", "loads"}:
+                        scope["pickle_functions"][alias.asname or alias.name] = alias.name
+
+    for node in ast.walk(module):
+        if not isinstance(node, ast.Call):
+            continue
+        active_scopes = containing_scopes(node)
+        subprocess_modules = set().union(*(scope["subprocess_modules"] for scope in active_scopes))
+        pickle_modules = set().union(*(scope["pickle_modules"] for scope in active_scopes))
+        subprocess_functions = {name: value for scope in reversed(active_scopes) for name, value in scope["subprocess_functions"].items()}
+        pickle_functions = {name: value for scope in reversed(active_scopes) for name, value in scope["pickle_functions"].items()}
+        function = node.func
+        if isinstance(function, ast.Name) and function.id == "eval":
+            matches["CODE-PY-EVAL"].append((node.lineno, evidence("CODE-PY-EVAL", node, "eval(")))
+
+        function_name = None
+        module_name = None
+        if isinstance(function, ast.Attribute) and isinstance(function.value, ast.Name):
+            module_name, function_name = function.value.id, function.attr
+        elif isinstance(function, ast.Name):
+            function_name = subprocess_functions.get(function.id) or pickle_functions.get(function.id)
+
+        is_subprocess = (
+            function_name in {"run", "Popen", "call"}
+            and (module_name in subprocess_modules or (isinstance(function, ast.Name) and function.id in subprocess_functions))
+        )
+        shell_true = any(
+            keyword.arg == "shell" and isinstance(keyword.value, ast.Constant) and keyword.value.value is True
+            for keyword in node.keywords
+        )
+        if is_subprocess and shell_true:
+            matches["CODE-PY-SHELL"].append((node.lineno, evidence("CODE-PY-SHELL", node, f"{function_name}(..., shell=True)")))
+
+        is_pickle = (
+            function_name in {"load", "loads"}
+            and (module_name in pickle_modules or (isinstance(function, ast.Name) and function.id in pickle_functions))
+        )
+        if is_pickle:
+            matches["CODE-PY-PICKLE"].append((node.lineno, evidence("CODE-PY-PICKLE", node, f"{function_name}(")))
+    return matches
+
+
 def scan(root: Path, config: Config) -> list[Finding]:
     findings: list[Finding] = []
     rules = rules_for(config)
@@ -191,6 +286,7 @@ def scan(root: Path, config: Config) -> list[Finding]:
             continue
         rel = relative_path(path, root)
         lines = text.splitlines()
+        python_ast_matches = _python_ast_matches(text) if path.suffix.lower() == ".py" else None
         annotations = {
             number: record for number, line_text in enumerate(lines, 1)
             if (record := _parse_inline_suppression(line_text, rel, number))
@@ -217,6 +313,15 @@ def scan(root: Path, config: Config) -> list[Finding]:
             if rule.id.startswith("IAC-TF-") and path.suffix.lower() != ".tf":
                 continue
             if rule.id.startswith("CI-GHA-") and not (path.suffix.lower() in {".yml", ".yaml"} and ".github/workflows/" in f"/{rel}"):
+                continue
+            if rule.id in _PYTHON_AST_RULES and python_ast_matches is not None:
+                for line, evidence in python_ast_matches[rule.id]:
+                    candidates = [annotations[number] for number in (line - 1, line) if number in annotations]
+                    if any(record.rule_id == rule.id and record.status in {"active", "expiring"} for record in candidates):
+                        continue
+                    finding = Finding(rule.id, rule.title, f"Matched security rule {rule.id}.", rule.severity, rule.category, rel, line, evidence, rule.remediation)
+                    if not config.is_suppressed(finding.fingerprint):
+                        findings.append(finding)
                 continue
             for match in rule.pattern.finditer(text):
                 if rule.id == "CODE-JS-INNERHTML" and _is_static_inner_html_assignment(text, match.end()):
