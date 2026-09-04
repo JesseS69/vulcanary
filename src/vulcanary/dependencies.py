@@ -253,6 +253,77 @@ def _nuget_packages(lock: Path, root: Path) -> list[Package]:
     return list(records.values())
 
 
+def _maven_packages(report: Path, root: Path) -> list[Package]:
+    """Read Maven Dependency Plugin's resolved JSON dependency tree."""
+    try:
+        document = json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(document, dict):
+        return []
+    found: dict[tuple[str, str], Package] = {}
+    path = relative_path(report, root)
+
+    def visit(record: object, depth: int) -> None:
+        if not isinstance(record, dict):
+            return
+        group, artifact, version = record.get("groupId"), record.get("artifactId"), record.get("version")
+        scope = str(record.get("scope", "compile")).lower()
+        if depth > 0 and all(isinstance(value, str) and value for value in (group, artifact, version)):
+            name = f"{group}:{artifact}"
+            dependency_scope = "development" if scope in {"test", "provided"} else "runtime"
+            key = (name, version)
+            previous = found.get(key)
+            found[key] = Package(
+                name, version, "Maven", path, depth == 1 or bool(previous and previous.direct),
+                "maven", "runtime" if previous and previous.scope == "runtime" else dependency_scope,
+            )
+        children = record.get("children", [])
+        if isinstance(children, list):
+            for child in children:
+                visit(child, depth + 1)
+
+    visit(document, 0)
+    return list(found.values())
+
+
+def _maven_report_is_resolved(report: Path) -> bool:
+    try:
+        document = json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(document, dict) and isinstance(document.get("children"), list)
+
+
+def _gradle_packages(lock: Path, root: Path) -> list[Package]:
+    """Read resolved Gradle dependency-lock entries without running Gradle."""
+    found: dict[tuple[str, str], Package] = {}
+    path = relative_path(lock, root)
+    try:
+        lines = lock.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    for raw in lines:
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("empty="):
+            continue
+        coordinate, separator, configurations = stripped.partition("=")
+        parts = coordinate.split(":")
+        if not separator or len(parts) != 3 or not all(parts):
+            continue
+        group, artifact, version = parts
+        name = f"{group}:{artifact}"
+        scopes = {value.strip().lower() for value in configurations.split(",") if value.strip()}
+        development = bool(scopes) and all("test" in value for value in scopes)
+        key = (name, version)
+        previous = found.get(key)
+        found[key] = Package(
+            name, version, "Maven", path, False, "gradle",
+            "runtime" if previous and previous.scope == "runtime" else ("development" if development else "runtime"),
+        )
+    return list(found.values())
+
+
 def _gem_packages(lock: Path, root: Path) -> list[Package]:
     lines = lock.read_text(encoding="utf-8").splitlines()
     section = None
@@ -337,6 +408,26 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
     for lock in _dependency_files(root, lambda name: name == "packages.lock.json"):
         for package in _nuget_packages(lock, root):
             packages[(package.ecosystem, package.name.lower(), package.version, package.path)] = package
+    maven_reports = _dependency_files(root, lambda name: name in {"maven-dependency-tree.json", "dependency-tree.json"})
+    resolved_maven_reports = [report for report in maven_reports if _maven_report_is_resolved(report)]
+    for report in maven_reports:
+        if report in resolved_maven_reports:
+            for package in _maven_packages(report, root):
+                packages[(package.ecosystem, package.name, package.version, package.path)] = package
+        else:
+            unresolved.append(f"{relative_path(report, root)}: invalid Maven dependency tree")
+    gradle_locks = _dependency_files(root, lambda name: name == "gradle.lockfile")
+    for lock in gradle_locks:
+        for package in _gradle_packages(lock, root):
+            packages[(package.ecosystem, package.name, package.version, package.path)] = package
+    maven_report_directories = {report.parent.resolve() for report in maven_reports}
+    for manifest in _dependency_files(root, lambda name: name == "pom.xml"):
+        if manifest.parent.resolve() not in maven_report_directories:
+            unresolved.append(f"{relative_path(manifest, root)}: resolved Maven dependency tree missing")
+    gradle_lock_directories = {lock.parent.resolve() for lock in gradle_locks}
+    for manifest in _dependency_files(root, lambda name: name in {"build.gradle", "build.gradle.kts"}):
+        if manifest.parent.resolve() not in gradle_lock_directories:
+            unresolved.append(f"{relative_path(manifest, root)}: Gradle dependency locking missing")
     for lock in _dependency_files(root, lambda name: name == "Gemfile.lock"):
         try:
             discovered = _gem_packages(lock, root)
@@ -593,7 +684,7 @@ def _version_key(value: str, ecosystem: str) -> tuple:
     normalized = value.strip().lower()
     if ecosystem.lower() == "go":
         normalized = normalized.removeprefix("v")
-    release_text = re.split(r"[-+]|(?<=\d)(?:a(?:lpha)?|b(?:eta)?|rc|pre(?:view)?|dev)", normalized, maxsplit=1)[0]
+    release_text = re.split(r"(?:[-._+]|(?<=\d))(?:a(?:lpha)?|b(?:eta)?|rc|pre(?:view)?|dev|snapshot)", normalized, maxsplit=1)[0]
     release = tuple(int(part) for part in re.findall(r"\d+", release_text)[:8])
     suffix = normalized[len(re.match(r"[vV]?[0-9.]*", normalized).group(0)):] if re.match(r"[vV]?[0-9.]*", normalized) else normalized
     stage = 4
@@ -615,6 +706,10 @@ def _fixed_version(record: dict, package: Package) -> str | None:
             for event in version_range.get("events", []):
                 if event.get("fixed"):
                     candidates.append(event["fixed"])
+    if not candidates:
+        return None
+    current_key = _version_key(package.version, package.ecosystem)
+    candidates = [candidate for candidate in candidates if _version_key(candidate, package.ecosystem) > current_key]
     if not candidates:
         return None
     current_major = re.match(r"\D*(\d+)", package.version)
@@ -720,7 +815,10 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
     if unresolved:
         locations = ", ".join(unresolved[:5])
         remainder = f" and {len(unresolved) - 5} more" if len(unresolved) > 5 else ""
-        coverage_warning = f"{len(unresolved)} unpinned Python requirement(s) were not evaluated: {locations}{remainder}"
+        if all(" dependency " not in item for item in unresolved):
+            coverage_warning = f"{len(unresolved)} unpinned Python requirement(s) were not evaluated: {locations}{remainder}"
+        else:
+            coverage_warning = f"{len(unresolved)} unresolved dependency input(s) were not evaluated: {locations}{remainder}"
     if not packages:
         return [], coverage_warning
     cache = _cache_directory(cache_dir)
@@ -769,12 +867,12 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
             parent_packages, dependency_paths, parent_scopes = dependency_context(root, package, graph_cache) if package.manager == "npm" and not package.direct else ([], [], {})
             root_pnpm = package.manager == "pnpm" and package.path == "pnpm-lock.yaml"
             fix_eligible = bool(package.direct and same_major and (package.manager in {"npm", "pip"} or root_pnpm))
-            if package.manager not in {"npm", "pip", "pnpm"}:
+            if not fixed:
+                fix_block_reason = "The advisory does not identify a patched release newer than the installed version"
+            elif package.manager not in {"npm", "pip", "pnpm"}:
                 fix_block_reason = f"Vulcanary scans {package.manager} locks read-only; automatic upgrades are not enabled yet"
             elif package.manager == "pnpm" and not root_pnpm:
                 fix_block_reason = "Nested pnpm workspace upgrades require an explicit workspace target"
-            elif not fixed:
-                fix_block_reason = "The advisory does not identify a patched release yet"
             elif not same_major:
                 fix_block_reason = f"The fix requires a major upgrade to {fixed}"
             elif not package.direct:
@@ -786,7 +884,7 @@ def scan_dependencies(root: Path, timeout: float = 10, cache_dir: Path | bool | 
                 alias for advisory_id in advisory_ids
                 for alias in [advisory_id, *_record_aliases(records.get(advisory_id, {}))]
             })
-            remediation = f"Upgrade {package.name} to {fixed} or later." if fixed else f"Review {primary} and upgrade {package.name} to a non-affected release."
+            remediation = f"Upgrade {package.name} to {fixed} or later." if fixed else f"No patched release newer than {package.version} was identified; review {primary} before changing {package.name}."
             findings.append(Finding(
                 f"SCA-{primary}", record.get("summary") or f"Vulnerable dependency: {package.name}",
                 f"{package.name} {package.version} is affected by {primary} and its linked advisory records.", severity, "dependency",

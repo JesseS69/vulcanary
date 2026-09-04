@@ -14,6 +14,12 @@ class SbomTests(unittest.TestCase):
             "pkg:nuget/Newtonsoft.Json@13.0.3",
         )
 
+    def test_maven_packages_have_canonical_purls(self) -> None:
+        self.assertEqual(
+            package_url(Package("org.apache.logging.log4j:log4j-core", "2.14.1", "Maven", "dependency-tree.json", True, "maven")),
+            "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1",
+        )
+
     def test_generates_cyclonedx_inventory_and_advisory_relationships(self) -> None:
         packages = [
             Package("@scope/direct", "1.2.3", "npm", "private/package-lock.json", True, "npm"),
