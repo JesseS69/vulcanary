@@ -42,6 +42,7 @@ function render() {
   renderWebAudits();
   renderDiagnostics();
   renderRepositories();
+  renderCoverage();
   renderLedger();
   renderGovernance();
   renderRemediationHistory();
@@ -53,6 +54,17 @@ function render() {
   if (!controlToken) {
     $('#updated').textContent = 'Dashboard actions are locked: reopen this page from the authorized link printed by `vulcanary start`.';
   }
+}
+
+function renderCoverage() {
+  const rows = state.repositories.flatMap(repo => (repo.coverage || []).map(item => ({...item, repository: repo.name})));
+  const gaps = rows.filter(item => item.dependency === 'gap').length;
+  $('#coverage-summary').textContent = rows.length ? `${rows.length} ecosystem rows · ${gaps} dependency gaps` : 'No scans';
+  const badge = value => `<span class="coverage-state ${escapeHtml(value)}">${escapeHtml(value.replaceAll('_', ' '))}</span>`;
+  // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-09-04 -- Fixed backend states and repository strings are escaped before rendering.
+  $('#coverage-matrix').innerHTML = rows.length
+    ? `<table><thead><tr><th>Repository</th><th>Ecosystem</th><th>Dependencies</th><th>Reachability</th><th>SAST</th><th>History</th></tr></thead><tbody>${rows.map(item => `<tr title="${escapeHtml(item.detail || '')}"><td>${escapeHtml(item.repository)}</td><td>${escapeHtml(item.ecosystem)}</td><td>${badge(item.dependency)}</td><td>${badge(item.reachability)}</td><td>${badge(item.sast)}</td><td>${badge(item.history)}</td></tr>`).join('')}</tbody></table>`
+    : '<p class="empty-state">Scan a repository to see applied capabilities.</p>';
 }
 
 function renderDiagnostics() {
