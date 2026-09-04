@@ -48,7 +48,7 @@ class DataflowPrototypeTests(unittest.TestCase):
         self.assertEqual(report["exposures"], [])
         self.assertEqual(report["analysis_truncations"][0]["function"], "sink")
 
-    def test_unmodeled_return_flow_to_sink_is_reported_as_a_coverage_gap(self) -> None:
+    def test_source_producing_helper_without_tainted_arguments_remains_an_explicit_gap(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "app.py").write_text(
@@ -60,7 +60,69 @@ class DataflowPrototypeTests(unittest.TestCase):
         self.assertEqual(report["exposures"], [])
         self.assertEqual(report["unmodeled_construct_count"], 1)
         self.assertEqual(report["unmodeled_constructs"][0]["construct"], "unresolved return from get_value")
-        self.assertEqual(report["unmodeled_constructs"][0]["sink_line"], 5)
+
+    def test_external_helper_return_flow_remains_an_explicit_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "def handler():\n    value = helpers.get_value(request)\n    return eval(value)\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(report["exposures"], [])
+        self.assertEqual(report["unmodeled_construct_count"], 1)
+        self.assertEqual(report["unmodeled_constructs"][0]["construct"], "unresolved return from helpers.get_value")
+
+    def test_config_parser_return_flow_is_key_sensitive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "def unsafe():\n"
+                "    value = request.form.get('value')\n"
+                "    config = configparser.ConfigParser()\n"
+                "    config.set('section', 'safe', 'literal')\n"
+                "    config.set('section', 'user', value)\n"
+                "    eval(config.get('section', 'user'))\n\n"
+                "def safe():\n"
+                "    value = request.form.get('value')\n"
+                "    config = configparser.ConfigParser()\n"
+                "    config.set('section', 'safe', 'literal')\n"
+                "    config.set('section', 'user', value)\n"
+                "    eval(config.get('section', 'safe'))\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([item["line"] for item in report["exposures"]], [6])
+
+    def test_known_request_wrapper_and_encoding_returns_propagate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "def handler():\n"
+                "    wrapped = helpers.request_wrapper(request)\n"
+                "    value = wrapped.get_query_parameter('value')\n"
+                "    encoded = base64.b64encode(value.encode('utf-8'))\n"
+                "    decoded = base64.b64decode(encoded).decode('utf-8')\n"
+                "    exec(decoded)\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(len(report["exposures"]), 1)
+        self.assertEqual(report["unmodeled_construct_count"], 0)
+
+    def test_taint_propagates_through_container_subscripts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "def handler():\n"
+                "    values = []\n"
+                "    values.append(request.args.get('value'))\n"
+                "    exec(values[0])\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(len(report["exposures"]), 1)
+        self.assertEqual(report["exposures"][0]["line"], 4)
 
     def test_fingerprint_is_anchored_to_sink_not_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
