@@ -15,6 +15,7 @@ from vulcanary.config import Config
 from vulcanary.dashboard import DashboardState, _coverage_matrix, make_handler, resolution_record_valid, serve
 from vulcanary.dependencies import Package, dependency_context, discover_dependency_state, discover_packages, scan_dependencies
 from vulcanary.fixes import preview
+from vulcanary.local_app import configure_app, load_app_config
 from vulcanary.models import Finding, Severity
 from vulcanary.scanners import rules_for, ruleset_manifest, scan
 
@@ -134,7 +135,7 @@ class ScannerTests(unittest.TestCase):
                 def server_close(self): pass
             def fail_scan(_self, _path): raise OSError("unavailable")
             def start_monitor(state): captured["state"] = state; finished.set()
-            with patch("vulcanary.dashboard.ThreadingHTTPServer", Server), patch.object(DashboardState, "scan_repository", fail_scan), patch.object(DashboardState, "start_monitor", start_monitor), patch.object(DashboardState, "stop_monitor"), patch("vulcanary.local_app.save_watched_repositories") as save_repositories:
+            with patch("vulcanary.dashboard.ThreadingHTTPServer", Server), patch.object(DashboardState, "scan_repository", fail_scan), patch.object(DashboardState, "start_monitor", start_monitor), patch.object(DashboardState, "stop_monitor"), patch("vulcanary.local_app.add_watched_repositories") as save_repositories:
                 self.assertEqual(serve("127.0.0.1", 8765, [root], open_browser=False), 0)
             state = captured["state"]
             self.assertEqual(state.startup_completed, 1)
@@ -625,6 +626,33 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(len(state.history), 1)
             with self.assertRaisesRegex(ValueError, "not currently watched"):
                 state.remove_repository(str(root))
+
+    def test_dashboard_scan_adds_repository_without_replacing_watch_list(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory); app = base / "app"
+            existing = base / "existing"; added = base / "added"
+            existing.mkdir(); added.mkdir()
+            with patch("vulcanary.local_app.app_directory", return_value=app):
+                configured = configure_app([existing], 300)
+                state = DashboardState(); state.control_token = configured["control_token"]
+                server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(state))
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    request = Request(
+                        f"http://127.0.0.1:{server.server_port}/api/scan",
+                        data=json.dumps({"repository": str(added)}).encode("utf-8"),
+                        method="POST",
+                        headers={"Content-Type": "application/json", "X-Vulcanary-Control": state.control_token},
+                    )
+                    with patch("vulcanary.dashboard.scan_dependencies", return_value=([], None)):
+                        self.assertEqual(urlopen(request, timeout=5).status, 200)
+                    self.assertEqual(
+                        load_app_config()["repositories"],
+                        [str(existing.resolve()), str(added.resolve())],
+                    )
+                finally:
+                    server.shutdown(); server.server_close(); thread.join(timeout=5)
 
     def test_dashboard_rescan_all_refreshes_tracked_repositories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

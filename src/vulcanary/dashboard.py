@@ -1057,8 +1057,8 @@ def make_handler(state: DashboardState):
                             raise ValueError(f"{scanner} report paths must be non-empty strings")
                         reports[scanner] = [Path(item) for item in values]
                     result = state.scan_repository(repository, reports if submitted else None)
-                    from .local_app import save_watched_repositories
-                    save_watched_repositories(list(state.repositories))
+                    from .local_app import add_watched_repositories
+                    add_watched_repositories([str(repository.resolve())])
                     self._json({"scan": result.to_dict(), "state": state.snapshot()})
                 elif route == "/api/web-audit":
                     audit = state.audit_web(payload.get("url"), payload.get("authorized_host"))
@@ -1220,10 +1220,11 @@ def serve(host: str, port: int, repositories: list[Path], open_browser: bool = T
                     state.startup_completed += 1
         try:
             if repositories:
-                from .local_app import save_watched_repositories
+                from .local_app import add_watched_repositories
                 # Preserve the user's intended watch list even when a transient scanner
-                # failure prevents one repository from entering the in-memory snapshot.
-                save_watched_repositories([str(repository) for repository in repositories])
+                # failure prevents one repository from entering the in-memory snapshot,
+                # and do not erase other watched repositories during a one-off launch.
+                add_watched_repositories([str(repository) for repository in repositories])
         except (OSError, ValueError) as error:
             with state._lock:
                 state.startup_errors.append({"repository": "configuration", "error": str(error)})

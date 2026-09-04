@@ -168,6 +168,13 @@ def save_watched_repositories(repositories: list[str]) -> Path:
     return save_app_config(config)
 
 
+def add_watched_repositories(repositories: list[str]) -> Path:
+    """Add repositories without discarding the user's existing watch list."""
+    config = load_app_config()
+    combined = [*config.get("repositories", []), *repositories]
+    return save_watched_repositories(combined)
+
+
 def service_status(config: dict | None = None, timeout: float = 1.5) -> dict:
     current = config or load_app_config()
     url = f"http://{current['host']}:{current['port']}"
