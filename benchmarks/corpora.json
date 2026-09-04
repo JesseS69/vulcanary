@@ -1,0 +1,32 @@
+{
+  "schema": "vulcanary.corpus-manifest.v1",
+  "corpora": [
+    {
+      "id": "owasp-benchmarkpython-0.1",
+      "kind": "labeled_dataflow",
+      "source": "git",
+      "url": "https://github.com/OWASP-Benchmark/BenchmarkPython.git",
+      "revision": "f1291485808b66e20ddb6b01b10dc71b3df8c8ba",
+      "expected_results": "expectedresults-0.1.csv",
+      "execution": "never",
+      "baseline": {
+        "true_positives": 7,
+        "false_positives": 7,
+        "false_negatives": 13,
+        "true_negatives": 26,
+        "unmodeled_construct_count": 4
+      }
+    },
+    {
+      "id": "python-runtime-external-floor",
+      "kind": "false_positive_floor",
+      "source": "local_python_runtime",
+      "path": "Lib",
+      "execution": "never",
+      "baseline": {
+        "exposures": 0
+      },
+      "notes": "File, module, parse-error, and gap counts vary with the installed Python runtime; zero exposures is the portable invariant."
+    }
+  ]
+}
