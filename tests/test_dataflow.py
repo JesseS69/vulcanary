@@ -48,7 +48,7 @@ class DataflowPrototypeTests(unittest.TestCase):
         self.assertEqual(report["exposures"], [])
         self.assertEqual(report["analysis_truncations"][0]["function"], "sink")
 
-    def test_source_producing_helper_without_tainted_arguments_remains_an_explicit_gap(self) -> None:
+    def test_source_producing_helper_return_is_resolved_without_tainted_arguments(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "app.py").write_text(
@@ -57,9 +57,40 @@ class DataflowPrototypeTests(unittest.TestCase):
                 encoding="utf-8",
             )
             report = analyze_python_dataflow(root)
+        self.assertEqual(len(report["exposures"]), 1)
+        self.assertEqual(report["exposures"][0]["line"], 5)
+        self.assertEqual(report["unmodeled_construct_count"], 0)
+
+    def test_source_return_resolves_across_three_same_module_functions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "def source():\n    return request.args.get('value')\n\n"
+                "def middle():\n    return source()\n\n"
+                "def outer():\n    return middle()\n\n"
+                "def handler():\n    return eval(outer())\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root, max_depth=3)
+            truncated = analyze_python_dataflow(root, max_depth=2)
+        self.assertEqual(len(report["exposures"]), 1)
+        self.assertEqual(report["analysis_truncations"], [])
+        self.assertEqual(truncated["exposures"], [])
+        self.assertEqual(truncated["analysis_truncations"][0]["function"], "source")
+        self.assertEqual(truncated["unmodeled_construct_count"], 1)
+
+    def test_recursive_source_helper_is_bounded_and_reported_as_unmodeled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "def get_value():\n    return get_value()\n\n"
+                "def handler():\n    return eval(get_value())\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
         self.assertEqual(report["exposures"], [])
+        self.assertEqual(report["analysis_truncations"], [])
         self.assertEqual(report["unmodeled_construct_count"], 1)
-        self.assertEqual(report["unmodeled_constructs"][0]["construct"], "unresolved return from get_value")
 
     def test_external_helper_return_flow_remains_an_explicit_gap(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
