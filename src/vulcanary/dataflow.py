@@ -41,7 +41,9 @@ def _source(node: ast.AST) -> str | None:
     name = _name(target)
     if name in {"input", "request.get_json"}:
         return name
-    if name.startswith(("request.args", "request.form", "request.cookies", "request.values", "request.GET", "request.POST", "request.data", "request.json")):
+    if name.startswith(("request.args", "request.form", "request.cookies", "request.headers", "request.values", "request.GET", "request.POST", "request.data", "request.json")):
+        return name
+    if name.endswith((".get_form_parameter", ".get_query_parameter", ".get_cookie")):
         return name
     return None
 
@@ -71,13 +73,29 @@ class _ModuleAnalyzer:
             return env.get(node.id, _Taint())
         if isinstance(node, ast.Subscript):
             key = _subscript_key(node)
-            return env.get(key, _Taint()) if key else self.expression(node.value, env, depth, stack)
+            return env[key] if key and key in env else self.expression(node.value, env, depth, stack)
         if isinstance(node, ast.Call):
             function_name = _name(node.func)
             argument_taints = [self.expression(item, env, depth, stack) for item in (*node.args, *(item.value for item in node.keywords))]
             combined = _Taint()
             for item in argument_taints:
                 combined = combined.merge(item)
+            receiver_name = _name(node.func.value) if isinstance(node.func, ast.Attribute) else ""
+            receiver_taint = self.expression(node.func.value, env, depth, stack) if isinstance(node.func, ast.Attribute) else _Taint()
+            if isinstance(node.func, ast.Attribute) and node.func.attr in {"encode", "decode"}:
+                return combined.merge(receiver_taint)
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "set" and len(node.args) >= 3:
+                section = node.args[0].value if isinstance(node.args[0], ast.Constant) else None
+                option = node.args[1].value if isinstance(node.args[1], ast.Constant) else None
+                if receiver_name and isinstance(section, str) and isinstance(option, str):
+                    env[f"{receiver_name}.config[{section!r},{option!r}]"] = argument_taints[2]
+                    return _Taint()
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "get" and len(node.args) >= 2:
+                section = node.args[0].value if isinstance(node.args[0], ast.Constant) else None
+                option = node.args[1].value if isinstance(node.args[1], ast.Constant) else None
+                key = f"{receiver_name}.config[{section!r},{option!r}]"
+                if receiver_name and isinstance(section, str) and isinstance(option, str) and key in env:
+                    return env[key]
             if function_name.endswith(".append") and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
                 container = node.func.value.id
                 env[container] = env.get(container, _Taint()).merge(combined)
@@ -95,11 +113,14 @@ class _ModuleAnalyzer:
                     self.unmodeled_constructs.add((unresolved, node.lineno, node.col_offset))
             if function_name in {"ast.literal_eval", "json.loads", "int", "float", "bool"} and combined.sources:
                 return _Taint(combined.sources, tuple(dict.fromkeys(combined.sanitizers + (function_name,))), combined.unmodeled)
+            if function_name in {"base64.b64encode", "base64.b64decode", "urllib.parse.unquote_plus", "urllib.parse.unquote"}:
+                return combined
             callee = self.functions.get(function_name)
             if callee and combined.sources:
                 if depth >= self.max_depth or function_name in stack:
-                    self.truncations.add((function_name, getattr(node, "lineno", 0)))
-                    return combined
+                    if combined.sources or combined.unmodeled:
+                        self.truncations.add((function_name, getattr(node, "lineno", 0)))
+                    return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (f"unresolved return from {function_name}",))))
                 return self.execute(callee, argument_taints, depth + 1, stack + (function_name,))
             if function_name and function_name not in {"eval", "builtins.eval", "exec", "builtins.exec"}:
                 return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (f"unresolved return from {function_name}",))))
