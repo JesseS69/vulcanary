@@ -49,6 +49,8 @@ class ScannerTests(unittest.TestCase):
         styles = (assets / "coverage.css").read_text(encoding="utf-8")
         self.assertIn("capabilities did not fully run", script)
         self.assertIn("Partial analysis", script)
+        self.assertIn("value === 'gap'", script)
+        self.assertIn("configured or product", script)
         self.assertIn('id="coverage-verdicts"', markup)
         self.assertIn("coverage-row-incomplete", styles)
 

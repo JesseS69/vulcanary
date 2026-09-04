@@ -59,8 +59,9 @@ function render() {
 function renderCoverage() {
   const rows = state.repositories.flatMap(repo => (repo.coverage || []).map(item => ({...item, repository: repo.name})));
   const capabilities = ['dependency', 'reachability', 'sast', 'history'];
-  const needsAttention = value => ['gap', 'unsupported', 'disabled'].includes(value);
-  const incomplete = rows.reduce((total, item) => total + capabilities.filter(capability => needsAttention(item[capability])).length, 0);
+  const isIncomplete = value => value === 'gap';
+  const isLimited = value => ['unsupported', 'disabled'].includes(value);
+  const incomplete = rows.reduce((total, item) => total + capabilities.filter(capability => isIncomplete(item[capability])).length, 0);
   const summary = $('#coverage-summary');
   summary.textContent = rows.length ? incomplete ? `${incomplete} capabilities did not fully run` : 'All applicable capabilities ran' : 'No scans';
   summary.classList.toggle('coverage-warning', incomplete > 0);
@@ -69,13 +70,14 @@ function renderCoverage() {
   // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-09-04 -- Repository names are escaped and status text/classes come from fixed values.
   $('#coverage-verdicts').innerHTML = repositories.map(repository => {
     const repositoryRows = rows.filter(item => item.repository === repository);
-    const affected = repositoryRows.flatMap(item => capabilities.filter(capability => needsAttention(item[capability])).map(capability => `${item.ecosystem} ${capability}`));
+    const affected = repositoryRows.flatMap(item => capabilities.filter(capability => isIncomplete(item[capability])).map(capability => `${item.ecosystem} ${capability}`));
     const complete = affected.length === 0;
-    return `<article class="coverage-verdict ${complete ? 'complete' : 'incomplete'}"><span class="coverage-verdict-icon" aria-hidden="true">${complete ? '✓' : '!'}</span><div><strong>${escapeHtml(repository)} · ${complete ? 'Applicable analysis complete' : 'Partial analysis'}</strong><span>${complete ? 'Every applicable capability reported that it ran.' : `${affected.length} capability ${affected.length === 1 ? 'gap' : 'gaps'}: ${escapeHtml(affected.slice(0, 3).join(' · '))}${affected.length > 3 ? ` · +${affected.length - 3} more` : ''}`}</span></div></article>`;
+    const limitations = repositoryRows.reduce((total, item) => total + capabilities.filter(capability => isLimited(item[capability])).length, 0);
+    return `<article class="coverage-verdict ${complete ? 'complete' : 'incomplete'}"><span class="coverage-verdict-icon" aria-hidden="true">${complete ? '✓' : '!'}</span><div><strong>${escapeHtml(repository)} · ${complete ? 'No incomplete analysis' : 'Partial analysis'}</strong><span>${complete ? `${limitations} configured or product ${limitations === 1 ? 'limitation' : 'limitations'} shown neutrally below.` : `${affected.length} capability ${affected.length === 1 ? 'gap' : 'gaps'}: ${escapeHtml(affected.slice(0, 3).join(' · '))}${affected.length > 3 ? ` · +${affected.length - 3} more` : ''}`}</span></div></article>`;
   }).join('');
   // vulcanary:ignore CODE-JS-INNERHTML owner=vulcanary-maintainers expires=2027-09-04 -- Fixed backend states and repository strings are escaped before rendering.
   $('#coverage-matrix').innerHTML = rows.length
-    ? `<table class="coverage-table"><thead><tr><th>Repository</th><th>Ecosystem</th><th>Dependencies</th><th>Reachability</th><th>SAST</th><th>History</th><th>Coverage note</th></tr></thead><tbody>${rows.map(item => `<tr class="${capabilities.some(capability => needsAttention(item[capability])) ? 'coverage-row-incomplete' : ''}"><td>${escapeHtml(item.repository)}</td><td>${escapeHtml(item.ecosystem)}</td><td>${badge(item.dependency)}</td><td>${badge(item.reachability)}</td><td>${badge(item.sast)}</td><td>${badge(item.history)}</td><td class="coverage-detail">${escapeHtml(item.detail || (capabilities.some(capability => needsAttention(item[capability])) ? 'One or more capabilities did not run.' : 'Applicable analysis completed.'))}</td></tr>`).join('')}</tbody></table>`
+    ? `<table class="coverage-table"><thead><tr><th>Repository</th><th>Ecosystem</th><th>Dependencies</th><th>Reachability</th><th>SAST</th><th>History</th><th>Coverage note</th></tr></thead><tbody>${rows.map(item => `<tr class="${capabilities.some(capability => isIncomplete(item[capability])) ? 'coverage-row-incomplete' : capabilities.some(capability => isLimited(item[capability])) ? 'coverage-row-limited' : ''}"><td>${escapeHtml(item.repository)}</td><td>${escapeHtml(item.ecosystem)}</td><td>${badge(item.dependency)}</td><td>${badge(item.reachability)}</td><td>${badge(item.sast)}</td><td>${badge(item.history)}</td><td class="coverage-detail">${escapeHtml(item.detail || (capabilities.some(capability => isIncomplete(item[capability])) ? 'Analysis was attempted but did not complete.' : capabilities.some(capability => isLimited(item[capability])) ? 'Optional or unsupported capabilities are shown in the matrix.' : 'Applicable analysis completed.'))}</td></tr>`).join('')}</tbody></table>`
     : '<p class="empty-state">Scan a repository to see applied capabilities.</p>';
 }
 

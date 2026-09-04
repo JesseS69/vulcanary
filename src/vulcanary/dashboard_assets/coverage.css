@@ -91,4 +91,5 @@
 .legend-mark.unsupported { background: #f4cb6a; }
 .legend-mark.not_applicable { background: #69717d; }
 .coverage-row-incomplete { background: rgba(117, 66, 50, .12); }
+.coverage-row-limited { background: rgba(104, 85, 45, .06); }
 .coverage-detail { min-width: 220px; color: var(--muted); font-size: 11px; line-height: 1.45; }
