@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
-from vulcanary.local_app import configure_app, export_app_config, import_app_config, load_app_config, save_watched_repositories, service_status, start_service
+from vulcanary.local_app import add_watched_repositories, configure_app, export_app_config, import_app_config, load_app_config, save_watched_repositories, service_status, start_service
 
 
 class LocalAppTests(unittest.TestCase):
@@ -54,6 +54,20 @@ class LocalAppTests(unittest.TestCase):
                 save_watched_repositories([str(second)])
                 self.assertEqual(load_app_config()["repositories"], [str(second.resolve())])
                 self.assertEqual(load_app_config()["monitor_interval"], 900)
+
+    def test_adding_watched_repository_preserves_existing_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory); app = base / "app"
+            first = base / "first"; second = base / "second"
+            first.mkdir(); second.mkdir()
+            with patch("vulcanary.local_app.app_directory", return_value=app):
+                configured = configure_app([first], 900, 8877)
+                token = configured["control_token"]
+                add_watched_repositories([str(second), str(first)])
+                persisted = load_app_config()
+                self.assertEqual(persisted["repositories"], [str(first.resolve()), str(second.resolve())])
+                self.assertEqual(persisted["control_token"], token)
+                self.assertEqual((persisted["monitor_interval"], persisted["port"]), (900, 8877))
 
     def test_background_start_keeps_control_token_out_of_arguments(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
