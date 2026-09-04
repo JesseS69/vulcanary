@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 from urllib.error import URLError
+from urllib.parse import unquote
 from urllib.request import Request, urlopen
 
 from .models import Finding, Severity, relative_path
@@ -35,6 +36,11 @@ class Package:
 
 _SKIPPED_PARTS = {"node_modules", "vendor", ".bundle", ".git", ".expo", ".pnpm-store", ".uv-cache", ".venv", "venv", ".vercel", "dist", "build", "coverage"}
 
+_PURL_ECOSYSTEMS = {
+    "npm": "npm", "pypi": "PyPI", "golang": "Go", "cargo": "crates.io",
+    "composer": "Packagist", "gem": "RubyGems", "nuget": "NuGet", "maven": "Maven",
+}
+
 
 def _dependency_files(root: Path, accepted: Callable[[str], bool]) -> list[Path]:
     found = []
@@ -43,6 +49,53 @@ def _dependency_files(root: Path, accepted: Callable[[str], bool]) -> list[Path]
         parent = Path(directory)
         found.extend(parent / name for name in files if accepted(name))
     return found
+
+
+def _cyclonedx_packages(report: Path, root: Path) -> tuple[list[Package], str | None]:
+    """Read pinned package identities from a CycloneDX JSON document."""
+    try:
+        document = json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return [], f"{relative_path(report, root)}: invalid CycloneDX JSON"
+    if not isinstance(document, dict) or document.get("bomFormat") != "CycloneDX" or not isinstance(document.get("components"), list):
+        return [], f"{relative_path(report, root)}: invalid CycloneDX document"
+    metadata = document.get("metadata") if isinstance(document.get("metadata"), dict) else {}
+    tools = metadata.get("tools", {})
+    tool_components = tools.get("components", []) if isinstance(tools, dict) else tools if isinstance(tools, list) else []
+    if any(str(tool.get("name", "")).lower() == "vulcanary" for tool in tool_components if isinstance(tool, dict)):
+        return [], None
+    root_component = metadata.get("component") if isinstance(metadata.get("component"), dict) else {}
+    root_ref = root_component.get("bom-ref")
+    direct_refs: set[str] = set()
+    dependencies = document.get("dependencies") if isinstance(document.get("dependencies"), list) else []
+    for dependency in dependencies:
+        if isinstance(dependency, dict) and dependency.get("ref") == root_ref:
+            direct_refs.update(str(item) for item in dependency.get("dependsOn", []) if isinstance(item, str))
+    found = []
+    for component in document["components"]:
+        if not isinstance(component, dict) or component.get("scope") == "excluded":
+            continue
+        purl = component.get("purl")
+        if not isinstance(purl, str):
+            continue
+        match = re.fullmatch(r"pkg:([^/]+)/(.+?)@([^?#]+)(?:\?[^#]*)?(?:#.*)?", purl)
+        if not match or match.group(1).lower() not in _PURL_ECOSYSTEMS:
+            continue
+        package_type, encoded_name, encoded_version = match.groups()
+        name = unquote(encoded_name)
+        ecosystem = _PURL_ECOSYSTEMS[package_type.lower()]
+        if ecosystem == "Maven" and "/" in name:
+            group, artifact = name.rsplit("/", 1)
+            name = f"{group}:{artifact}"
+        properties = {
+            str(item.get("name")): str(item.get("value"))
+            for item in component.get("properties", []) if isinstance(item, dict)
+        }
+        direct = component.get("bom-ref") in direct_refs or properties.get("vulcanary:dependency:direct") == "true"
+        scopes = properties.get("vulcanary:dependency:scopes", "")
+        scope = "development" if "development" in scopes.split(",") else "runtime"
+        found.append(Package(name, unquote(encoded_version), ecosystem, relative_path(report, root), direct, "cyclonedx", scope))
+    return found, None
 
 
 def _declared_names(directory: Path) -> set[str]:
@@ -471,6 +524,21 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
                 packages[(package.ecosystem, package.name.lower(), package.version, package.path)] = package
             else:
                 unresolved.append(f"{relative_path(lock, root)}:{name.lower()}")
+    cyclonedx_reports = _dependency_files(
+        root,
+        lambda name: name in {"bom.json", "cyclonedx.json"} or name.endswith(".cdx.json"),
+    )
+    known = {(package.ecosystem, package.name, package.version) for package in packages.values()}
+    for report in cyclonedx_reports:
+        discovered, warning = _cyclonedx_packages(report, root)
+        if warning:
+            unresolved.append(warning)
+        for package in discovered:
+            identity = (package.ecosystem, package.name, package.version)
+            if identity in known:
+                continue
+            packages[(package.ecosystem, package.name, package.version, package.path)] = package
+            known.add(identity)
     return list(packages.values()), unresolved
 
 

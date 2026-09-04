@@ -1212,6 +1212,41 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(packages, [])
             self.assertEqual(unresolved, ["dependency-tree.json: invalid Maven dependency tree"])
 
+    def test_discovers_cyclonedx_components_with_directness_and_supported_purls(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "supplier.cdx.json").write_text(json.dumps({
+                "bomFormat": "CycloneDX", "specVersion": "1.5",
+                "metadata": {"component": {"bom-ref": "app"}},
+                "components": [
+                    {"type": "library", "bom-ref": "log4j", "purl": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1"},
+                    {"type": "library", "bom-ref": "rack", "purl": "pkg:gem/rack@2.2.3", "scope": "optional"},
+                    {"type": "library", "bom-ref": "ignored", "purl": "pkg:unknown/example@1.0.0"},
+                ],
+                "dependencies": [{"ref": "app", "dependsOn": ["log4j"]}],
+            }), encoding="utf-8")
+            packages, unresolved = discover_dependency_state(root)
+        self.assertEqual(unresolved, [])
+        self.assertEqual(
+            {(item.name, item.version, item.ecosystem, item.direct, item.manager) for item in packages},
+            {
+                ("org.apache.logging.log4j:log4j-core", "2.14.1", "Maven", True, "cyclonedx"),
+                ("rack", "2.2.3", "RubyGems", False, "cyclonedx"),
+            },
+        )
+
+    def test_cyclonedx_ingestion_skips_vulcanary_exports_and_reports_malformed_input(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "vulcanary.cdx.json").write_text(json.dumps({
+                "bomFormat": "CycloneDX", "components": [{"purl": "pkg:npm/example@1.0.0"}],
+                "metadata": {"tools": {"components": [{"name": "Vulcanary"}]}},
+            }), encoding="utf-8")
+            (root / "broken.cdx.json").write_text("not json", encoding="utf-8")
+            packages, unresolved = discover_dependency_state(root)
+        self.assertEqual(packages, [])
+        self.assertEqual(unresolved, ["broken.cdx.json: invalid CycloneDX JSON"])
+
     def test_composer_and_rubygems_known_vulnerabilities_use_exact_osv_identities(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

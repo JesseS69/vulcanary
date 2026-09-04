@@ -190,7 +190,7 @@ The rule ID, owner, ISO expiration date, and meaningful justification are mandat
 - Secret detection: exact AWS, GitHub, and private-key patterns plus contextual high-entropy credentials with fully redacted evidence
 - SAST analysis: AST-confirmed Python `eval`, shell-enabled subprocess, and pickle calls, plus syntax-aware JavaScript/TypeScript `eval` and `innerHTML` detection
 - IaC and CI patterns: root containers, floating base tags, download-to-shell builds, public Terraform ingress or storage ACLs, GitHub Actions `write-all` permissions, mutable action branches, and persisted checkout credentials
-- Dependency advisories: npm, Yarn Classic/Berry, pnpm, exact requirements pins, Pipenv, Poetry, uv, PDM, Go modules, crates.io, Packagist, RubyGems, resolved NuGet packages, Maven dependency trees, and Gradle dependency locks queried against OSV
+- Dependency advisories: npm, Yarn Classic/Berry, pnpm, exact requirements pins, Pipenv, Poetry, uv, PDM, Go modules, crates.io, Packagist, RubyGems, resolved NuGet packages, Maven dependency trees, Gradle dependency locks, and recognized pinned CycloneDX components queried against OSV
 - Conservative reachability context: observed JavaScript/TypeScript, Python, Java/Kotlin, C#, Go, Rust, and Ruby imports, including imported direct parents of vulnerable transitive npm packages
 - Shortest npm dependency chains with runtime/development parent scope and explicit tooling-path classification
 - Read-only remediation recommendations that prefer verified parent or platform upgrades over unscoped transitive overrides
@@ -232,6 +232,8 @@ Remediation priority is a deterministic operational score, separate from advisor
 The remediation queue can be sorted by contextual priority, original severity, policy deadline, fixability, or repository. Deadline badges keep overdue ownership visible during triage instead of requiring each finding to be opened individually.
 
 ## Software bill of materials
+
+Vulcanary also ingests CycloneDX JSON files named `bom.json`, `cyclonedx.json`, or `*.cdx.json` as a universal dependency input. Components must carry a recognized, versioned package URL; unsupported or unversioned components are not guessed. Direct dependencies are derived from the BOM dependency graph when present, and malformed documents produce an explicit coverage warning. Vulcanary-generated BOMs identify Vulcanary as their tool and are skipped during discovery so exporting an SBOM into a repository cannot recursively duplicate its inventory.
 
 Export a CycloneDX 1.5 SBOM alongside scan results:
 
