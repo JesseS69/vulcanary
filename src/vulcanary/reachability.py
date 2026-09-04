@@ -14,7 +14,16 @@ _JS_IMPORT = re.compile(
 )
 _PY_FROM = re.compile(r"(?m)^\s*from\s+([A-Za-z_]\w*(?:\.\w+)*)\s+import\b")
 _PY_IMPORT = re.compile(r"(?m)^\s*import\s+([^\n#]+)")
-_SOURCE_EXTENSIONS = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".py"}
+_JAVA_IMPORT = re.compile(r"(?m)^\s*import\s+(?:static\s+)?([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)\s*;?")
+_CSHARP_USING = re.compile(r"(?m)^\s*(?:global\s+)?using\s+(?:static\s+)?(?:[A-Za-z_]\w*\s*=\s*)?([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*;")
+_GO_SINGLE_IMPORT = re.compile(r'(?m)^\s*import\s+(?:[._A-Za-z]\w*\s+)?"([^"\r\n]+)"')
+_GO_IMPORT_BLOCK = re.compile(r"(?ms)^\s*import\s*\((.*?)^\s*\)")
+_GO_BLOCK_PATH = re.compile(r'(?m)^\s*(?:[._A-Za-z]\w*\s+)?"([^"\r\n]+)"')
+_RUST_USE = re.compile(r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?use\s+(?:r#)?([A-Za-z_]\w*)\s*(?:::|;)")
+_RUST_EXTERN = re.compile(r"(?m)^\s*extern\s+crate\s+(?:r#)?([A-Za-z_]\w*)\s*;")
+_RUBY_REQUIRE = re.compile(r"(?m)^\s*require\s*(?:\(?\s*)['\"]([^'\"]+)['\"]")
+_SOURCE_EXTENSIONS = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".py", ".java", ".kt", ".cs", ".go", ".rs", ".rb"}
+_REACHABILITY_ECOSYSTEMS = {"npm", "PyPI", "Maven", "NuGet", "Go", "crates.io", "RubyGems"}
 _TOOLING_PACKAGES = {
     "babel-jest", "babel-plugin-istanbul", "@istanbuljs/load-nyc-config", "xcode",
     "jest", "eslint", "typescript", "metro", "webpack", "vite", "rollup",
@@ -34,6 +43,51 @@ def _npm_root(specifier: str) -> str | None:
 
 def _normalized_python(name: str) -> str:
     return name.lower().replace("-", "_").replace(".", "_")
+
+
+def _c_family_code(text: str, preserve_strings: bool = False) -> str:
+    """Blank comments and, unless requested, literals while preserving offsets and lines."""
+    masked = list(text)
+    index = 0
+    quote: str | None = None
+    escaped = False
+    while index < len(text):
+        character = text[index]
+        following = text[index + 1] if index + 1 < len(text) else ""
+        if quote is not None:
+            if not preserve_strings and character not in "\r\n":
+                masked[index] = " "
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in {'"', "'", "`"}:
+            quote = character
+            if not preserve_strings:
+                masked[index] = " "
+            index += 1
+            continue
+        if character == "/" and following == "/":
+            end = text.find("\n", index + 2)
+            end = len(text) if end < 0 else end
+            for offset in range(index, end):
+                masked[offset] = " "
+            index = end
+            continue
+        if character == "/" and following == "*":
+            end = text.find("*/", index + 2)
+            end = len(text) if end < 0 else end + 2
+            for offset in range(index, end):
+                if masked[offset] not in "\r\n":
+                    masked[offset] = " "
+            index = end
+            continue
+        index += 1
+    return "".join(masked)
 
 
 def _path_contains_tooling(paths: list[list[str]]) -> bool:
@@ -57,6 +111,7 @@ def remediation_priority(finding: Finding, metadata: dict) -> dict:
         "development_observed": (-20, "development dependency path"),
         "development_not_observed": (-25, "development-only path not statically observed"),
         "runtime_not_observed": (-5, "runtime path not statically observed"),
+        "dependency_import_observed": (10, "dependency namespace import observed"),
     }
     adjustment, factor = adjustments.get(usage, (0, "execution context remains unknown"))
     score += adjustment
@@ -113,9 +168,15 @@ def _exposure_context(finding: Finding, metadata: dict, deployment_assets: list[
     return {"classification": classification, "reason": reason, "route_paths": route_paths, "deployment_assets": deployment_assets}
 
 
-def observed_imports(root: Path, config: Config) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
-    npm: dict[str, set[str]] = {}
-    python: dict[str, set[str]] = {}
+def _all_observed_imports(root: Path, config: Config) -> dict[str, dict[str, set[str]]]:
+    observed: dict[str, dict[str, set[str]]] = {
+        "npm": {}, "pypi": {}, "maven": {}, "nuget": {}, "go": {}, "crates.io": {}, "rubygems": {},
+    }
+
+    def add(ecosystem: str, name: str, relative: str) -> None:
+        if name:
+            observed[ecosystem].setdefault(name.lower(), set()).add(relative)
+
     for path in iter_files(root, config):
         if path.suffix.lower() not in _SOURCE_EXTENSIONS:
             continue
@@ -129,18 +190,60 @@ def observed_imports(root: Path, config: Config) -> tuple[dict[str, set[str]], d
             for match in _PY_IMPORT.finditer(text):
                 names.extend(item.strip().split(" as ", 1)[0].split(".", 1)[0] for item in match.group(1).split(","))
             for name in names:
-                if name:
-                    python.setdefault(_normalized_python(name), set()).add(relative)
-        else:
+                add("pypi", _normalized_python(name), relative)
+        elif path.suffix.lower() in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}:
             for match in _JS_IMPORT.finditer(text):
                 name = _npm_root(match.group(1))
                 if name:
-                    npm.setdefault(name.lower(), set()).add(relative)
-    return npm, python
+                    add("npm", name, relative)
+        elif path.suffix.lower() in {".java", ".kt"}:
+            for match in _JAVA_IMPORT.finditer(_c_family_code(text)):
+                add("maven", match.group(1), relative)
+        elif path.suffix.lower() == ".cs":
+            for match in _CSHARP_USING.finditer(_c_family_code(text)):
+                add("nuget", match.group(1), relative)
+        elif path.suffix.lower() == ".go":
+            code = _c_family_code(text, preserve_strings=True)
+            for match in _GO_SINGLE_IMPORT.finditer(code):
+                add("go", match.group(1), relative)
+            for block in _GO_IMPORT_BLOCK.finditer(code):
+                for match in _GO_BLOCK_PATH.finditer(block.group(1)):
+                    add("go", match.group(1), relative)
+        elif path.suffix.lower() == ".rs":
+            for pattern in (_RUST_USE, _RUST_EXTERN):
+                for match in pattern.finditer(_c_family_code(text)):
+                    add("crates.io", match.group(1).replace("_", "-"), relative)
+        elif path.suffix.lower() == ".rb":
+            for match in _RUBY_REQUIRE.finditer(text):
+                add("rubygems", match.group(1).split("/", 1)[0], relative)
+    return observed
+
+
+def observed_imports(root: Path, config: Config) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """Return the original npm/Python import views for API compatibility."""
+    observed = _all_observed_imports(root, config)
+    return observed["npm"], observed["pypi"]
+
+
+def _correlated_imports(ecosystem: str, package: str, observed: dict[str, dict[str, set[str]]]) -> set[str]:
+    index = observed.get(ecosystem.lower(), {})
+    normalized = package.lower()
+    if ecosystem == "PyPI":
+        return set(index.get(_normalized_python(package), set()))
+    if ecosystem == "Maven" and ":" in normalized:
+        group, _artifact = normalized.split(":", 1)
+        return {path for imported, paths in index.items() if imported == group or imported.startswith(group + ".") for path in paths}
+    if ecosystem == "NuGet":
+        return {path for imported, paths in index.items() if imported == normalized or imported.startswith(normalized + ".") for path in paths}
+    if ecosystem == "Go":
+        return {path for imported, paths in index.items() if imported == normalized or imported.startswith(normalized + "/") for path in paths}
+    key = normalized.replace("_", "-") if ecosystem == "crates.io" else normalized
+    return set(index.get(key, set()))
 
 
 def analyze_reachability(root: Path, findings: list[Finding], config: Config) -> list[Finding]:
-    npm_imports, python_imports = observed_imports(root, config)
+    imports = _all_observed_imports(root, config)
+    npm_imports = imports["npm"]
     deployment_assets = _deployment_context(root, config)
     analyzed = []
     for finding in findings:
@@ -184,18 +287,24 @@ def analyze_reachability(root: Path, findings: list[Finding], config: Config) ->
                 if evidence:
                     matched.append(candidate)
                     paths.update(evidence)
-        elif ecosystem == "PyPI":
-            normalized = _normalized_python(package)
-            evidence = python_imports.get(normalized, set())
+        elif ecosystem in {"PyPI", "Maven", "NuGet", "Go", "crates.io", "RubyGems"}:
+            evidence = _correlated_imports(str(ecosystem), package, imports)
             if evidence:
                 matched.append(package)
                 paths.update(evidence)
         if matched:
-            status = "direct_import_observed" if metadata.get("direct") or ecosystem == "PyPI" else "parent_import_observed"
-            reason = "The vulnerable package is imported by application source." if status == "direct_import_observed" else "An introducing direct dependency is imported by application source."
-        else:
+            if ecosystem == "npm" and not metadata.get("direct"):
+                status = "parent_import_observed"
+                reason = "An introducing direct dependency is imported by application source."
+            else:
+                status = "direct_import_observed"
+                reason = "A dependency name or namespace correlated with an import in application source; this does not prove the vulnerable code path executes."
+        elif ecosystem in _REACHABILITY_ECOSYSTEMS:
             status = "not_observed"
             reason = "No static import was observed; the package may still be reachable through dynamic loading, tooling, runtime plugins, or indirect execution."
+        else:
+            status = "unknown"
+            reason = f"Vulcanary has no reliable source-import correlation for {ecosystem or 'this ecosystem'}; reachability remains unknown."
         metadata["reachability"] = {
             "status": status,
             "reason": reason,
@@ -217,6 +326,9 @@ def analyze_reachability(root: Path, findings: list[Finding], config: Config) ->
         elif matched and matched_scopes == {"development"}:
             usage = "development_observed"
             usage_reason = "Only an introducing development dependency was observed in scanned source."
+        elif matched:
+            usage = "dependency_import_observed"
+            usage_reason = "A dependency name or namespace correlated with source import evidence, but static analysis does not prove vulnerable code execution."
         elif "runtime" in set(scopes.values()):
             usage = "runtime_not_observed"
             usage_reason = "The package is reachable from a runtime dependency, but no static import was observed."
