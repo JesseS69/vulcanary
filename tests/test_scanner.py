@@ -42,6 +42,16 @@ class ScannerTests(unittest.TestCase):
         self.assertIn("resolution input", by_ecosystem["Maven / Gradle"]["detail"])
         self.assertEqual(by_ecosystem["Python"]["history"], "disabled")
 
+    def test_dashboard_coverage_assets_make_partial_analysis_explicit(self) -> None:
+        assets = Path(__file__).resolve().parents[1] / "src" / "vulcanary" / "dashboard_assets"
+        script = (assets / "app.js").read_text(encoding="utf-8")
+        markup = (assets / "index.html").read_text(encoding="utf-8")
+        styles = (assets / "coverage.css").read_text(encoding="utf-8")
+        self.assertIn("capabilities did not fully run", script)
+        self.assertIn("Partial analysis", script)
+        self.assertIn('id="coverage-verdicts"', markup)
+        self.assertIn("coverage-row-incomplete", styles)
+
     def test_source_rules_are_compiled_once_per_scan_not_once_per_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
