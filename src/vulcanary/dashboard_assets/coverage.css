@@ -31,3 +31,65 @@
 }
 
 .coverage-state.not_applicable { opacity: .7; }
+
+.coverage-warning {
+  border-color: #754232 !important;
+  background: #42251d !important;
+  color: #ffad8f !important;
+}
+
+.coverage-verdicts {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0 14px;
+}
+
+.coverage-verdict {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #28543b;
+  border-left: 4px solid #4fc780;
+  background: linear-gradient(90deg, rgba(40, 84, 59, .3), transparent 70%);
+  padding: 12px 14px;
+}
+
+.coverage-verdict.incomplete {
+  border-color: #754232;
+  border-left-color: #ff8359;
+  background: linear-gradient(90deg, rgba(117, 66, 50, .38), transparent 70%);
+}
+
+.coverage-verdict-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: #83e6a9;
+  font-weight: 900;
+}
+
+.coverage-verdict.incomplete .coverage-verdict-icon { color: #ff9b78; }
+.coverage-verdict div { display: grid; gap: 3px; }
+.coverage-verdict span:last-child { color: var(--muted); font-size: 12px; }
+
+.coverage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.coverage-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend-mark { width: 8px; height: 8px; border-radius: 50%; background: #69717d; }
+.legend-mark.analyzed { background: #4fc780; }
+.legend-mark.gap { background: #ff8359; }
+.legend-mark.unsupported { background: #f4cb6a; }
+.legend-mark.not_applicable { background: #69717d; }
+.coverage-row-incomplete { background: rgba(117, 66, 50, .12); }
+.coverage-row-limited { background: rgba(104, 85, 45, .06); }
+.coverage-detail { min-width: 220px; color: var(--muted); font-size: 11px; line-height: 1.45; }
