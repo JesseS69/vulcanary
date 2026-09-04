@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .config import Config
 from .models import Severity
-from .scanners import inline_suppression_register, is_excluded, ruleset_manifest, scan
+from .scanners import inline_suppression_register, is_excluded, iter_files, ruleset_manifest, scan
 from .dependencies import Package, discover_dependency_state, discover_packages, scan_dependencies
 from .reachability import analyze_reachability
 from .sbom import cyclonedx_document, inventory_snapshot, spdx_document
@@ -89,9 +89,52 @@ class RepositoryScan:
     report_sources: list[dict]
     policy: dict
     health: dict
+    coverage: list[dict]
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def _coverage_matrix(root: Path, packages: list[Package], unresolved: list[str], history_enabled: bool, config: Config) -> list[dict]:
+    """Describe applied capability independently of whether findings exist."""
+    specs = [
+        ("npm", "npm", {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}, {"package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"}, True, True),
+        ("PyPI", "Python", {".py"}, {"requirements.txt", "Pipfile.lock", "poetry.lock", "uv.lock", "pdm.lock", "pyproject.toml"}, True, True),
+        ("Maven", "Maven / Gradle", {".java", ".kt"}, {"pom.xml", "build.gradle", "build.gradle.kts", "gradle.lockfile", "dependency-tree.json", "maven-dependency-tree.json"}, True, False),
+        ("NuGet", "NuGet", {".cs"}, {"packages.lock.json"}, True, False),
+        ("Go", "Go", {".go"}, {"go.mod"}, True, False),
+        ("crates.io", "Cargo", {".rs"}, {"Cargo.toml", "Cargo.lock"}, True, False),
+        ("Packagist", "Composer", {".php"}, {"composer.json", "composer.lock"}, False, False),
+        ("RubyGems", "RubyGems", {".rb"}, {"Gemfile", "Gemfile.lock"}, True, False),
+    ]
+    files = list(iter_files(root, config))
+    names = {path.name for path in files}
+    suffixes = {path.suffix.lower() for path in files}
+    package_ecosystems = {package.ecosystem for package in packages}
+    rows = []
+    for ecosystem, label, source_extensions, manifests, reachability_supported, sast_supported in specs:
+        source_present = bool(source_extensions & suffixes)
+        manifest_present = bool(manifests & names)
+        if ecosystem == "PyPI":
+            manifest_present = manifest_present or any(name.startswith("requirements") and name.endswith(".txt") for name in names)
+        packages_present = ecosystem in package_ecosystems
+        if not (source_present or manifest_present or packages_present):
+            continue
+        warning_markers = {
+            "PyPI": ("requirements", "pipfile"),
+            "Maven": ("maven", "gradle", "pom.xml", "build.gradle"),
+        }.get(ecosystem, ())
+        relevant_warnings = [item for item in unresolved if any(marker.lower() in item.lower() for marker in warning_markers)]
+        dependency = "gap" if relevant_warnings else "analyzed" if (manifest_present or packages_present) else "not_applicable"
+        rows.append({
+            "ecosystem": label,
+            "dependency": dependency,
+            "reachability": "analyzed" if source_present and reachability_supported else "unsupported" if source_present else "not_applicable",
+            "sast": "analyzed" if source_present and sast_supported else "unsupported" if source_present else "not_applicable",
+            "history": "enabled" if history_enabled and (root / ".git").exists() else "disabled",
+            "detail": "; ".join(relevant_warnings) or None,
+        })
+    return rows
 
 
 def discover_local_repositories(limit: int = 30) -> list[str]:
@@ -269,7 +312,7 @@ class DashboardState:
         if external_reports is not None:
             self.external_reports[repository_key] = external_reports
         dependency_state = discover_dependency_state(root)
-        packages, _unresolved = dependency_state
+        packages, unresolved = dependency_state
         dependency_findings, dependency_warning = scan_dependencies(root, discovery=dependency_state)
         dependency_findings = [
             finding for finding in dependency_findings
@@ -363,6 +406,7 @@ class DashboardState:
                     "git_commit": resolution_commit,
                     "git_branch": resolution_branch,
                 },
+                coverage=_coverage_matrix(root, packages, unresolved, self.history_secrets_enabled, config),
             )
             self.repositories[str(root)] = result
             self.dependency_packages[str(root)] = packages
@@ -918,6 +962,7 @@ def make_handler(state: DashboardState):
                 "/": ("index.html", "text/html"),
                 "/app.js": ("app.js", "text/javascript"),
                 "/styles.css": ("styles.css", "text/css"),
+                "/coverage.css": ("coverage.css", "text/css"),
                 "/brand.css": ("brand.css", "text/css"),
                 "/forge.css": ("forge.css", "text/css"),
                 "/fixes.css": ("fixes.css", "text/css"),

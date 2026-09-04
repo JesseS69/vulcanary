@@ -1,0 +1,33 @@
+.coverage-state {
+  display: inline-flex;
+  border: 1px solid #39414b;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.coverage-state.analyzed,
+.coverage-state.enabled {
+  border-color: #28543b;
+  background: #173323;
+  color: #83e6a9;
+}
+
+.coverage-state.gap {
+  border-color: #754232;
+  background: #42251d;
+  color: #ff9b78;
+}
+
+.coverage-state.unsupported,
+.coverage-state.disabled {
+  border-color: #68552d;
+  background: #382f1d;
+  color: #f4cb6a;
+}
+
+.coverage-state.not_applicable { opacity: .7; }

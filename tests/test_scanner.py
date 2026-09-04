@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from vulcanary.cli import main
 from vulcanary.config import Config
-from vulcanary.dashboard import DashboardState, make_handler, resolution_record_valid, serve
+from vulcanary.dashboard import DashboardState, _coverage_matrix, make_handler, resolution_record_valid, serve
 from vulcanary.dependencies import Package, dependency_context, discover_dependency_state, discover_packages, scan_dependencies
 from vulcanary.fixes import preview
 from vulcanary.models import Finding, Severity
@@ -20,6 +20,28 @@ from vulcanary.scanners import rules_for, ruleset_manifest, scan
 
 
 class ScannerTests(unittest.TestCase):
+    def test_coverage_matrix_distinguishes_clean_analysis_from_missing_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text("print('safe')\n", encoding="utf-8")
+            (root / "requirements-dev.txt").write_text("requests==2.32.3\n", encoding="utf-8")
+            (root / "pom.xml").write_text("<project />\n", encoding="utf-8")
+            (root / "Example.java").write_text("class Example {}\n", encoding="utf-8")
+            rows = _coverage_matrix(
+                root,
+                [Package("requests", "2.32.3", "PyPI", "requirements-dev.txt")],
+                ["Maven dependency resolution input is missing"],
+                False,
+                Config(),
+            )
+        by_ecosystem = {row["ecosystem"]: row for row in rows}
+        self.assertEqual(by_ecosystem["Python"]["dependency"], "analyzed")
+        self.assertEqual(by_ecosystem["Python"]["sast"], "analyzed")
+        self.assertEqual(by_ecosystem["Maven / Gradle"]["dependency"], "gap")
+        self.assertEqual(by_ecosystem["Maven / Gradle"]["sast"], "unsupported")
+        self.assertIn("resolution input", by_ecosystem["Maven / Gradle"]["detail"])
+        self.assertEqual(by_ecosystem["Python"]["history"], "disabled")
+
     def test_source_rules_are_compiled_once_per_scan_not_once_per_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
