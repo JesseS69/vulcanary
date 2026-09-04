@@ -54,6 +54,51 @@ def _subscript_key(node: ast.Subscript) -> str | None:
     return None
 
 
+def _static_expression(node: ast.AST | None) -> bool:
+    if node is None or isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return all(_static_expression(item) for item in node.elts)
+    if isinstance(node, ast.Dict):
+        return all(_static_expression(item) for item in (*node.keys, *node.values))
+    if isinstance(node, ast.UnaryOp):
+        return _static_expression(node.operand)
+    if isinstance(node, ast.BinOp):
+        return _static_expression(node.left) and _static_expression(node.right)
+    if isinstance(node, ast.BoolOp):
+        return all(_static_expression(item) for item in node.values)
+    if isinstance(node, ast.Compare):
+        return _static_expression(node.left) and all(_static_expression(item) for item in node.comparators)
+    if isinstance(node, ast.JoinedStr):
+        return all(_static_expression(item.value) if isinstance(item, ast.FormattedValue) else _static_expression(item) for item in node.values)
+    return False
+
+
+def _returns_only_static(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    returns: list[ast.Return] = []
+
+    class Visitor(ast.NodeVisitor):
+        def visit_Return(self, node: ast.Return) -> None:
+            returns.append(node)
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if node is function:
+                self.generic_visit(node)
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+    Visitor().visit(function)
+    return all(_static_expression(item.value) for item in returns)
+
+
+def _gap(category: str, construct: str) -> str:
+    return f"{category}\0{construct}"
+
+
+def _split_gap(value: str) -> tuple[str, str]:
+    return tuple(value.split("\0", 1)) if "\0" in value else ("unclassified", value)
+
+
 def _source_capable_functions(tree: ast.Module) -> set[str]:
     direct: set[str] = set()
     calls: dict[str, set[str]] = {}
@@ -88,12 +133,24 @@ def _source_capable_functions(tree: ast.Module) -> set[str]:
     return capable
 
 
+def _import_bindings(tree: ast.Module) -> tuple[set[str], set[str]]:
+    modules: set[str] = set()
+    symbols: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.asname or alias.name.split(".", 1)[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            symbols.update(alias.asname or alias.name for alias in node.names if alias.name != "*")
+    return modules, symbols
+
+
 class _ModuleAnalyzer:
     def __init__(self, path: str, tree: ast.Module, max_depth: int) -> None:
         self.path = path
         self.max_depth = max_depth
         self.functions = {node.name: node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
         self.source_functions = _source_capable_functions(tree)
+        self.imported_modules, self.imported_symbols = _import_bindings(tree)
         self.exposures: dict[str, dict] = {}
         self.truncations: set[tuple[str, int]] = set()
         self.unmodeled_constructs: set[tuple[str, int, int]] = set()
@@ -155,10 +212,22 @@ class _ModuleAnalyzer:
                 if depth >= self.max_depth or function_name in stack:
                     if combined.sources or combined.unmodeled or function_name in self.source_functions:
                         self.truncations.add((function_name, getattr(node, "lineno", 0)))
-                    return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (f"unresolved return from {function_name}",))))
+                    category = "depth_limit" if depth >= self.max_depth else "recursion_cycle"
+                    gap = _gap(category, f"unresolved return from {function_name}")
+                    return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (gap,))))
                 return self.execute(callee, argument_taints, depth + 1, stack + (function_name,))
+            if callee and _returns_only_static(callee):
+                return _Taint()
             if function_name and function_name not in {"eval", "builtins.eval", "exec", "builtins.exec"}:
-                return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (f"unresolved return from {function_name}",))))
+                receiver_root = _name(node.func.value).split(".", 1)[0] if isinstance(node.func, ast.Attribute) else ""
+                if function_name in self.imported_symbols or receiver_root in self.imported_modules | self.imported_symbols:
+                    category = "cross_module_call"
+                elif isinstance(node.func, ast.Attribute):
+                    category = "dynamic_dispatch"
+                else:
+                    category = "unresolved_call"
+                gap = _gap(category, f"unresolved return from {function_name}")
+                return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (gap,))))
             return combined
         combined = _Taint()
         for child in ast.iter_child_nodes(node):
@@ -226,7 +295,9 @@ def analyze_python_dataflow(root: Path, max_depth: int = 3) -> dict:
         analyzer.run(tree)
         exposures.update(analyzer.exposures)
         truncations.extend({"path": relative_path(path, root), "function": name, "line": line} for name, line in sorted(analyzer.truncations))
-        unmodeled.extend({"path": relative_path(path, root), "construct": construct, "sink_line": line, "sink_column": column} for construct, line, column in sorted(analyzer.unmodeled_constructs))
+        for encoded, line, column in sorted(analyzer.unmodeled_constructs):
+            category, construct = _split_gap(encoded)
+            unmodeled.append({"path": relative_path(path, root), "category": category, "construct": construct, "sink_line": line, "sink_column": column})
     return {
         "schema": "vulcanary.experimental-dataflow.v1", "experimental": True,
         "policy_effect": "none", "max_call_depth": max_depth,

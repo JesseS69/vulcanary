@@ -78,6 +78,7 @@ class DataflowPrototypeTests(unittest.TestCase):
         self.assertEqual(truncated["exposures"], [])
         self.assertEqual(truncated["analysis_truncations"][0]["function"], "source")
         self.assertEqual(truncated["unmodeled_construct_count"], 1)
+        self.assertEqual(truncated["unmodeled_constructs"][0]["category"], "depth_limit")
 
     def test_recursive_source_helper_is_bounded_and_reported_as_unmodeled(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -91,6 +92,19 @@ class DataflowPrototypeTests(unittest.TestCase):
         self.assertEqual(report["exposures"], [])
         self.assertEqual(report["analysis_truncations"], [])
         self.assertEqual(report["unmodeled_construct_count"], 1)
+        self.assertEqual(report["unmodeled_constructs"][0]["category"], "unresolved_call")
+
+    def test_trivially_static_helper_return_does_not_dilute_gap_count(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "def clean_helper():\n    return 'fixed literal'\n\n"
+                "def handler():\n    return eval(clean_helper())\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(report["exposures"], [])
+        self.assertEqual(report["unmodeled_constructs"], [])
 
     def test_external_helper_return_flow_remains_an_explicit_gap(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -103,6 +117,26 @@ class DataflowPrototypeTests(unittest.TestCase):
         self.assertEqual(report["exposures"], [])
         self.assertEqual(report["unmodeled_construct_count"], 1)
         self.assertEqual(report["unmodeled_constructs"][0]["construct"], "unresolved return from helpers.get_value")
+        self.assertEqual(report["unmodeled_constructs"][0]["category"], "dynamic_dispatch")
+
+    def test_imported_calls_are_distinct_from_dynamic_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "import helpers as h\n"
+                "from transforms import clean\n\n"
+                "def handler():\n"
+                "    value = request.args.get('value')\n"
+                "    eval(h.clean(value))\n"
+                "    exec(clean(value))\n"
+                "    eval(runtime.clean(value))\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(
+            [item["category"] for item in report["unmodeled_constructs"]],
+            ["cross_module_call", "cross_module_call", "dynamic_dispatch"],
+        )
 
     def test_config_parser_return_flow_is_key_sensitive(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
