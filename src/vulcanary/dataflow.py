@@ -153,28 +153,100 @@ def _source_capable_functions(tree: ast.Module) -> set[str]:
     return capable
 
 
-def _import_bindings(tree: ast.Module) -> tuple[set[str], set[str]]:
+def _module_name(path: str) -> str:
+    parts = Path(path).with_suffix("").parts
+    if parts and parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(parts)
+
+
+def _absolute_import(module_name: str, imported: str | None, level: int, is_package: bool = False) -> str:
+    if level == 0:
+        return imported or ""
+    package = module_name if is_package else module_name.rsplit(".", 1)[0] if "." in module_name else ""
+    parts = package.split(".") if package else []
+    keep = max(0, len(parts) - level + 1)
+    prefix = parts[:keep]
+    if imported:
+        prefix.extend(imported.split("."))
+    return ".".join(prefix)
+
+
+def _import_bindings(tree: ast.Module, module_name: str, is_package: bool = False) -> tuple[dict[str, str], dict[str, tuple[str, str]], set[str], set[str]]:
+    module_bindings: dict[str, str] = {}
+    symbol_bindings: dict[str, tuple[str, str]] = {}
     modules: set[str] = set()
     symbols: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            modules.update(alias.asname or alias.name.split(".", 1)[0] for alias in node.names)
+            for alias in node.names:
+                binding = alias.asname or alias.name.split(".", 1)[0]
+                module_bindings[binding] = alias.name if alias.asname else binding
+                modules.add(binding)
         elif isinstance(node, ast.ImportFrom):
-            symbols.update(alias.asname or alias.name for alias in node.names if alias.name != "*")
-    return modules, symbols
+            imported_module = _absolute_import(module_name, node.module, node.level, is_package)
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                binding = alias.asname or alias.name
+                symbol_bindings[binding] = (imported_module, alias.name)
+                symbols.add(binding)
+    return module_bindings, symbol_bindings, modules, symbols
 
 
 class _ModuleAnalyzer:
-    def __init__(self, path: str, tree: ast.Module, max_depth: int, budget: _AnalysisBudget) -> None:
+    def __init__(self, path: str, tree: ast.Module, max_depth: int, budget: _AnalysisBudget,
+                 project: dict[str, tuple[str, ast.Module]] | None = None,
+                 analyzer_cache: dict[str, "_ModuleAnalyzer"] | None = None,
+                 exposures: dict[str, dict] | None = None,
+                 truncations: set[tuple[str, str, int]] | None = None,
+                 unmodeled_constructs: set[tuple[str, str, int, int]] | None = None) -> None:
         self.path = path
+        self.module_name = _module_name(path)
         self.max_depth = max_depth
         self.functions = {node.name: node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
         self.source_functions = _source_capable_functions(tree)
-        self.imported_modules, self.imported_symbols = _import_bindings(tree)
+        self.module_bindings, self.symbol_bindings, self.imported_modules, self.imported_symbols = _import_bindings(
+            tree, self.module_name, Path(path).name == "__init__.py"
+        )
+        self.project = project or {}
+        self.analyzer_cache = analyzer_cache if analyzer_cache is not None else {}
+        self.analyzer_cache[self.module_name] = self
         self.budget = budget
-        self.exposures: dict[str, dict] = {}
-        self.truncations: set[tuple[str, int]] = set()
-        self.unmodeled_constructs: set[tuple[str, int, int]] = set()
+        self.exposures = exposures if exposures is not None else {}
+        self.truncations = truncations if truncations is not None else set()
+        self.unmodeled_constructs = unmodeled_constructs if unmodeled_constructs is not None else set()
+
+    def _project_callee(self, function_name: str) -> tuple[tuple["_ModuleAnalyzer", ast.FunctionDef | ast.AsyncFunctionDef, str] | None, str | None]:
+        module = ""
+        symbol = ""
+        imported = False
+        if function_name in self.symbol_bindings:
+            module, symbol = self.symbol_bindings[function_name]
+            imported = True
+        elif "." in function_name:
+            binding, symbol = function_name.rsplit(".", 1)
+            root, _, remainder = binding.partition(".")
+            if root in self.module_bindings:
+                module = ".".join(part for part in (self.module_bindings[root], remainder) if part)
+                imported = True
+            elif root in self.symbol_bindings:
+                parent, imported_name = self.symbol_bindings[root]
+                module = ".".join(part for part in (parent, imported_name, remainder) if part)
+                imported = True
+        if not imported:
+            return None, None
+        if not module or module not in self.project:
+            return None, "missing_module"
+        analyzer = self.analyzer_cache.get(module)
+        if analyzer is None:
+            path, tree = self.project[module]
+            analyzer = _ModuleAnalyzer(
+                path, tree, self.max_depth, self.budget, self.project, self.analyzer_cache,
+                self.exposures, self.truncations, self.unmodeled_constructs,
+            )
+        callee = analyzer.functions.get(symbol)
+        return ((analyzer, callee, f"{module}.{symbol}"), None) if callee else (None, "ambiguous_symbol")
 
     def expression(self, node: ast.AST | None, env: dict[str, _Taint], depth: int, stack: tuple[str, ...]) -> _Taint:
         if node is None:
@@ -225,29 +297,45 @@ class _ModuleAnalyzer:
                 }
             if function_name in {"eval", "builtins.eval", "exec", "builtins.exec"} and combined.unmodeled:
                 for unresolved in combined.unmodeled:
-                    self.unmodeled_constructs.add((unresolved, node.lineno, node.col_offset))
+                    self.unmodeled_constructs.add((self.path, unresolved, node.lineno, node.col_offset))
             if function_name in {"ast.literal_eval", "json.loads", "int", "float", "bool"} and combined.sources:
                 return _Taint(combined.sources, tuple(dict.fromkeys(combined.sanitizers + (function_name,))), combined.unmodeled)
             if function_name in {"base64.b64encode", "base64.b64decode", "urllib.parse.unquote_plus", "urllib.parse.unquote"}:
                 return combined
             callee = self.functions.get(function_name)
-            if callee and function_name in stack:
+            qualified_name = f"{self.module_name}.{function_name}" if self.module_name else function_name
+            if callee and qualified_name in stack:
                 if combined.sources or combined.unmodeled or function_name in self.source_functions:
-                    self.truncations.add((function_name, getattr(node, "lineno", 0)))
+                    self.truncations.add((self.path, function_name, getattr(node, "lineno", 0)))
                 gap = _gap("recursion_cycle", f"unresolved return from {function_name}")
                 return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (gap,))))
             if callee and (combined.sources or function_name in self.source_functions):
                 if depth >= self.max_depth:
                     if combined.sources or combined.unmodeled or function_name in self.source_functions:
-                        self.truncations.add((function_name, getattr(node, "lineno", 0)))
+                        self.truncations.add((self.path, function_name, getattr(node, "lineno", 0)))
                     gap = _gap("depth_limit", f"unresolved return from {function_name}")
                     return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (gap,))))
-                return self.execute(callee, argument_taints, depth + 1, stack + (function_name,))
+                return self.execute(callee, argument_taints, depth + 1, stack + (qualified_name,))
             if callee and _returns_only_static(callee):
                 return _Taint()
+            project_callee, project_gap = self._project_callee(function_name)
+            if project_callee:
+                analyzer, target, qualified_target = project_callee
+                if qualified_target in stack:
+                    self.truncations.add((self.path, qualified_target, getattr(node, "lineno", 0)))
+                    gap = _gap("recursion_cycle", f"unresolved return from {function_name}")
+                    return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (gap,))))
+                if depth >= self.max_depth:
+                    self.truncations.add((self.path, qualified_target, getattr(node, "lineno", 0)))
+                    gap = _gap("depth_limit", f"unresolved return from {function_name}")
+                    return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (gap,))))
+                result = analyzer.execute(target, argument_taints, depth + 1, stack + (qualified_target,))
+                return result
             if function_name and function_name not in {"eval", "builtins.eval", "exec", "builtins.exec"}:
                 receiver_root = _name(node.func.value).split(".", 1)[0] if isinstance(node.func, ast.Attribute) else ""
-                if function_name in self.imported_symbols or receiver_root in self.imported_modules | self.imported_symbols:
+                if project_gap:
+                    category = project_gap
+                elif function_name in self.imported_symbols or receiver_root in self.imported_modules | self.imported_symbols:
                     category = "cross_module_call"
                 elif isinstance(node.func, ast.Attribute):
                     category = "dynamic_dispatch"
@@ -300,7 +388,8 @@ class _ModuleAnalyzer:
     def run(self, tree: ast.Module) -> None:
         self.statements(tree.body, {}, 0, ())
         for function in self.functions.values():
-            self.execute(function, [], 0, (function.name,))
+            qualified = f"{self.module_name}.{function.name}" if self.module_name else function.name
+            self.execute(function, [], 0, (qualified,))
 
 
 def analyze_python_dataflow(
@@ -318,6 +407,7 @@ def analyze_python_dataflow(
     parse_errors = 0
     analyzed_modules = 0
     module_exhausted = False
+    parsed_modules: list[tuple[str, ast.Module]] = []
     for path in iter_files(root, Config.load(root)):
         if path.suffix.lower() != ".py":
             continue
@@ -333,13 +423,29 @@ def analyze_python_dataflow(
         except (OSError, UnicodeDecodeError, SyntaxError):
             parse_errors += 1
             continue
-        analyzer = _ModuleAnalyzer(relative_path(path, root), tree, max_depth, budget)
+        parsed_modules.append((relative_path(path, root), tree))
+    project = {_module_name(path): (path, tree) for path, tree in parsed_modules}
+    analyzer_cache: dict[str, _ModuleAnalyzer] = {}
+    project_exposures: dict[str, dict] = {}
+    project_truncations: set[tuple[str, str, int]] = set()
+    project_unmodeled: set[tuple[str, str, int, int]] = set()
+    for module_path, tree in parsed_modules:
+        if time.monotonic() >= budget.deadline:
+            budget.time_exhausted = True
+            break
+        module_name = _module_name(module_path)
+        analyzer = analyzer_cache.get(module_name)
+        if analyzer is None:
+            analyzer = _ModuleAnalyzer(
+                module_path, tree, max_depth, budget, project, analyzer_cache,
+                project_exposures, project_truncations, project_unmodeled,
+            )
         analyzer.run(tree)
-        exposures.update(analyzer.exposures)
-        truncations.extend({"path": relative_path(path, root), "function": name, "line": line} for name, line in sorted(analyzer.truncations))
-        for encoded, line, column in sorted(analyzer.unmodeled_constructs):
-            category, construct = _split_gap(encoded)
-            unmodeled.append({"path": relative_path(path, root), "category": category, "construct": construct, "sink_line": line, "sink_column": column})
+    exposures.update(project_exposures)
+    truncations.extend({"path": path, "function": name, "line": line} for path, name, line in sorted(project_truncations))
+    for path, encoded, line, column in sorted(project_unmodeled):
+        category, construct = _split_gap(encoded)
+        unmodeled.append({"path": path, "category": category, "construct": construct, "sink_line": line, "sink_column": column})
     limits = []
     if module_exhausted:
         limits.append({"category": "module_limit", "limit": max_modules, "observed": analyzed_modules})
