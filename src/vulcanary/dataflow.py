@@ -54,11 +54,46 @@ def _subscript_key(node: ast.Subscript) -> str | None:
     return None
 
 
+def _source_capable_functions(tree: ast.Module) -> set[str]:
+    direct: set[str] = set()
+    calls: dict[str, set[str]] = {}
+
+    class Visitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.stack: list[str] = []
+
+        def visit(self, node: ast.AST) -> None:
+            if self.stack and _source(node):
+                direct.add(self.stack[-1])
+            if self.stack and isinstance(node, ast.Call):
+                calls.setdefault(self.stack[-1], set()).add(_name(node.func))
+            super().visit(node)
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            self.stack.append(node.name)
+            self.generic_visit(node)
+            self.stack.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+    Visitor().visit(tree)
+    capable = set(direct)
+    changed = True
+    while changed:
+        changed = False
+        for name, callees in calls.items():
+            if name not in capable and callees & capable:
+                capable.add(name)
+                changed = True
+    return capable
+
+
 class _ModuleAnalyzer:
     def __init__(self, path: str, tree: ast.Module, max_depth: int) -> None:
         self.path = path
         self.max_depth = max_depth
         self.functions = {node.name: node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        self.source_functions = _source_capable_functions(tree)
         self.exposures: dict[str, dict] = {}
         self.truncations: set[tuple[str, int]] = set()
         self.unmodeled_constructs: set[tuple[str, int, int]] = set()
@@ -116,9 +151,9 @@ class _ModuleAnalyzer:
             if function_name in {"base64.b64encode", "base64.b64decode", "urllib.parse.unquote_plus", "urllib.parse.unquote"}:
                 return combined
             callee = self.functions.get(function_name)
-            if callee and combined.sources:
+            if callee and (combined.sources or function_name in self.source_functions):
                 if depth >= self.max_depth or function_name in stack:
-                    if combined.sources or combined.unmodeled:
+                    if combined.sources or combined.unmodeled or function_name in self.source_functions:
                         self.truncations.add((function_name, getattr(node, "lineno", 0)))
                     return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (f"unresolved return from {function_name}",))))
                 return self.execute(callee, argument_taints, depth + 1, stack + (function_name,))
