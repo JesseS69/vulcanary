@@ -149,6 +149,65 @@ class DataflowPrototypeTests(unittest.TestCase):
         self.assertEqual(report["unmodeled_constructs"][0]["construct"], "unresolved return from helpers.get_value")
         self.assertEqual(report["unmodeled_constructs"][0]["category"], "dynamic_dispatch")
 
+    def test_resolves_repository_local_imported_function_returns(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "helpers.py").write_text(
+                "def get_value():\n    return request.args.get('value')\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "import helpers as h\nfrom helpers import get_value as direct\n\n"
+                "def first():\n    eval(h.get_value())\n\n"
+                "def second():\n    exec(direct())\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([item["line"] for item in report["exposures"]], [5, 8])
+        self.assertFalse(any(item["category"] == "cross_module_call" for item in report["unmodeled_constructs"]))
+
+    def test_resolves_package_relative_import_and_bounds_cross_module_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "package"
+            package.mkdir()
+            (package / "__init__.py").write_text("", encoding="utf-8")
+            (package / "source.py").write_text(
+                "from .cycle import again\n\ndef value():\n    return request.form.get('value')\n\n"
+                "def recurse(value):\n    return again(value)\n",
+                encoding="utf-8",
+            )
+            (package / "cycle.py").write_text(
+                "from .source import recurse\n\ndef again(value):\n    return recurse(value)\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "from package.source import value, recurse\n\neval(value())\nexec(recurse(request.args.get('x')))\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root, max_depth=6)
+        self.assertEqual([item["line"] for item in report["exposures"] if item["path"] == "app.py"], [3, 4])
+        self.assertTrue(any(item["category"] == "recursion_cycle" for item in report["unmodeled_constructs"]))
+
+    def test_resolves_package_initializer_and_imported_submodule(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); package = root / "package"; package.mkdir()
+            (package / "__init__.py").write_text("from .source import value\n\ndef exported():\n    return value()\n", encoding="utf-8")
+            (package / "source.py").write_text("def value():\n    return request.args.get('value')\n", encoding="utf-8")
+            (root / "app.py").write_text("import package\nfrom package import source\n\neval(package.exported())\nexec(source.value())\n", encoding="utf-8")
+            report = analyze_python_dataflow(root)
+        self.assertEqual([item["line"] for item in report["exposures"] if item["path"] == "app.py"], [4, 5])
+
+    def test_index_distinguishes_missing_modules_and_missing_symbols(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "helpers.py").write_text("def known(value):\n    return value\n", encoding="utf-8")
+            (root / "app.py").write_text(
+                "import absent\nfrom helpers import absent as missing_symbol\n\n"
+                "eval(absent.value(request.args.get('a')))\nexec(missing_symbol(request.args.get('b')))\n", encoding="utf-8")
+            report = analyze_python_dataflow(root)
+        self.assertEqual({item["category"] for item in report["unmodeled_constructs"]}, {"missing_module", "ambiguous_symbol"})
+
     def test_imported_calls_are_distinct_from_dynamic_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -164,8 +223,8 @@ class DataflowPrototypeTests(unittest.TestCase):
             )
             report = analyze_python_dataflow(root)
         self.assertEqual(
-            [item["category"] for item in report["unmodeled_constructs"]],
-            ["cross_module_call", "cross_module_call", "dynamic_dispatch"],
+            sorted(item["category"] for item in report["unmodeled_constructs"]),
+            ["dynamic_dispatch", "missing_module", "missing_module"],
         )
 
     def test_config_parser_return_flow_is_key_sensitive(self) -> None:
