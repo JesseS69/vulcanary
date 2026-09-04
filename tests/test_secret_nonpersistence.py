@@ -22,6 +22,8 @@ from vulcanary.reporters import (
     write_sarif,
 )
 from vulcanary.scanners import scan
+from vulcanary.tickets import finding_ticket, ticket_csv, ticket_markdown
+from vulcanary.vex import openvex_document
 
 
 SENTINEL = "AKIAZ9Y8X7W6V5U4T3S2"  # gitleaks:allow -- synthetic noncredential
@@ -54,7 +56,12 @@ class SecretNonPersistenceTests(unittest.TestCase):
                 "console": render_console(findings),
                 "GitHub annotations": render_github_annotations(findings),
                 "Markdown summary": render_markdown_summary(findings, "repository"),
+                "OpenVEX": json.dumps(openvex_document("repository", [findings[0].to_dict()])),
             }
+            ticket = finding_ticket({**findings[0].to_dict(), "repository": "repository"})
+            surfaces["ticket record"] = json.dumps(ticket)
+            surfaces["ticket Markdown"] = ticket_markdown(ticket)
+            surfaces["ticket CSV"] = ticket_csv(ticket)
             for name, content in surfaces.items():
                 self.assert_secret_absent(content, name)
 
