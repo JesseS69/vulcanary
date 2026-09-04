@@ -1,0 +1,205 @@
+from __future__ import annotations
+
+import ast
+import csv
+import hashlib
+import json
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+from .config import Config
+from .models import relative_path
+from .scanners import iter_files
+
+
+@dataclass(frozen=True)
+class _Taint:
+    sources: tuple[str, ...] = ()
+    sanitizers: tuple[str, ...] = ()
+    unmodeled: tuple[str, ...] = ()
+
+    def merge(self, other: "_Taint") -> "_Taint":
+        return _Taint(
+            tuple(dict.fromkeys(self.sources + other.sources)),
+            tuple(dict.fromkeys(self.sanitizers + other.sanitizers)),
+            tuple(dict.fromkeys(self.unmodeled + other.unmodeled)),
+        )
+
+
+def _name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        prefix = _name(node.value)
+        return f"{prefix}.{node.attr}" if prefix else node.attr
+    return ""
+
+
+def _source(node: ast.AST) -> str | None:
+    target = node.func if isinstance(node, ast.Call) else node.value if isinstance(node, ast.Subscript) else node
+    name = _name(target)
+    if name in {"input", "request.get_json"}:
+        return name
+    if name.startswith(("request.args", "request.form", "request.cookies", "request.values", "request.GET", "request.POST", "request.data", "request.json")):
+        return name
+    return None
+
+
+def _subscript_key(node: ast.Subscript) -> str | None:
+    if isinstance(node.value, ast.Name) and isinstance(node.slice, ast.Constant):
+        return f"{node.value.id}[{node.slice.value!r}]"
+    return None
+
+
+class _ModuleAnalyzer:
+    def __init__(self, path: str, tree: ast.Module, max_depth: int) -> None:
+        self.path = path
+        self.max_depth = max_depth
+        self.functions = {node.name: node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        self.exposures: dict[str, dict] = {}
+        self.truncations: set[tuple[str, int]] = set()
+        self.unmodeled_constructs: set[tuple[str, int, int]] = set()
+
+    def expression(self, node: ast.AST | None, env: dict[str, _Taint], depth: int, stack: tuple[str, ...]) -> _Taint:
+        if node is None:
+            return _Taint()
+        source = _source(node)
+        if source:
+            return _Taint((f"{source}@{getattr(node, 'lineno', 0)}",))
+        if isinstance(node, ast.Name):
+            return env.get(node.id, _Taint())
+        if isinstance(node, ast.Subscript):
+            key = _subscript_key(node)
+            return env.get(key, _Taint()) if key else self.expression(node.value, env, depth, stack)
+        if isinstance(node, ast.Call):
+            function_name = _name(node.func)
+            argument_taints = [self.expression(item, env, depth, stack) for item in (*node.args, *(item.value for item in node.keywords))]
+            combined = _Taint()
+            for item in argument_taints:
+                combined = combined.merge(item)
+            if function_name.endswith(".append") and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+                container = node.func.value.id
+                env[container] = env.get(container, _Taint()).merge(combined)
+            if function_name in {"eval", "builtins.eval", "exec", "builtins.exec"} and combined.sources:
+                sink = function_name.rsplit(".", 1)[-1]
+                fingerprint = hashlib.sha256(f"PY-DATAFLOW-CODE-INJECTION\0{self.path}\0{node.lineno}\0{node.col_offset}".encode()).hexdigest()[:20]
+                self.exposures[fingerprint] = {
+                    "fingerprint": fingerprint, "rule_id": "PY-DATAFLOW-CODE-INJECTION", "path": self.path,
+                    "line": node.lineno, "sink": sink, "sources": list(combined.sources),
+                    "sanitizers": list(combined.sanitizers), "confidence": "lower" if combined.sanitizers else "high",
+                    "experimental": True, "lifecycle": "prototype_only",
+                }
+            if function_name in {"eval", "builtins.eval", "exec", "builtins.exec"} and combined.unmodeled:
+                for unresolved in combined.unmodeled:
+                    self.unmodeled_constructs.add((unresolved, node.lineno, node.col_offset))
+            if function_name in {"ast.literal_eval", "json.loads", "int", "float", "bool"} and combined.sources:
+                return _Taint(combined.sources, tuple(dict.fromkeys(combined.sanitizers + (function_name,))), combined.unmodeled)
+            callee = self.functions.get(function_name)
+            if callee and combined.sources:
+                if depth >= self.max_depth or function_name in stack:
+                    self.truncations.add((function_name, getattr(node, "lineno", 0)))
+                    return combined
+                return self.execute(callee, argument_taints, depth + 1, stack + (function_name,))
+            if function_name and function_name not in {"eval", "builtins.eval", "exec", "builtins.exec"}:
+                return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (f"unresolved return from {function_name}",))))
+            return combined
+        combined = _Taint()
+        for child in ast.iter_child_nodes(node):
+            combined = combined.merge(self.expression(child, env, depth, stack))
+        return combined
+
+    def statements(self, statements: list[ast.stmt], env: dict[str, _Taint], depth: int, stack: tuple[str, ...]) -> _Taint:
+        returned = _Taint()
+        for statement in statements:
+            if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                value = self.expression(statement.value, env, depth, stack)
+                targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        env[target.id] = value
+                    elif isinstance(target, ast.Subscript) and (key := _subscript_key(target)):
+                        env[key] = value
+            elif isinstance(statement, ast.Return):
+                returned = returned.merge(self.expression(statement.value, env, depth, stack))
+            elif isinstance(statement, ast.Expr):
+                self.expression(statement.value, env, depth, stack)
+            elif isinstance(statement, (ast.If, ast.For, ast.While, ast.With, ast.Try)):
+                branch_environments = []
+                for body in (getattr(statement, "body", []), getattr(statement, "orelse", []), getattr(statement, "finalbody", [])):
+                    branch_env = dict(env)
+                    returned = returned.merge(self.statements(body, branch_env, depth, stack))
+                    branch_environments.append(branch_env)
+                for handler in getattr(statement, "handlers", []):
+                    branch_env = dict(env)
+                    returned = returned.merge(self.statements(handler.body, branch_env, depth, stack))
+                    branch_environments.append(branch_env)
+                for name in set().union(*(branch.keys() for branch in branch_environments)):
+                    merged = _Taint()
+                    for branch in branch_environments:
+                        merged = merged.merge(branch.get(name, env.get(name, _Taint())))
+                    env[name] = merged
+        return returned
+
+    def execute(self, function: ast.FunctionDef | ast.AsyncFunctionDef, arguments: list[_Taint], depth: int, stack: tuple[str, ...]) -> _Taint:
+        env = {parameter.arg: arguments[index] if index < len(arguments) else _Taint() for index, parameter in enumerate(function.args.args)}
+        return self.statements(function.body, env, depth, stack)
+
+    def run(self, tree: ast.Module) -> None:
+        self.statements(tree.body, {}, 0, ())
+        for function in self.functions.values():
+            self.execute(function, [], 0, (function.name,))
+
+
+def analyze_python_dataflow(root: Path, max_depth: int = 3) -> dict:
+    """Prototype Python taint analysis; results never enter normal findings or policy gates."""
+    root = root.resolve()
+    exposures: dict[str, dict] = {}
+    truncations: list[dict] = []
+    unmodeled: list[dict] = []
+    parse_errors = 0
+    for path in iter_files(root, Config.load(root)):
+        if path.suffix.lower() != ".py":
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            parse_errors += 1
+            continue
+        analyzer = _ModuleAnalyzer(relative_path(path, root), tree, max_depth)
+        analyzer.run(tree)
+        exposures.update(analyzer.exposures)
+        truncations.extend({"path": relative_path(path, root), "function": name, "line": line} for name, line in sorted(analyzer.truncations))
+        unmodeled.extend({"path": relative_path(path, root), "construct": construct, "sink_line": line, "sink_column": column} for construct, line, column in sorted(analyzer.unmodeled_constructs))
+    return {
+        "schema": "vulcanary.experimental-dataflow.v1", "experimental": True,
+        "policy_effect": "none", "max_call_depth": max_depth,
+        "exposures": sorted(exposures.values(), key=lambda item: (item["path"], item["line"])),
+        "analysis_truncations": truncations, "unmodeled_constructs": unmodeled,
+        "unmodeled_construct_count": len(unmodeled), "parse_errors": parse_errors,
+    }
+
+
+def benchmark_python_score(report: dict, expected_results: Path) -> dict:
+    """Score CWE-94 predictions against BenchmarkPython's expectedresults CSV."""
+    predicted = {
+        match.group(0) for item in report.get("exposures", [])
+        if (match := re.search(r"BenchmarkTest\d{5}", str(item.get("path", ""))))
+    }
+    labels: dict[str, bool] = {}
+    with expected_results.open(newline="", encoding="utf-8") as source:
+        for row in csv.reader(line for line in source if not line.startswith("#")):
+            if len(row) >= 4 and (row[1] == "codeinj" or row[3] == "94"):
+                labels[row[0]] = row[2].lower() == "true"
+    tp = sum(name in predicted and vulnerable for name, vulnerable in labels.items())
+    fp = sum(name in predicted and not vulnerable for name, vulnerable in labels.items())
+    fn = sum(name not in predicted and vulnerable for name, vulnerable in labels.items())
+    tn = sum(name not in predicted and not vulnerable for name, vulnerable in labels.items())
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    false_positive_rate = fp / (fp + tn) if fp + tn else 0.0
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    return {"true_positives": tp, "false_positives": fp, "false_negatives": fn, "true_negatives": tn, "recall": recall, "precision": precision, "false_positive_rate": false_positive_rate, "benchmark_score": recall - false_positive_rate}
+
+
+def write_dataflow_report(report: dict, destination: Path) -> None:
+    destination.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

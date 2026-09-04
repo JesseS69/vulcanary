@@ -22,7 +22,7 @@ from .adapters import AdapterError, import_report
 def scan_parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         prog="vulcanary", description="Scan a repository for security risks.",
-        epilog="Commands: setup | start | status | stop | dashboard | config-export | config-import | dependency-review | web-audit | update-check",
+        epilog="Commands: setup | start | status | stop | dashboard | config-export | config-import | dependency-review | web-audit | dataflow-prototype | update-check",
     )
     result.add_argument("path", nargs="?", default=".", help="Repository to scan")
     result.add_argument("--config", type=Path, help="Configuration JSON path")
@@ -99,8 +99,34 @@ def web_audit_parser() -> argparse.ArgumentParser:
     return result
 
 
+def dataflow_parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(prog="vulcanary dataflow-prototype", description="Run the experimental, non-gating Python dataflow prototype.")
+    result.add_argument("path", nargs="?", default=".", type=Path)
+    result.add_argument("--max-depth", type=int, default=3, choices=range(1, 11))
+    result.add_argument("--json", type=Path, dest="json_path")
+    result.add_argument("--benchmark-expected", type=Path, help="Score CWE-94 cases against BenchmarkPython expectedresults CSV")
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "dataflow-prototype":
+        args = dataflow_parser().parse_args(argv[1:])
+        from .dataflow import analyze_python_dataflow, benchmark_python_score, write_dataflow_report
+        if not args.path.is_dir():
+            print(f"error: repository does not exist: {args.path.resolve()}", file=sys.stderr)
+            return 2
+        try:
+            report = analyze_python_dataflow(args.path, args.max_depth)
+            if args.benchmark_expected:
+                report["benchmark"] = benchmark_python_score(report, args.benchmark_expected)
+            if args.json_path:
+                write_dataflow_report(report, args.json_path)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            print(f"error: dataflow prototype failed: {error}", file=sys.stderr)
+            return 2
+        print(json.dumps(report, indent=2))
+        return 0
     if argv and argv[0] in {"config-export", "config-import"}:
         command = argv[0]
         args = config_transfer_parser(command).parse_args(argv[1:])

@@ -210,6 +210,14 @@ Local scans intentionally include gitignored files unless they match Vulcanary's
 
 The built-in JavaScript/TypeScript engine is a focused, zero-dependency syntax tokenizer rather than a complete language AST. It removes comments, strings, regular-expression literals, and non-executable template text before matching calls and assignments; recognizes direct, global, same-scope aliased, and multiline `eval` calls; and separates static literal `innerHTML` assignments from dynamic ones. Unsupported or malformed syntax falls back to the prior conservative regex rules. This improves the two built-in sinks without claiming dataflow, complete JavaScript grammar coverage, or taint propagation.
 
+### Experimental Python dataflow prototype
+
+`vulcanary dataflow-prototype PATH --json dataflow.json` runs a separate research-only Python code-injection analysis. It follows recognized request input to `eval` and `exec` across supported same-module function-call shapes and defaults to a maximum call depth of three. The report surfaces depth truncations, parse failures, and unresolved call returns that flow into a sink as distinct analysis gaps; other unsupported Python constructs may still be absent from those counters. Sink locations—not movable source locations—anchor fingerprints. Recognized conversions and parsers are retained as sanitizer evidence and lower confidence; they never silently terminate propagation.
+
+The output uses the separate `vulcanary.experimental-dataflow.v1` schema and has `policy_effect: none`. It does not enter normal findings, severity gates, SLA clocks, remediation, monitoring, or closure receipts. This isolation is intentional while precision and recall remain experimental.
+
+Pass BenchmarkPython's `expectedresults-0.1.csv` with `--benchmark-expected` to add true/false-positive counts, recall, precision, false-positive rate, and the benchmark's TPR−FPR score. Against BenchmarkPython commit `f1291485808b66e20ddb6b01b10dc71b3df8c8ba`, the initial bounded prototype found 1/20 true CWE-94 cases and 3/33 false cases (5% recall, 25% precision, 9.1% false-positive rate, TPR−FPR −0.041). That deliberately published weak baseline prevents fixture-only confidence and is evidence that the prototype is not ready to gate releases. BenchmarkPython v0.1 is preliminary; scores are directional, not a product-performance claim.
+
 - Fingerprint-scoped, owned, expiring security exceptions with a local audit trail
 - Pull-request dependency admission for denied packages/licenses, lifecycle scripts, non-registry sources, and missing npm integrity
 - Permission-gated passive HTTP header and cookie audits
