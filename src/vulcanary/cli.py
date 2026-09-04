@@ -103,6 +103,9 @@ def dataflow_parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="vulcanary dataflow-prototype", description="Run the experimental, non-gating Python dataflow prototype.")
     result.add_argument("path", nargs="?", default=".", type=Path)
     result.add_argument("--max-depth", type=int, default=3, choices=range(1, 11))
+    result.add_argument("--max-modules", type=int, default=10_000)
+    result.add_argument("--max-calls", type=int, default=1_000_000)
+    result.add_argument("--timeout-seconds", type=float, default=120.0)
     result.add_argument("--json", type=Path, dest="json_path")
     result.add_argument("--benchmark-expected", type=Path, help="Score CWE-94 cases against BenchmarkPython expectedresults CSV")
     return result
@@ -117,7 +120,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: repository does not exist: {args.path.resolve()}", file=sys.stderr)
             return 2
         try:
-            report = analyze_python_dataflow(args.path, args.max_depth)
+            report = analyze_python_dataflow(
+                args.path, args.max_depth, args.max_modules, args.max_calls, args.timeout_seconds,
+            )
             if args.benchmark_expected:
                 report["benchmark"] = benchmark_python_score(report, args.benchmark_expected)
             if args.json_path:

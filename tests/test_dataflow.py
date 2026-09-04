@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from vulcanary.cli import main
 from vulcanary.dataflow import analyze_python_dataflow, benchmark_python_score
@@ -93,6 +94,35 @@ class DataflowPrototypeTests(unittest.TestCase):
         self.assertEqual(report["analysis_truncations"], [])
         self.assertEqual(report["unmodeled_construct_count"], 1)
         self.assertEqual(report["unmodeled_constructs"][0]["category"], "unresolved_call")
+
+    def test_tainted_recursion_fires_recursion_cycle_category(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "def recurse(value):\n    return recurse(value)\n\n"
+                "def handler():\n    return eval(recurse(request.args.get('value')))\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(len(report["exposures"]), 1)
+        self.assertEqual(report["unmodeled_constructs"][0]["category"], "recursion_cycle")
+        self.assertEqual(report["analysis_truncations"][0]["function"], "recurse")
+
+    def test_module_call_and_time_limits_are_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "a.py").write_text("eval(request.args.get('a'))\n", encoding="utf-8")
+            (root / "b.py").write_text("eval(request.args.get('b'))\n", encoding="utf-8")
+            module_limited = analyze_python_dataflow(root, max_modules=1)
+            call_limited = analyze_python_dataflow(root, max_calls=1)
+            with patch("vulcanary.dataflow.time.monotonic", side_effect=[0.0, 2.0]):
+                time_limited = analyze_python_dataflow(root, timeout_seconds=1.0)
+        self.assertEqual(module_limited["analysis_limits"][0]["category"], "module_limit")
+        self.assertEqual(module_limited["analyzed_modules"], 1)
+        self.assertEqual(call_limited["analysis_limits"][0]["category"], "call_limit")
+        self.assertEqual(call_limited["analyzed_calls"], 1)
+        self.assertEqual(time_limited["analysis_limits"][0]["category"], "time_limit")
+        self.assertEqual(time_limited["analyzed_modules"], 0)
 
     def test_trivially_static_helper_return_does_not_dilute_gap_count(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

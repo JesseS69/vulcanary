@@ -5,6 +5,7 @@ import csv
 import hashlib
 import json
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +26,25 @@ class _Taint:
             tuple(dict.fromkeys(self.sanitizers + other.sanitizers)),
             tuple(dict.fromkeys(self.unmodeled + other.unmodeled)),
         )
+
+
+@dataclass
+class _AnalysisBudget:
+    max_calls: int
+    deadline: float
+    calls: int = 0
+    time_exhausted: bool = False
+    call_exhausted: bool = False
+
+    def consume_call(self) -> str | None:
+        if time.monotonic() >= self.deadline:
+            self.time_exhausted = True
+            return "time_limit"
+        if self.calls >= self.max_calls:
+            self.call_exhausted = True
+            return "call_limit"
+        self.calls += 1
+        return None
 
 
 def _name(node: ast.AST) -> str:
@@ -145,12 +165,13 @@ def _import_bindings(tree: ast.Module) -> tuple[set[str], set[str]]:
 
 
 class _ModuleAnalyzer:
-    def __init__(self, path: str, tree: ast.Module, max_depth: int) -> None:
+    def __init__(self, path: str, tree: ast.Module, max_depth: int, budget: _AnalysisBudget) -> None:
         self.path = path
         self.max_depth = max_depth
         self.functions = {node.name: node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
         self.source_functions = _source_capable_functions(tree)
         self.imported_modules, self.imported_symbols = _import_bindings(tree)
+        self.budget = budget
         self.exposures: dict[str, dict] = {}
         self.truncations: set[tuple[str, int]] = set()
         self.unmodeled_constructs: set[tuple[str, int, int]] = set()
@@ -167,6 +188,8 @@ class _ModuleAnalyzer:
             key = _subscript_key(node)
             return env[key] if key and key in env else self.expression(node.value, env, depth, stack)
         if isinstance(node, ast.Call):
+            if limit := self.budget.consume_call():
+                return _Taint(unmodeled=(_gap(limit, f"analysis stopped at {limit}"),))
             function_name = _name(node.func)
             argument_taints = [self.expression(item, env, depth, stack) for item in (*node.args, *(item.value for item in node.keywords))]
             combined = _Taint()
@@ -208,12 +231,16 @@ class _ModuleAnalyzer:
             if function_name in {"base64.b64encode", "base64.b64decode", "urllib.parse.unquote_plus", "urllib.parse.unquote"}:
                 return combined
             callee = self.functions.get(function_name)
+            if callee and function_name in stack:
+                if combined.sources or combined.unmodeled or function_name in self.source_functions:
+                    self.truncations.add((function_name, getattr(node, "lineno", 0)))
+                gap = _gap("recursion_cycle", f"unresolved return from {function_name}")
+                return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (gap,))))
             if callee and (combined.sources or function_name in self.source_functions):
-                if depth >= self.max_depth or function_name in stack:
+                if depth >= self.max_depth:
                     if combined.sources or combined.unmodeled or function_name in self.source_functions:
                         self.truncations.add((function_name, getattr(node, "lineno", 0)))
-                    category = "depth_limit" if depth >= self.max_depth else "recursion_cycle"
-                    gap = _gap(category, f"unresolved return from {function_name}")
+                    gap = _gap("depth_limit", f"unresolved return from {function_name}")
                     return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (gap,))))
                 return self.execute(callee, argument_taints, depth + 1, stack + (function_name,))
             if callee and _returns_only_static(callee):
@@ -276,34 +303,58 @@ class _ModuleAnalyzer:
             self.execute(function, [], 0, (function.name,))
 
 
-def analyze_python_dataflow(root: Path, max_depth: int = 3) -> dict:
+def analyze_python_dataflow(
+    root: Path, max_depth: int = 3, max_modules: int = 10_000,
+    max_calls: int = 1_000_000, timeout_seconds: float = 120.0,
+) -> dict:
     """Prototype Python taint analysis; results never enter normal findings or policy gates."""
     root = root.resolve()
+    if min(max_depth, max_modules, max_calls, timeout_seconds) <= 0:
+        raise ValueError("analysis limits must be positive")
+    budget = _AnalysisBudget(max_calls=max_calls, deadline=time.monotonic() + timeout_seconds)
     exposures: dict[str, dict] = {}
     truncations: list[dict] = []
     unmodeled: list[dict] = []
     parse_errors = 0
+    analyzed_modules = 0
+    module_exhausted = False
     for path in iter_files(root, Config.load(root)):
         if path.suffix.lower() != ".py":
             continue
+        if time.monotonic() >= budget.deadline:
+            budget.time_exhausted = True
+            break
+        if analyzed_modules >= max_modules:
+            module_exhausted = True
+            break
+        analyzed_modules += 1
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, SyntaxError):
             parse_errors += 1
             continue
-        analyzer = _ModuleAnalyzer(relative_path(path, root), tree, max_depth)
+        analyzer = _ModuleAnalyzer(relative_path(path, root), tree, max_depth, budget)
         analyzer.run(tree)
         exposures.update(analyzer.exposures)
         truncations.extend({"path": relative_path(path, root), "function": name, "line": line} for name, line in sorted(analyzer.truncations))
         for encoded, line, column in sorted(analyzer.unmodeled_constructs):
             category, construct = _split_gap(encoded)
             unmodeled.append({"path": relative_path(path, root), "category": category, "construct": construct, "sink_line": line, "sink_column": column})
+    limits = []
+    if module_exhausted:
+        limits.append({"category": "module_limit", "limit": max_modules, "observed": analyzed_modules})
+    if budget.call_exhausted:
+        limits.append({"category": "call_limit", "limit": max_calls, "observed": budget.calls})
+    if budget.time_exhausted:
+        limits.append({"category": "time_limit", "limit": timeout_seconds, "observed": None})
     return {
         "schema": "vulcanary.experimental-dataflow.v1", "experimental": True,
         "policy_effect": "none", "max_call_depth": max_depth,
         "exposures": sorted(exposures.values(), key=lambda item: (item["path"], item["line"])),
         "analysis_truncations": truncations, "unmodeled_constructs": unmodeled,
         "unmodeled_construct_count": len(unmodeled), "parse_errors": parse_errors,
+        "analysis_limits": limits, "analyzed_modules": analyzed_modules, "analyzed_calls": budget.calls,
+        "analysis_budget": {"max_modules": max_modules, "max_calls": max_calls, "timeout_seconds": timeout_seconds},
     }
 
 
