@@ -34,6 +34,84 @@ class ReachabilityTests(unittest.TestCase):
             self.assertEqual(set(npm), {"@scope/tool", "lodash"})
             self.assertEqual(set(python), {"requests", "yaml"})
 
+    def test_correlates_conservative_import_evidence_across_supported_ecosystems(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sources = {
+                "App.java": "import org.apache.logging.log4j.Logger;\n",
+                "Program.cs": "using Newtonsoft.Json.Linq;\n",
+                "main.go": 'import (\n  "github.com/gin-gonic/gin"\n)\n',
+                "lib.rs": "use serde_json::Value;\n",
+                "app.rb": "require 'rack/request'\n",
+            }
+            for name, text in sources.items():
+                (root / name).write_text(text, encoding="utf-8")
+            findings = [
+                dependency("org.apache.logging.log4j:log4j-core", "Maven"),
+                dependency("Newtonsoft.Json", "NuGet"),
+                dependency("github.com/gin-gonic/gin", "Go"),
+                dependency("serde-json", "crates.io"),
+                dependency("rack", "RubyGems"),
+            ]
+            analyzed = analyze_reachability(root, findings, Config())
+            self.assertEqual(
+                [item.metadata["reachability"]["evidence_paths"] for item in analyzed],
+                [["App.java"], ["Program.cs"], ["main.go"], ["lib.rs"], ["app.rb"]],
+            )
+            self.assertTrue(all(item.metadata["reachability"]["status"] == "direct_import_observed" for item in analyzed))
+            self.assertTrue(all(item.metadata["usage"]["classification"] == "direct_application_import_observed" for item in analyzed))
+
+    def test_transitive_ecosystem_match_is_evidence_without_claiming_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "App.java").write_text("import org.apache.logging.log4j.Logger;\n", encoding="utf-8")
+            finding = dependency("org.apache.logging.log4j:log4j-core", "Maven", direct=False)
+            analyzed = analyze_reachability(root, [finding], Config())[0]
+            self.assertEqual(analyzed.metadata["reachability"]["status"], "direct_import_observed")
+            self.assertEqual(analyzed.metadata["usage"]["classification"], "dependency_import_observed")
+            self.assertIn("does not prove", analyzed.metadata["reachability"]["reason"])
+
+    def test_local_ruby_require_relative_is_not_dependency_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.rb").write_text("require_relative 'rack/request'\n", encoding="utf-8")
+            analyzed = analyze_reachability(root, [dependency("rack", "RubyGems")], Config())[0]
+            self.assertEqual(analyzed.metadata["reachability"]["status"], "not_observed")
+
+    def test_parent_dotnet_namespace_is_not_treated_as_package_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Program.cs").write_text("using Microsoft.Extensions;\n", encoding="utf-8")
+            finding = dependency("Microsoft.Extensions.Logging", "NuGet")
+            analyzed = analyze_reachability(root, [finding], Config())[0]
+            self.assertEqual(analyzed.metadata["reachability"]["status"], "not_observed")
+
+    def test_unsupported_package_namespace_mapping_remains_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            analyzed = analyze_reachability(
+                Path(directory), [dependency("symfony/http-foundation", "Packagist")], Config(),
+            )[0]
+            self.assertEqual(analyzed.metadata["reachability"]["status"], "unknown")
+            self.assertIn("no reliable", analyzed.metadata["reachability"]["reason"])
+
+    def test_import_examples_in_comments_and_multiline_literals_are_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "App.java").write_text(
+                '/*\nimport org.apache.logging.log4j.Logger;\n*/\nString example = """\nimport org.apache.logging.log4j.Logger;\n""";\n',
+                encoding="utf-8",
+            )
+            (root / "lib.rs").write_text(
+                '/*\nuse serde_json::Value;\n*/\nlet example = r#"\nuse serde_json::Value;\n"#;\n',
+                encoding="utf-8",
+            )
+            findings = [
+                dependency("org.apache.logging.log4j:log4j-core", "Maven"),
+                dependency("serde-json", "crates.io"),
+            ]
+            analyzed = analyze_reachability(root, findings, Config())
+            self.assertTrue(all(item.metadata["reachability"]["status"] == "not_observed" for item in analyzed))
+
     def test_marks_direct_and_parent_import_evidence_without_hiding_absence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
