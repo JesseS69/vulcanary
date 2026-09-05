@@ -19,12 +19,14 @@ class _Taint:
     sources: tuple[str, ...] = ()
     sanitizers: tuple[str, ...] = ()
     unmodeled: tuple[str, ...] = ()
+    object_types: tuple[str, ...] = ()
 
     def merge(self, other: "_Taint") -> "_Taint":
         return _Taint(
             tuple(dict.fromkeys(self.sources + other.sources)),
             tuple(dict.fromkeys(self.sanitizers + other.sanitizers)),
             tuple(dict.fromkeys(self.unmodeled + other.unmodeled)),
+            tuple(dict.fromkeys(self.object_types + other.object_types)),
         )
 
 
@@ -109,6 +111,11 @@ def _returns_only_static(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bo
 
     Visitor().visit(function)
     return all(_static_expression(item.value) for item in returns)
+
+
+def _contains_direct_source(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Return whether this function directly reads a recognized request source."""
+    return any(_source(node) is not None for node in ast.walk(function))
 
 
 def _gap(category: str, construct: str) -> str:
@@ -205,6 +212,8 @@ class _ModuleAnalyzer:
         self.module_name = _module_name(path)
         self.max_depth = max_depth
         self.functions = {node.name: node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        self.module_functions = {node.name: node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        self.classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
         self.source_functions = _source_capable_functions(tree)
         self.module_bindings, self.symbol_bindings, self.imported_modules, self.imported_symbols = _import_bindings(
             tree, self.module_name, Path(path).name == "__init__.py"
@@ -216,6 +225,55 @@ class _ModuleAnalyzer:
         self.exposures = exposures if exposures is not None else {}
         self.truncations = truncations if truncations is not None else set()
         self.unmodeled_constructs = unmodeled_constructs if unmodeled_constructs is not None else set()
+
+    def _class_type(self, name: str) -> str | None:
+        if name in self.classes:
+            return f"{self.module_name}:{name}"
+        module = ""
+        symbol = ""
+        if name in self.symbol_bindings:
+            module, symbol = self.symbol_bindings[name]
+        elif "." in name:
+            binding, symbol = name.rsplit(".", 1)
+            root, _, remainder = binding.partition(".")
+            if root in self.module_bindings:
+                module = ".".join(part for part in (self.module_bindings[root], remainder) if part)
+        if module in self.project:
+            analyzer = self.analyzer_cache.get(module)
+            if analyzer is None:
+                path, tree = self.project[module]
+                analyzer = _ModuleAnalyzer(path, tree, self.max_depth, self.budget, self.project, self.analyzer_cache,
+                                           self.exposures, self.truncations, self.unmodeled_constructs)
+            if symbol in analyzer.classes:
+                return f"{module}:{symbol}"
+        return None
+
+    def _object_method(self, object_type: str, method: str) -> tuple["_ModuleAnalyzer", ast.FunctionDef | ast.AsyncFunctionDef, str] | None:
+        module, _, class_name = object_type.partition(":")
+        analyzer = self.analyzer_cache.get(module)
+        if analyzer is None and module in self.project:
+            path, tree = self.project[module]
+            analyzer = _ModuleAnalyzer(path, tree, self.max_depth, self.budget, self.project, self.analyzer_cache,
+                                       self.exposures, self.truncations, self.unmodeled_constructs)
+        class_node = analyzer.classes.get(class_name) if analyzer else None
+        if class_node:
+            target = next((item for item in class_node.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == method), None)
+            if target and not any(_name(item) in {"staticmethod", "classmethod"} for item in target.decorator_list):
+                return analyzer, target, f"{module}.{class_name}.{method}"
+        return None
+
+    def _unsupported_class_method(self, function_name: str) -> bool:
+        if "." not in function_name:
+            return False
+        owner, method = function_name.rsplit(".", 1)
+        object_type = self._class_type(owner)
+        if not object_type:
+            return False
+        module, _, class_name = object_type.partition(":")
+        analyzer = self.analyzer_cache.get(module)
+        class_node = analyzer.classes.get(class_name) if analyzer else None
+        target = next((item for item in class_node.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == method), None) if class_node else None
+        return bool(target and any(_name(item) in {"staticmethod", "classmethod"} for item in target.decorator_list))
 
     def _project_callee(self, function_name: str) -> tuple[tuple["_ModuleAnalyzer", ast.FunctionDef | ast.AsyncFunctionDef, str] | None, str | None]:
         module = ""
@@ -302,7 +360,31 @@ class _ModuleAnalyzer:
                 return _Taint(combined.sources, tuple(dict.fromkeys(combined.sanitizers + (function_name,))), combined.unmodeled)
             if function_name in {"base64.b64encode", "base64.b64decode", "urllib.parse.unquote_plus", "urllib.parse.unquote"}:
                 return combined
-            callee = self.functions.get(function_name)
+            if class_type := self._class_type(function_name):
+                return _Taint(combined.sources, combined.sanitizers, combined.unmodeled, (class_type,))
+            if isinstance(node.func, ast.Attribute) and receiver_taint.object_types:
+                candidates = [self._object_method(kind, node.func.attr) for kind in receiver_taint.object_types]
+                resolved = [item for item in candidates if item is not None]
+                if len(resolved) == 1:
+                    analyzer, target, qualified_target = resolved[0]
+                    # Do not recursively interpret every clean method call in the
+                    # repository. Follow methods only when taint enters as an
+                    # argument or the method directly produces recognized input.
+                    if not (combined.sources or combined.unmodeled or _contains_direct_source(target)):
+                        return combined
+                    if qualified_target in stack:
+                        self.truncations.add((self.path, qualified_target, getattr(node, "lineno", 0)))
+                        gap = _gap("recursion_cycle", f"unresolved return from {function_name}")
+                        return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (gap,))))
+                    if depth >= self.max_depth:
+                        self.truncations.add((self.path, qualified_target, getattr(node, "lineno", 0)))
+                        gap = _gap("depth_limit", f"unresolved return from {function_name}")
+                        return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (gap,))))
+                    return analyzer.execute(target, [_Taint(object_types=receiver_taint.object_types), *argument_taints], depth + 1, stack + (qualified_target,))
+            if self._unsupported_class_method(function_name):
+                gap = _gap("unsupported_method_kind", f"unresolved return from {function_name}")
+                return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (gap,))))
+            callee = self.module_functions.get(function_name)
             qualified_name = f"{self.module_name}.{function_name}" if self.module_name else function_name
             if callee and qualified_name in stack:
                 if combined.sources or combined.unmodeled or function_name in self.source_functions:
