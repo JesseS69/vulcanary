@@ -166,6 +166,88 @@ class DataflowPrototypeTests(unittest.TestCase):
         self.assertEqual([item["line"] for item in report["exposures"]], [5, 8])
         self.assertFalse(any(item["category"] == "cross_module_call" for item in report["unmodeled_constructs"]))
 
+    def test_resolves_repository_local_imported_object_methods_without_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "helpers.py").write_text(
+                "raise RuntimeError('scanned code executed')\n\n"
+                "class Reader:\n"
+                "    def value(self):\n"
+                "        return request.headers.get('X-Value')\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "from helpers import Reader\n\n"
+                "def handler():\n"
+                "    reader = Reader()\n"
+                "    return eval(reader.value())\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([(item["path"], item["line"]) for item in report["exposures"]], [("app.py", 5)])
+        self.assertFalse(any(item["category"] == "dynamic_dispatch" for item in report["unmodeled_constructs"]))
+
+    def test_resolves_local_and_module_aliased_object_methods(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "helpers.py").write_text(
+                "class Reader:\n    def value(self):\n        return request.cookies.get('value')\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "import helpers as h\n\nclass LocalReader:\n"
+                "    def value(self):\n        return request.args.get('value')\n\n"
+                "eval(LocalReader().value())\nreader = h.Reader()\nexec(reader.value())\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([(item["path"], item["line"]) for item in report["exposures"]], [("app.py", 7), ("app.py", 9)])
+
+    def test_unknown_receiver_method_remains_an_explicit_dynamic_dispatch_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "def handler(runtime):\n    return eval(runtime.value(request.args.get('value')))\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(len(report["exposures"]), 1)
+        self.assertEqual(report["unmodeled_constructs"][0]["category"], "dynamic_dispatch")
+
+    def test_static_and_class_methods_are_honest_unsupported_gaps(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "helpers.py").write_text(
+                "class Reader:\n"
+                "    @staticmethod\n    def static(value):\n        return value\n"
+                "    @classmethod\n    def class_value(cls, value):\n        return value\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "from helpers import Reader\n"
+                "eval(Reader.static(request.args.get('a')))\n"
+                "exec(Reader.class_value(request.args.get('b')))\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(
+            [item["category"] for item in report["unmodeled_constructs"]],
+            ["unsupported_method_kind", "unsupported_method_kind"],
+        )
+
+    def test_class_methods_remain_in_the_independent_analysis_workload(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "class Handler:\n"
+                "    def run(self):\n"
+                "        value = request.args.get('value')\n"
+                "        return eval(value)\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([(item["path"], item["line"]) for item in report["exposures"]], [("app.py", 4)])
+
     def test_resolves_package_relative_import_and_bounds_cross_module_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
