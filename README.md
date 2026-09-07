@@ -74,7 +74,7 @@ The process exits with code `1` if a finding meets the configured `fail_on` seve
 To scan several independent local repositories without adding Vulcanary to them:
 
 ```powershell
-.\scripts\scan-many.ps1 ..\CabinScout ..\worktime-audit C:\path\to\zirze-native
+.\scripts\scan-many.ps1 ..\web-app ..\worker-service C:\path\to\api-gateway
 ```
 
 ## Local dashboard
@@ -83,9 +83,9 @@ Launch the dashboard and optionally scan one or more repositories immediately:
 
 ```powershell
 vulcanary dashboard `
-  --repository ..\CabinScout `
-  --repository ..\worktime-audit `
-  --repository C:\path\to\zirze-native
+  --repository ..\web-app `
+  --repository ..\worker-service `
+  --repository C:\path\to\api-gateway
 ```
 
 The dashboard runs only on `127.0.0.1` by default. It provides repository summaries, live threat temperature, searchable findings, dependency inventory changes, a local scan ledger with per-repository finding deltas, governed exceptions, and guarded remediation. Its **Coverage** matrix reports which dependency, reachability, source-analysis, and Git-history capabilities actually ran for each detected ecosystem. A clean analyzed row is therefore visibly different from missing resolver input, an unsupported correlation, or an opt-in feature that is disabled. Its **Web & cloud security** panel can run the native one-request passive web audit only after the operator types the exact authorized hostname, and explains how to import a locally generated, read-only Prowler JSON-OCSF report without giving Vulcanary cloud credentials. Normalized web findings survive local dashboard restarts; response bodies are never stored. Scanned source and findings remain on the local machine.
