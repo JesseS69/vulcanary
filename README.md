@@ -8,6 +8,10 @@ The complete local scanner, dashboard, continuous monitoring, GitHub workflow, d
 
 The canary detects trouble; the forge proves the repair. Vulcanary evaluates dependency and platform upgrades in isolated Git worktrees, runs the repository's own verification commands, rescans the result, and unlocks a fix only when the tested findings disappear without breaking configured checks. It can also enforce the same policy in GitHub Actions and produce normalized JSON, SARIF, and CycloneDX reports.
 
+![Vulcanary dashboard showing synthetic findings and an explicit partial-coverage warning](docs/dashboard-overview.png)
+
+_Synthetic demonstration data only. No real repository names, paths, credentials, or scan records are shown._
+
 ## Quick start
 
 Python 3.11 or newer is required.
@@ -370,6 +374,21 @@ GitHub workflows can pass `--github-summary` to append a sanitized severity tabl
 ## Public accuracy benchmark
 
 `benchmarks/cases.json` contains one synthetic vulnerable fixture and one closely related safe fixture for every built-in deterministic rule. `benchmarks/javascript_entropy_corpus.json` adds realistic JavaScript and TypeScript credential-handling boundaries, including inline objects, minified JSON, environment references, embedded examples, placeholders, hashes, URLs, and dotted identifiers. `benchmarks/javascript_syntax_corpus.json` covers direct, global, aliased, and multiline eval calls; comments, strings, regular expressions, declarations, and property methods; plus static and dynamic `innerHTML` assignments. The suite fails when a rule misses its vulnerable case, fires on its safe neighbor, or lacks benchmark coverage. Run `python -m unittest tests.test_benchmark -v`. Passing these benchmarks proves the published fixture boundaries—not complete detection of every real-world vulnerability—and that limitation is intentional and documented.
+
+## Current limitations
+
+Vulcanary is intentionally local-first. It has no hosted control plane, multi-user RBAC, tenant isolation, remote worker fleet, or runtime agent. Keep the dashboard on loopback; do not expose it through a public proxy. Anyone who can act as your local user may be able to read its local configuration or control its process.
+
+- **Coverage is explicit, not universal.** The dashboard matrix distinguishes analyzed, incomplete, unsupported or disabled, and not-applicable capabilities. A green finding count does not override a coverage gap.
+- **Dependency results require resolved versions.** Manifest ranges are reported as unresolved rather than guessed. Maven requires committed dependency-tree JSON, Gradle requires a lockfile, NuGet requires `packages.lock.json`, and CycloneDX is the escape hatch for other ecosystems. Vulcanary does not run package-manager resolution during ordinary scans.
+- **Dataflow analysis remains research-only.** The opt-in Python prototype is bounded, publishes its BenchmarkPython measurements and analysis gaps, and stays structurally outside severity gates, SLA clocks, dashboards, and normal reports. It is not a claim of full taint coverage.
+- **Source analysis is focused.** Python uses AST-based detectors with a regex fallback; JavaScript and TypeScript use an offset-preserving syntax masker. Other language rules are narrower, and none of these engines currently provide general cross-language or whole-program dataflow.
+- **Reachability is a triage hint.** Namespace/import correlation can miss dynamic loading, generated code, aliases, and packages whose import names differ from registry names. It never lowers advisory severity, and absence of an observed import is not evidence of safety.
+- **Git-history secret scanning is opt-in.** It requires an independently installed Gitleaks binary configured by absolute path. The first full-history pass can take minutes. Historical exposures remain outside ordinary gates and SLAs because credential rotation—not file deletion—is the remediation Vulcanary asks the operator to acknowledge.
+- **Local and CI scope can differ.** Local scans intentionally include gitignored files unless excluded, while CI normally sees only checked-out content. A local-only finding in `.env` and a clean CI scan can therefore both be accurate for their respective inputs.
+- **Web and cloud features are deliberately passive.** The native web audit makes one authorized GET; it does not crawl, authenticate, fuzz, exploit, or constitute a penetration test. Cloud posture and broader DAST are report-ingestion boundaries only: Vulcanary neither accepts cloud credentials nor provides runtime cloud protection or automatic cloud remediation.
+- **Automatic remediation is narrow and guarded.** Only explicitly eligible fixes can be applied, every candidate is isolated and verified, and Vulcanary never pushes or merges it automatically. Applying a fix may run trusted `verify_commands` supplied by the scanned repository; review that configuration first.
+- **Scanner output is not a security guarantee.** Findings, coverage state, and benchmark scores are evidence for human review. They do not prove that a repository, dependency graph, deployed service, or credential set is secure.
 
 ## Roadmap
 
