@@ -20,13 +20,18 @@ class _Taint:
     sanitizers: tuple[str, ...] = ()
     unmodeled: tuple[str, ...] = ()
     object_types: tuple[str, ...] = ()
+    attributes: tuple[tuple[str, "_Taint"], ...] = ()
 
     def merge(self, other: "_Taint") -> "_Taint":
+        merged_attributes = dict(self.attributes)
+        for name, value in other.attributes:
+            merged_attributes[name] = merged_attributes.get(name, _Taint()).merge(value)
         return _Taint(
             tuple(dict.fromkeys(self.sources + other.sources)),
             tuple(dict.fromkeys(self.sanitizers + other.sanitizers)),
             tuple(dict.fromkeys(self.unmodeled + other.unmodeled)),
             tuple(dict.fromkeys(self.object_types + other.object_types)),
+            tuple(merged_attributes.items()),
         )
 
 
@@ -138,7 +143,10 @@ def _source_capable_functions(tree: ast.Module) -> set[str]:
             if self.stack and _source(node):
                 direct.add(self.stack[-1])
             if self.stack and isinstance(node, ast.Call):
-                calls.setdefault(self.stack[-1], set()).add(_name(node.func))
+                callee = _name(node.func)
+                if callee.startswith(("self.", "cls.")):
+                    callee = callee.rsplit(".", 1)[-1]
+                calls.setdefault(self.stack[-1], set()).add(callee)
             super().visit(node)
 
         def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -214,6 +222,12 @@ class _ModuleAnalyzer:
         self.functions = {node.name: node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
         self.module_functions = {node.name: node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
         self.classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+        self.method_owners = {
+            id(method): class_node.name
+            for class_node in self.classes.values()
+            for method in class_node.body
+            if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
         self.source_functions = _source_capable_functions(tree)
         self.module_bindings, self.symbol_bindings, self.imported_modules, self.imported_symbols = _import_bindings(
             tree, self.module_name, Path(path).name == "__init__.py"
@@ -222,6 +236,7 @@ class _ModuleAnalyzer:
         self.analyzer_cache = analyzer_cache if analyzer_cache is not None else {}
         self.analyzer_cache[self.module_name] = self
         self.budget = budget
+        self.constructor_cache: dict[str, _Taint] = {}
         self.exposures = exposures if exposures is not None else {}
         self.truncations = truncations if truncations is not None else set()
         self.unmodeled_constructs = unmodeled_constructs if unmodeled_constructs is not None else set()
@@ -314,6 +329,16 @@ class _ModuleAnalyzer:
             return _Taint((f"{source}@{getattr(node, 'lineno', 0)}",))
         if isinstance(node, ast.Name):
             return env.get(node.id, _Taint())
+        if isinstance(node, ast.Attribute):
+            qualified = _name(node)
+            if qualified in env:
+                return env[qualified]
+            receiver = self.expression(node.value, env, depth, stack)
+            attribute = _Taint()
+            for name, value in receiver.attributes:
+                if name == node.attr:
+                    attribute = attribute.merge(value)
+            return attribute
         if isinstance(node, ast.Subscript):
             key = _subscript_key(node)
             return env[key] if key and key in env else self.expression(node.value, env, depth, stack)
@@ -361,7 +386,35 @@ class _ModuleAnalyzer:
             if function_name in {"base64.b64encode", "base64.b64decode", "urllib.parse.unquote_plus", "urllib.parse.unquote"}:
                 return combined
             if class_type := self._class_type(function_name):
-                return _Taint(combined.sources, combined.sanitizers, combined.unmodeled, (class_type,))
+                module, _, class_name = class_type.partition(":")
+                analyzer = self.analyzer_cache.get(module)
+                class_node = analyzer.classes.get(class_name) if analyzer else None
+                initializer = next(
+                    (item for item in class_node.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == "__init__"),
+                    None,
+                ) if class_node else None
+                instance = _Taint(combined.sources, combined.sanitizers, combined.unmodeled, (class_type,))
+                if initializer:
+                    qualified_initializer = f"{module}.{class_name}.__init__"
+                    if depth >= self.max_depth:
+                        self.truncations.add((self.path, qualified_initializer, getattr(node, "lineno", 0)))
+                        instance = instance.merge(_Taint(unmodeled=(
+                            _gap("depth_limit", f"unresolved initialization of {function_name}"),
+                        )))
+                    else:
+                        cacheable = not any(
+                            item.sources or item.sanitizers or item.unmodeled or item.object_types or item.attributes
+                            for item in argument_taints
+                        )
+                        cached = analyzer.constructor_cache.get(class_type) if cacheable else None
+                        if cached is not None:
+                            instance = cached
+                        else:
+                            truncation_count = len(self.truncations)
+                            instance = analyzer.initialize_instance(initializer, instance, argument_taints, depth + 1, stack)
+                            if cacheable and not instance.unmodeled and len(self.truncations) == truncation_count:
+                                analyzer.constructor_cache[class_type] = instance
+                return instance
             if isinstance(node.func, ast.Attribute) and receiver_taint.object_types:
                 candidates = [self._object_method(kind, node.func.attr) for kind in receiver_taint.object_types]
                 resolved = [item for item in candidates if item is not None]
@@ -369,8 +422,16 @@ class _ModuleAnalyzer:
                     analyzer, target, qualified_target = resolved[0]
                     # Do not recursively interpret every clean method call in the
                     # repository. Follow methods only when taint enters as an
-                    # argument or the method directly produces recognized input.
-                    if not (combined.sources or combined.unmodeled or _contains_direct_source(target)):
+                    # argument/receiver state or the method directly produces
+                    # recognized input.
+                    stateful_receiver = receiver_taint.sources or receiver_taint.unmodeled or any(
+                        value.sources or value.unmodeled
+                        for _, value in receiver_taint.attributes
+                    )
+                    if not (
+                        combined.sources or combined.unmodeled or stateful_receiver
+                        or target.name in analyzer.source_functions
+                    ):
                         return combined
                     if qualified_target in stack:
                         self.truncations.add((self.path, qualified_target, getattr(node, "lineno", 0)))
@@ -380,7 +441,14 @@ class _ModuleAnalyzer:
                         self.truncations.add((self.path, qualified_target, getattr(node, "lineno", 0)))
                         gap = _gap("depth_limit", f"unresolved return from {function_name}")
                         return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (gap,))))
-                    return analyzer.execute(target, [_Taint(object_types=receiver_taint.object_types), *argument_taints], depth + 1, stack + (qualified_target,))
+                    result, updated_receiver = analyzer.execute_method(
+                        target, receiver_taint, argument_taints, depth + 1, stack + (qualified_target,)
+                    )
+                    if receiver_name:
+                        env[receiver_name] = updated_receiver
+                        for name, value in updated_receiver.attributes:
+                            env[f"{receiver_name}.{name}"] = value
+                    return result
             if self._unsupported_class_method(function_name):
                 gap = _gap("unsupported_method_kind", f"unresolved return from {function_name}")
                 return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (gap,))))
@@ -440,6 +508,8 @@ class _ModuleAnalyzer:
                 for target in targets:
                     if isinstance(target, ast.Name):
                         env[target.id] = value
+                    elif isinstance(target, ast.Attribute) and (qualified := _name(target)):
+                        env[qualified] = value
                     elif isinstance(target, ast.Subscript) and (key := _subscript_key(target)):
                         env[key] = value
             elif isinstance(statement, ast.Return):
@@ -465,13 +535,97 @@ class _ModuleAnalyzer:
 
     def execute(self, function: ast.FunctionDef | ast.AsyncFunctionDef, arguments: list[_Taint], depth: int, stack: tuple[str, ...]) -> _Taint:
         env = {parameter.arg: arguments[index] if index < len(arguments) else _Taint() for index, parameter in enumerate(function.args.args)}
+        if function.args.args and arguments:
+            receiver_name = function.args.args[0].arg
+            for name, value in arguments[0].attributes:
+                env[f"{receiver_name}.{name}"] = value
         return self.statements(function.body, env, depth, stack)
+
+    def execute_method(
+        self, function: ast.FunctionDef | ast.AsyncFunctionDef, receiver: _Taint,
+        arguments: list[_Taint], depth: int, stack: tuple[str, ...],
+    ) -> tuple[_Taint, _Taint]:
+        parameters = function.args.args
+        supplied = [receiver, *arguments]
+        env = {parameter.arg: supplied[index] if index < len(supplied) else _Taint() for index, parameter in enumerate(parameters)}
+        receiver_name = parameters[0].arg if parameters else "self"
+        for name, value in receiver.attributes:
+            env[f"{receiver_name}.{name}"] = value
+        returned = self.statements(function.body, env, depth, stack)
+        prefix = f"{receiver_name}."
+        attributes = tuple((name[len(prefix):], value) for name, value in env.items() if name.startswith(prefix))
+        updated = _Taint(receiver.sources, receiver.sanitizers, receiver.unmodeled, receiver.object_types, attributes)
+        return returned, updated
+
+    def initialize_instance(
+        self, initializer: ast.FunctionDef | ast.AsyncFunctionDef, instance: _Taint,
+        arguments: list[_Taint], depth: int, stack: tuple[str, ...],
+    ) -> _Taint:
+        qualified = f"{self.module_name}.{self.method_owners.get(id(initializer), '')}.__init__"
+        if qualified in stack:
+            return instance.merge(_Taint(unmodeled=(_gap("recursion_cycle", "unresolved instance initialization"),)))
+        parameters = initializer.args.args
+        supplied = [instance, *arguments]
+        env = {parameter.arg: supplied[index] if index < len(supplied) else _Taint() for index, parameter in enumerate(parameters)}
+        receiver = parameters[0].arg if parameters else "self"
+        self.initialize_statements(initializer.body, env, receiver, depth, stack + (qualified,))
+        prefix = f"{receiver}."
+        attributes = tuple((name[len(prefix):], value) for name, value in env.items() if name.startswith(prefix))
+        return _Taint(instance.sources, instance.sanitizers, instance.unmodeled, instance.object_types, attributes)
+
+    def initialize_statements(
+        self, statements: list[ast.stmt], env: dict[str, _Taint], receiver: str,
+        depth: int, stack: tuple[str, ...],
+    ) -> None:
+        """Summarize constructor state without interpreting unrelated body calls."""
+        prefix = f"{receiver}."
+        for statement in statements:
+            if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+                relevant = [target for target in targets if isinstance(target, ast.Attribute) and _name(target).startswith(prefix)]
+                if relevant:
+                    value = self.expression(statement.value, env, depth, stack)
+                    for target in relevant:
+                        env[_name(target)] = value
+            elif isinstance(statement, (ast.If, ast.For, ast.While, ast.With, ast.Try)):
+                branches: list[dict[str, _Taint]] = []
+                for body in (getattr(statement, "body", []), getattr(statement, "orelse", []), getattr(statement, "finalbody", [])):
+                    branch = dict(env)
+                    self.initialize_statements(body, branch, receiver, depth, stack)
+                    branches.append(branch)
+                for handler in getattr(statement, "handlers", []):
+                    branch = dict(env)
+                    self.initialize_statements(handler.body, branch, receiver, depth, stack)
+                    branches.append(branch)
+                for name in set().union(*(branch.keys() for branch in branches)):
+                    if not name.startswith(prefix):
+                        continue
+                    merged = _Taint()
+                    for branch in branches:
+                        merged = merged.merge(branch.get(name, env.get(name, _Taint())))
+                    env[name] = merged
 
     def run(self, tree: ast.Module) -> None:
         self.statements(tree.body, {}, 0, ())
+        instance_seeds: dict[str, _Taint] = {}
         for function in self.functions.values():
             qualified = f"{self.module_name}.{function.name}" if self.module_name else function.name
-            self.execute(function, [], 0, (qualified,))
+            arguments: list[_Taint] = []
+            owner = self.method_owners.get(id(function))
+            if owner and function.args.args:
+                instance = instance_seeds.get(owner)
+                if instance is None:
+                    instance = _Taint(object_types=(f"{self.module_name}:{owner}",))
+                    class_node = self.classes[owner]
+                    initializer = next(
+                        (item for item in class_node.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == "__init__"),
+                        None,
+                    )
+                    if initializer:
+                        instance = self.initialize_instance(initializer, instance, [], 1, ())
+                    instance_seeds[owner] = instance
+                arguments = [instance]
+            self.execute(function, arguments, 0, (qualified,))
 
 
 def analyze_python_dataflow(

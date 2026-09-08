@@ -203,6 +203,88 @@ class DataflowPrototypeTests(unittest.TestCase):
             report = analyze_python_dataflow(root)
         self.assertEqual([(item["path"], item["line"]) for item in report["exposures"]], [("app.py", 7), ("app.py", 9)])
 
+    def test_resolves_objects_stored_on_instance_attributes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "helpers.py").write_text(
+                "raise RuntimeError('scanned code executed')\n\n"
+                "class Reader:\n"
+                "    def read(self):\n"
+                "        return request.headers.get('X-Value')\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "from helpers import Reader\n\n"
+                "class Handler:\n"
+                "    def __init__(self):\n"
+                "        self.reader = Reader()\n"
+                "    def handle(self):\n"
+                "        return eval(self.reader.read())\n\n"
+                "Handler().handle()\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([(item["path"], item["line"]) for item in report["exposures"]], [("app.py", 7)])
+        self.assertFalse(any(item["category"] == "dynamic_dispatch" for item in report["unmodeled_constructs"]))
+
+    def test_propagates_tainted_values_through_instance_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "class Handler:\n"
+                "    def __init__(self, value):\n"
+                "        self.value = value\n"
+                "    def read(self):\n"
+                "        return self.value\n\n"
+                "handler = Handler(request.args.get('value'))\n"
+                "exec(handler.read())\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([(item["path"], item["line"]) for item in report["exposures"]], [("app.py", 8)])
+        self.assertFalse(any(item["category"] == "dynamic_dispatch" for item in report["unmodeled_constructs"]))
+
+    def test_instance_state_mutation_is_tracked_without_tainting_clean_returns(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "class Handler:\n"
+                "    def store(self, value):\n"
+                "        self.value = value\n"
+                "        return 'constant'\n"
+                "    def execute(self, value):\n"
+                "        self.store(value)\n"
+                "        return eval(self.value)\n"
+                "    def clean(self):\n"
+                "        return 'constant'\n\n"
+                "handler = Handler()\n"
+                "handler.execute(request.form.get('value'))\n"
+                "exec(handler.clean())\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([(item["path"], item["line"]) for item in report["exposures"]], [("app.py", 7)])
+
+    def test_self_method_state_mutation_reaches_a_later_method(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "class Handler:\n"
+                "    def store(self):\n"
+                "        self.value = request.args.get('value')\n"
+                "    def prepare(self):\n"
+                "        self.store()\n"
+                "    def consume(self):\n"
+                "        return eval(self.value)\n\n"
+                "handler = Handler()\n"
+                "handler.prepare()\n"
+                "handler.consume()\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([(item["path"], item["line"]) for item in report["exposures"]], [("app.py", 7)])
+        self.assertFalse(report["unmodeled_constructs"])
+
     def test_unknown_receiver_method_remains_an_explicit_dynamic_dispatch_gap(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
