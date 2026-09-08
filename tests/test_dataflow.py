@@ -285,6 +285,90 @@ class DataflowPrototypeTests(unittest.TestCase):
         self.assertEqual([(item["path"], item["line"]) for item in report["exposures"]], [("app.py", 7)])
         self.assertFalse(report["unmodeled_constructs"])
 
+    def test_instance_alias_mutation_updates_the_original_receiver(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "class Holder:\n"
+                "    def __init__(self):\n"
+                "        self.value = 'clean'\n"
+                "    def store(self, value):\n"
+                "        self.value = value\n"
+                "    def consume(self):\n"
+                "        return eval(self.value)\n\n"
+                "holder = Holder()\n"
+                "alias = holder\n"
+                "alias.store(request.args.get('value'))\n"
+                "holder.consume()\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([item["line"] for item in report["exposures"]], [7])
+
+    def test_nested_instance_alias_mutation_flows_back_to_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "class Reader:\n"
+                "    def store(self, value):\n"
+                "        self.value = value\n"
+                "    def read(self):\n"
+                "        return self.value\n\n"
+                "class Handler:\n"
+                "    def __init__(self):\n"
+                "        self.reader = Reader()\n"
+                "    def consume(self):\n"
+                "        return exec(self.reader.read())\n\n"
+                "handler = Handler()\n"
+                "alias = handler.reader\n"
+                "alias.store(request.form.get('value'))\n"
+                "handler.consume()\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([item["line"] for item in report["exposures"]], [11])
+
+    def test_instance_aliases_do_not_conflate_separate_allocations(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "class Holder:\n"
+                "    def __init__(self):\n"
+                "        self.value = 'clean'\n"
+                "    def store(self, value):\n"
+                "        self.value = value\n"
+                "    def consume(self):\n"
+                "        return eval(self.value)\n\n"
+                "first = Holder()\n"
+                "second = Holder()\n"
+                "alias = first\n"
+                "alias.store(request.args.get('value'))\n"
+                "second.consume()\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(report["exposures"], [])
+
+    def test_truncated_constructor_state_is_not_reused_from_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "class Holder:\n"
+                "    def __init__(self):\n"
+                "        self.value = request.args.get('value')\n"
+                "    def consume(self):\n"
+                "        return eval(self.value)\n\n"
+                "def nested(value):\n"
+                "    return Holder()\n\n"
+                "nested(request.form.get('trigger'))\n"
+                "direct = Holder()\n"
+                "direct.consume()\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root, max_depth=1)
+        self.assertEqual([item["line"] for item in report["exposures"]], [5])
+        self.assertTrue(any(item["function"].endswith("Holder.__init__") for item in report["analysis_truncations"]))
+
     def test_unknown_receiver_method_remains_an_explicit_dynamic_dispatch_gap(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
