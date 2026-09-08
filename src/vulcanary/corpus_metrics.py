@@ -59,6 +59,21 @@ def _sink_identity(exposure: dict) -> tuple[str, str, int, str]:
     )
 
 
+def _gap_identity(item: dict) -> tuple[str, str, str, int]:
+    return (
+        str(item.get("path", "")), str(item.get("category", "unclassified")),
+        str(item.get("construct", "")), int(item.get("sink_line", 0)),
+    )
+
+
+def _truncation_identity(item: dict) -> tuple[str, str, int]:
+    return str(item.get("path", "")), str(item.get("function", "")), int(item.get("line", 0))
+
+
+def _identity_document(identity: tuple, fields: tuple[str, ...]) -> dict:
+    return dict(zip(fields, identity))
+
+
 def compare_corpus_reports(baseline: dict, candidate: dict) -> dict:
     baseline_metrics = _metrics(baseline)
     candidate_metrics = _metrics(candidate)
@@ -73,6 +88,10 @@ def compare_corpus_reports(baseline: dict, candidate: dict) -> dict:
     ]
     baseline_categories = _gap_categories(baseline)
     candidate_categories = _gap_categories(candidate)
+    baseline_gaps = {_gap_identity(item) for item in baseline.get("unmodeled_constructs", [])}
+    candidate_gaps = {_gap_identity(item) for item in candidate.get("unmodeled_constructs", [])}
+    baseline_truncations = {_truncation_identity(item) for item in baseline.get("analysis_truncations", [])}
+    candidate_truncations = {_truncation_identity(item) for item in candidate.get("analysis_truncations", [])}
     return {
         "schema": "vulcanary.corpus-comparison.v1",
         "baseline": baseline_metrics,
@@ -90,6 +109,26 @@ def compare_corpus_reports(baseline: dict, candidate: dict) -> dict:
             "added": sorted(candidate_fingerprints - baseline_fingerprints),
             "removed": sorted(baseline_fingerprints - candidate_fingerprints),
             "churn": churn,
+        },
+        "gap_identities": {
+            "added": [
+                _identity_document(item, ("path", "category", "construct", "sink_line"))
+                for item in sorted(candidate_gaps - baseline_gaps)
+            ],
+            "removed": [
+                _identity_document(item, ("path", "category", "construct", "sink_line"))
+                for item in sorted(baseline_gaps - candidate_gaps)
+            ],
+        },
+        "truncation_identities": {
+            "added": [
+                _identity_document(item, ("path", "function", "line"))
+                for item in sorted(candidate_truncations - baseline_truncations)
+            ],
+            "removed": [
+                _identity_document(item, ("path", "function", "line"))
+                for item in sorted(baseline_truncations - candidate_truncations)
+            ],
         },
         "limits": {
             "baseline": baseline.get("analysis_limits", []),

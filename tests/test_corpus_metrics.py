@@ -16,20 +16,26 @@ class CorpusMetricsTests(unittest.TestCase):
         baseline = {
             "exposures": [{"fingerprint": "old", "rule_id": "RULE", "path": "app.py", "line": 4, "sink": "eval"}],
             "unmodeled_construct_count": 1,
-            "unmodeled_constructs": [{"category": "cross_module_call"}],
-            "analysis_truncations": [], "parse_errors": 0,
+            "unmodeled_constructs": [{
+                "path": "app.py", "category": "cross_module_call",
+                "construct": "unresolved return from helper", "sink_line": 4,
+            }],
+            "analysis_truncations": [{"path": "app.py", "function": "old", "line": 3}], "parse_errors": 0,
             "benchmark": {"true_positives": 1, "false_positives": 0, "false_negatives": 1, "true_negatives": 2},
         }
         candidate = {
             "exposures": [{"fingerprint": "new", "rule_id": "RULE", "path": "app.py", "line": 4, "sink": "eval"}],
             "unmodeled_construct_count": 0, "unmodeled_constructs": [],
-            "analysis_truncations": [{"function": "helper"}], "parse_errors": 0,
+            "analysis_truncations": [{"path": "app.py", "function": "helper", "line": 4}], "parse_errors": 0,
             "benchmark": {"true_positives": 2, "false_positives": 0, "false_negatives": 0, "true_negatives": 2},
         }
         comparison = compare_corpus_reports(baseline, candidate)
         self.assertEqual(comparison["delta"]["true_positives"], 1)
         self.assertEqual(comparison["gap_categories"]["delta"]["cross_module_call"], -1)
         self.assertEqual(comparison["fingerprints"]["churn"][0]["before"], "old")
+        self.assertEqual(comparison["gap_identities"]["removed"][0]["sink_line"], 4)
+        self.assertEqual(comparison["truncation_identities"]["removed"][0]["function"], "old")
+        self.assertEqual(comparison["truncation_identities"]["added"][0]["function"], "helper")
 
     def test_comparison_file_is_deterministic_json(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -43,6 +49,8 @@ class CorpusMetricsTests(unittest.TestCase):
             document = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(document["schema"], "vulcanary.corpus-comparison.v1")
         self.assertEqual(document["fingerprints"]["churn"], [])
+        self.assertEqual(document["gap_identities"], {"added": [], "removed": []})
+        self.assertEqual(document["truncation_identities"], {"added": [], "removed": []})
 
 
 if __name__ == "__main__":
