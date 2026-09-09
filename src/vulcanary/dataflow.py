@@ -104,6 +104,11 @@ def _name(node: ast.AST) -> str:
     return ""
 
 
+def _base_name(node: ast.AST) -> str:
+    """Return the class named by a base expression without evaluating type arguments."""
+    return _name(node.value) if isinstance(node, ast.Subscript) else _name(node)
+
+
 def _source(node: ast.AST) -> str | None:
     target = node.func if isinstance(node, ast.Call) else node.value if isinstance(node, ast.Subscript) else node
     name = _name(target)
@@ -304,7 +309,11 @@ class _ModuleAnalyzer:
                 return f"{module}:{symbol}"
         return None
 
-    def _object_method(self, object_type: str, method: str) -> tuple["_ModuleAnalyzer", ast.FunctionDef | ast.AsyncFunctionDef, str] | None:
+    def _object_method(
+        self, object_type: str, method: str, seen: tuple[str, ...] = (),
+    ) -> tuple[tuple["_ModuleAnalyzer", ast.FunctionDef | ast.AsyncFunctionDef, str] | None, str | None]:
+        if object_type in seen:
+            return None, "inheritance_cycle"
         module, _, class_name = object_type.partition(":")
         analyzer = self.analyzer_cache.get(module)
         if analyzer is None and module in self.project:
@@ -314,9 +323,20 @@ class _ModuleAnalyzer:
         class_node = analyzer.classes.get(class_name) if analyzer else None
         if class_node:
             target = next((item for item in class_node.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == method), None)
-            if target and not any(_name(item) in {"staticmethod", "classmethod"} for item in target.decorator_list):
-                return analyzer, target, f"{module}.{class_name}.{method}"
-        return None
+            if target:
+                if any(_name(item) in {"staticmethod", "classmethod"} for item in target.decorator_list):
+                    return None, "unsupported_method_kind"
+                return (analyzer, target, f"{module}.{class_name}.{method}"), None
+            base_names = [_base_name(base) for base in class_node.bases]
+            bases = [analyzer._class_type(base) for base in base_names if base not in {"object", "Generic", "typing.Generic"}]
+            if any(base is None for base in bases):
+                return None, "missing_base"
+            resolved_bases = [base for base in bases if base]
+            if len(resolved_bases) > 1:
+                return None, "ambiguous_inheritance"
+            if resolved_bases:
+                return analyzer._object_method(resolved_bases[0], method, seen + (object_type,))
+        return None, None
 
     def _unsupported_class_method(self, function_name: str) -> bool:
         if "." not in function_name:
@@ -328,8 +348,8 @@ class _ModuleAnalyzer:
         module, _, class_name = object_type.partition(":")
         analyzer = self.analyzer_cache.get(module)
         class_node = analyzer.classes.get(class_name) if analyzer else None
-        target = next((item for item in class_node.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == method), None) if class_node else None
-        return bool(target and any(_name(item) in {"staticmethod", "classmethod"} for item in target.decorator_list))
+        _, gap = self._object_method(object_type, method)
+        return gap == "unsupported_method_kind"
 
     def _project_callee(self, function_name: str) -> tuple[tuple["_ModuleAnalyzer", ast.FunctionDef | ast.AsyncFunctionDef, str] | None, str | None]:
         module = ""
@@ -427,20 +447,18 @@ class _ModuleAnalyzer:
             if function_name in {"base64.b64encode", "base64.b64decode", "urllib.parse.unquote_plus", "urllib.parse.unquote"}:
                 return combined
             if class_type := self._class_type(function_name):
-                module, _, class_name = class_type.partition(":")
-                analyzer = self.analyzer_cache.get(module)
-                class_node = analyzer.classes.get(class_name) if analyzer else None
-                initializer = next(
-                    (item for item in class_node.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == "__init__"),
-                    None,
-                ) if class_node else None
+                initializer_result, inheritance_gap = self._object_method(class_type, "__init__")
                 allocation = f"{self.path}:{getattr(node, 'lineno', 0)}:{getattr(node, 'col_offset', 0)}:{class_type}"
                 instance = _Taint(
                     combined.sources, combined.sanitizers, combined.unmodeled,
                     (class_type,), object_ids=(allocation,),
                 )
-                if initializer:
-                    qualified_initializer = f"{module}.{class_name}.__init__"
+                if inheritance_gap:
+                    instance = instance.merge(_Taint(unmodeled=(
+                        _gap(inheritance_gap, f"unresolved initialization of {function_name}"),
+                    )))
+                if initializer_result:
+                    analyzer, initializer, qualified_initializer = initializer_result
                     if depth >= self.max_depth:
                         self.truncations.add((self.path, qualified_initializer, getattr(node, "lineno", 0)))
                         instance = instance.merge(_Taint(unmodeled=(
@@ -465,7 +483,8 @@ class _ModuleAnalyzer:
                 return instance
             if isinstance(node.func, ast.Attribute) and receiver_taint.object_types:
                 candidates = [self._object_method(kind, node.func.attr) for kind in receiver_taint.object_types]
-                resolved = [item for item in candidates if item is not None]
+                resolved = [item for item, _ in candidates if item is not None]
+                inheritance_gaps = sorted({gap for _, gap in candidates if gap})
                 if len(resolved) == 1:
                     analyzer, target, qualified_target = resolved[0]
                     # Do not recursively interpret every clean method call in the
@@ -497,6 +516,12 @@ class _ModuleAnalyzer:
                         for name, value in updated_receiver.attributes:
                             env[f"{receiver_name}.{name}"] = value
                     return result
+                if inheritance_gaps:
+                    gap = _gap(inheritance_gaps[0], f"unresolved return from {function_name}")
+                    return _Taint(
+                        combined.sources, combined.sanitizers,
+                        tuple(dict.fromkeys(combined.unmodeled + (gap,))),
+                    )
             if self._unsupported_class_method(function_name):
                 gap = _gap("unsupported_method_kind", f"unresolved return from {function_name}")
                 return _Taint(combined.sources, combined.sanitizers, tuple(dict.fromkeys(combined.unmodeled + (gap,))))

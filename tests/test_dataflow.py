@@ -369,6 +369,123 @@ class DataflowPrototypeTests(unittest.TestCase):
         self.assertEqual([item["line"] for item in report["exposures"]], [5])
         self.assertTrue(any(item["function"].endswith("Holder.__init__") for item in report["analysis_truncations"]))
 
+    def test_inherited_constructor_and_method_propagate_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "class Base:\n"
+                "    def __init__(self):\n"
+                "        self.value = request.args.get('value')\n"
+                "    def consume(self):\n"
+                "        return eval(self.value)\n\n"
+                "class Child(Base):\n"
+                "    pass\n\n"
+                "Child().consume()\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([item["line"] for item in report["exposures"]], [5])
+        self.assertFalse(report["unmodeled_constructs"])
+
+    def test_imported_base_is_resolved_without_executing_scanned_code(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "base.py").write_text(
+                "raise RuntimeError('scanned code executed')\n\n"
+                "class Base:\n"
+                "    def __init__(self):\n"
+                "        self.value = request.args.get('value')\n"
+                "    def consume(self):\n"
+                "        return eval(self.value)\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "from base import Base\n\n"
+                "class Child(Base):\n"
+                "    pass\n\n"
+                "Child().consume()\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(
+            [(item["path"], item["line"]) for item in report["exposures"]],
+            [("base.py", 7)],
+        )
+        self.assertFalse(report["unmodeled_constructs"])
+
+    def test_clean_child_override_wins_over_tainted_parent_method(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "class Base:\n"
+                "    def value(self):\n"
+                "        return request.args.get('value')\n\n"
+                "class Child(Base):\n"
+                "    def value(self):\n"
+                "        return 'clean'\n\n"
+                "eval(Child().value())\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(report["exposures"], [])
+
+    def test_multiple_inheritance_is_an_explicit_gap_instead_of_a_guess(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "class Left:\n"
+                "    def value(self):\n"
+                "        return request.args.get('left')\n\n"
+                "class Right:\n"
+                "    def value(self):\n"
+                "        return 'clean'\n\n"
+                "class Child(Left, Right):\n"
+                "    pass\n\n"
+                "eval(Child().value())\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(report["exposures"], [])
+        self.assertEqual(report["unmodeled_constructs"][0]["category"], "ambiguous_inheritance")
+
+    def test_inheritance_cycle_is_bounded_and_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "class First(Second):\n"
+                "    pass\n\n"
+                "class Second(First):\n"
+                "    pass\n\n"
+                "eval(First().value())\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(report["exposures"], [])
+        self.assertEqual(report["unmodeled_constructs"][0]["category"], "inheritance_cycle")
+
+    def test_missing_external_base_and_generic_marker_are_distinguished(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "from typing import Generic, TypeVar\n"
+                "from framework import ExternalBase\n\n"
+                "T = TypeVar('T')\n\n"
+                "class GenericChild(Generic[T]):\n"
+                "    def value(self):\n"
+                "        return request.args.get('value')\n\n"
+                "class ExternalChild(ExternalBase):\n"
+                "    pass\n\n"
+                "eval(GenericChild().value())\n"
+                "eval(ExternalChild().value())\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([item["line"] for item in report["exposures"]], [13])
+        self.assertEqual(
+            {item["category"] for item in report["unmodeled_constructs"]},
+            {"missing_base"},
+        )
+
     def test_unknown_receiver_method_remains_an_explicit_dynamic_dispatch_gap(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
