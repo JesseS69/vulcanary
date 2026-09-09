@@ -21,6 +21,7 @@ class _Taint:
     unmodeled: tuple[str, ...] = ()
     object_types: tuple[str, ...] = ()
     attributes: tuple[tuple[str, "_Taint"], ...] = ()
+    object_ids: tuple[str, ...] = ()
 
     def merge(self, other: "_Taint") -> "_Taint":
         merged_attributes = dict(self.attributes)
@@ -32,7 +33,47 @@ class _Taint:
             tuple(dict.fromkeys(self.unmodeled + other.unmodeled)),
             tuple(dict.fromkeys(self.object_types + other.object_types)),
             tuple(merged_attributes.items()),
+            tuple(dict.fromkeys(self.object_ids + other.object_ids)),
         )
+
+
+def _replace_object(value: _Taint, object_ids: tuple[str, ...], replacement: _Taint) -> _Taint:
+    """Replace an allocation and its nested aliases without executing repository code."""
+    if set(value.object_ids) & set(object_ids):
+        return replacement
+    attributes = tuple((name, _replace_object(item, object_ids, replacement)) for name, item in value.attributes)
+    if attributes == value.attributes:
+        return value
+    return _Taint(value.sources, value.sanitizers, value.unmodeled, value.object_types, attributes, value.object_ids)
+
+
+def _has_flow_state(value: _Taint) -> bool:
+    return bool(value.sources or value.unmodeled) or any(_has_flow_state(item) for _, item in value.attributes)
+
+
+def _has_unmodeled_state(value: _Taint) -> bool:
+    return bool(value.unmodeled) or any(_has_unmodeled_state(item) for _, item in value.attributes)
+
+
+def _reidentify_objects(value: _Taint, allocation: str) -> _Taint:
+    """Give a cached object graph fresh IDs while preserving internal aliases."""
+    identifiers: dict[str, str] = {}
+    if value.object_ids:
+        identifiers[value.object_ids[0]] = allocation
+
+    def visit(item: _Taint) -> _Taint:
+        object_ids = []
+        for identifier in item.object_ids:
+            if identifier not in identifiers:
+                identifiers[identifier] = f"{allocation}/nested/{len(identifiers)}"
+            object_ids.append(identifiers[identifier])
+        attributes = tuple((name, visit(attribute)) for name, attribute in item.attributes)
+        return _Taint(
+            item.sources, item.sanitizers, item.unmodeled,
+            item.object_types, attributes, tuple(object_ids),
+        )
+
+    return visit(value)
 
 
 @dataclass
@@ -393,7 +434,11 @@ class _ModuleAnalyzer:
                     (item for item in class_node.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == "__init__"),
                     None,
                 ) if class_node else None
-                instance = _Taint(combined.sources, combined.sanitizers, combined.unmodeled, (class_type,))
+                allocation = f"{self.path}:{getattr(node, 'lineno', 0)}:{getattr(node, 'col_offset', 0)}:{class_type}"
+                instance = _Taint(
+                    combined.sources, combined.sanitizers, combined.unmodeled,
+                    (class_type,), object_ids=(allocation,),
+                )
                 if initializer:
                     qualified_initializer = f"{module}.{class_name}.__init__"
                     if depth >= self.max_depth:
@@ -408,11 +453,14 @@ class _ModuleAnalyzer:
                         )
                         cached = analyzer.constructor_cache.get(class_type) if cacheable else None
                         if cached is not None:
-                            instance = cached
+                            instance = _reidentify_objects(cached, allocation)
                         else:
                             truncation_count = len(self.truncations)
                             instance = analyzer.initialize_instance(initializer, instance, argument_taints, depth + 1, stack)
-                            if cacheable and not instance.unmodeled and len(self.truncations) == truncation_count:
+                            if (
+                                cacheable and not _has_unmodeled_state(instance)
+                                and len(self.truncations) == truncation_count
+                            ):
                                 analyzer.constructor_cache[class_type] = instance
                 return instance
             if isinstance(node.func, ast.Attribute) and receiver_taint.object_types:
@@ -424,10 +472,7 @@ class _ModuleAnalyzer:
                     # repository. Follow methods only when taint enters as an
                     # argument/receiver state or the method directly produces
                     # recognized input.
-                    stateful_receiver = receiver_taint.sources or receiver_taint.unmodeled or any(
-                        value.sources or value.unmodeled
-                        for _, value in receiver_taint.attributes
-                    )
+                    stateful_receiver = _has_flow_state(receiver_taint)
                     if not (
                         combined.sources or combined.unmodeled or stateful_receiver
                         or target.name in analyzer.source_functions
@@ -444,6 +489,9 @@ class _ModuleAnalyzer:
                     result, updated_receiver = analyzer.execute_method(
                         target, receiver_taint, argument_taints, depth + 1, stack + (qualified_target,)
                     )
+                    if receiver_taint.object_ids:
+                        for name, value in tuple(env.items()):
+                            env[name] = _replace_object(value, receiver_taint.object_ids, updated_receiver)
                     if receiver_name:
                         env[receiver_name] = updated_receiver
                         for name, value in updated_receiver.attributes:
@@ -554,7 +602,10 @@ class _ModuleAnalyzer:
         returned = self.statements(function.body, env, depth, stack)
         prefix = f"{receiver_name}."
         attributes = tuple((name[len(prefix):], value) for name, value in env.items() if name.startswith(prefix))
-        updated = _Taint(receiver.sources, receiver.sanitizers, receiver.unmodeled, receiver.object_types, attributes)
+        updated = _Taint(
+            receiver.sources, receiver.sanitizers, receiver.unmodeled,
+            receiver.object_types, attributes, receiver.object_ids,
+        )
         return returned, updated
 
     def initialize_instance(
@@ -571,7 +622,10 @@ class _ModuleAnalyzer:
         self.initialize_statements(initializer.body, env, receiver, depth, stack + (qualified,))
         prefix = f"{receiver}."
         attributes = tuple((name[len(prefix):], value) for name, value in env.items() if name.startswith(prefix))
-        return _Taint(instance.sources, instance.sanitizers, instance.unmodeled, instance.object_types, attributes)
+        return _Taint(
+            instance.sources, instance.sanitizers, instance.unmodeled,
+            instance.object_types, attributes, instance.object_ids,
+        )
 
     def initialize_statements(
         self, statements: list[ast.stmt], env: dict[str, _Taint], receiver: str,
@@ -615,7 +669,10 @@ class _ModuleAnalyzer:
             if owner and function.args.args:
                 instance = instance_seeds.get(owner)
                 if instance is None:
-                    instance = _Taint(object_types=(f"{self.module_name}:{owner}",))
+                    instance = _Taint(
+                        object_types=(f"{self.module_name}:{owner}",),
+                        object_ids=(f"entry:{self.path}:{owner}",),
+                    )
                     class_node = self.classes[owner]
                     initializer = next(
                         (item for item in class_node.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == "__init__"),
