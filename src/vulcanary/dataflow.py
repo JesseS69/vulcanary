@@ -109,6 +109,28 @@ def _base_name(node: ast.AST) -> str:
     return _name(node.value) if isinstance(node, ast.Subscript) else _name(node)
 
 
+def _contains_zero_arg_super(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    return any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "super"
+        and not node.args
+        and not node.keywords
+        for node in ast.walk(function)
+    )
+
+
+def _mutates_receiver_attributes(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    if not function.args.args:
+        return False
+    receiver = function.args.args[0].arg
+    for node in ast.walk(function):
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        if any(isinstance(target, ast.Attribute) and _name(target).startswith(f"{receiver}.") for target in targets):
+            return True
+    return False
+
+
 def _source(node: ast.AST) -> str | None:
     target = node.func if isinstance(node, ast.Call) else node.value if isinstance(node, ast.Subscript) else node
     name = _name(target)
@@ -338,6 +360,82 @@ class _ModuleAnalyzer:
                 return analyzer._object_method(resolved_bases[0], method, seen + (object_type,))
         return None, None
 
+    def _has_cross_module_base(self, object_type: str, seen: tuple[str, ...] = ()) -> bool:
+        if object_type in seen:
+            return False
+        module, _, class_name = object_type.partition(":")
+        analyzer = self.analyzer_cache.get(module)
+        if analyzer is None and module in self.project:
+            path, tree = self.project[module]
+            analyzer = _ModuleAnalyzer(
+                path, tree, self.max_depth, self.budget, self.project, self.analyzer_cache,
+                self.exposures, self.truncations, self.unmodeled_constructs,
+            )
+        class_node = analyzer.classes.get(class_name) if analyzer else None
+        if not class_node:
+            return False
+        for base_node in class_node.bases:
+            base_name = _base_name(base_node)
+            if base_name in {"object", "Generic", "typing.Generic"}:
+                continue
+            base_type = analyzer._class_type(base_name)
+            if not base_type:
+                continue
+            base_module = base_type.partition(":")[0]
+            if base_module != module or analyzer._has_cross_module_base(base_type, seen + (object_type,)):
+                return True
+        return False
+
+    def _lexical_receiver_has_cross_module_base(
+        self, node: ast.Attribute, stack: tuple[str, ...],
+    ) -> bool:
+        """Recognize unresolved self/cls state even when inferred receiver state was lost."""
+        if not isinstance(node.value, ast.Name) or not stack:
+            return False
+        current = stack[-1]
+        for class_name, class_node in self.classes.items():
+            prefix = f"{self.module_name}.{class_name}."
+            if not current.startswith(prefix):
+                continue
+            function = next(
+                (
+                    item for item in class_node.body
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and current == f"{prefix}{item.name}"
+                ),
+                None,
+            )
+            receiver = function.args.args[0].arg if function and function.args.args else "self"
+            return node.value.id == receiver and self._has_cross_module_base(
+                f"{self.module_name}:{class_name}"
+            )
+        return False
+
+    def _super_method(
+        self, method: str, stack: tuple[str, ...],
+    ) -> tuple[tuple["_ModuleAnalyzer", ast.FunctionDef | ast.AsyncFunctionDef, str] | None, str | None, str]:
+        """Resolve zero-argument super() from the current lexical method only."""
+        current = stack[-1] if stack else ""
+        for class_name, class_node in self.classes.items():
+            prefix = f"{self.module_name}.{class_name}."
+            if not current.startswith(prefix):
+                continue
+            function = next(
+                (item for item in class_node.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and current == f"{prefix}{item.name}"),
+                None,
+            )
+            receiver = function.args.args[0].arg if function and function.args.args else "self"
+            base_names = [_base_name(base) for base in class_node.bases]
+            bases = [self._class_type(base) for base in base_names if base not in {"object", "Generic", "typing.Generic"}]
+            if any(base is None for base in bases) or not bases:
+                return None, "missing_base", receiver
+            resolved_bases = [base for base in bases if base]
+            if len(resolved_bases) != 1:
+                return None, "ambiguous_inheritance", receiver
+            result, gap = self._object_method(resolved_bases[0], method, (f"{self.module_name}:{class_name}",))
+            return result, gap, receiver
+        return None, "dynamic_dispatch", "self"
+
     def _unsupported_class_method(self, function_name: str) -> bool:
         if "." not in function_name:
             return False
@@ -396,9 +494,20 @@ class _ModuleAnalyzer:
                 return env[qualified]
             receiver = self.expression(node.value, env, depth, stack)
             attribute = _Taint()
+            attribute_found = False
             for name, value in receiver.attributes:
                 if name == node.attr:
+                    attribute_found = True
                     attribute = attribute.merge(value)
+            if not attribute_found and (
+                any(self._has_cross_module_base(kind) for kind in receiver.object_types)
+                or self._lexical_receiver_has_cross_module_base(node, stack)
+            ):
+                gap = _gap(
+                    "cross_module_inherited_state",
+                    f"unresolved inherited attribute {qualified}",
+                )
+                attribute = attribute.merge(_Taint(unmodeled=(gap,)))
             return attribute
         if isinstance(node, ast.Subscript):
             key = _subscript_key(node)
@@ -411,8 +520,23 @@ class _ModuleAnalyzer:
             combined = _Taint()
             for item in argument_taints:
                 combined = combined.merge(item)
-            receiver_name = _name(node.func.value) if isinstance(node.func, ast.Attribute) else ""
-            receiver_taint = self.expression(node.func.value, env, depth, stack) if isinstance(node.func, ast.Attribute) else _Taint()
+            is_zero_arg_super = bool(
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Call)
+                and isinstance(node.func.value.func, ast.Name)
+                and node.func.value.func.id == "super"
+                and not node.func.value.args
+                and not node.func.value.keywords
+            )
+            super_candidate = None
+            super_gap = None
+            if is_zero_arg_super:
+                super_candidate, super_gap, receiver_name = self._super_method(node.func.attr, stack)
+                receiver_taint = env.get(receiver_name, _Taint())
+                function_name = f"super().{node.func.attr}"
+            else:
+                receiver_name = _name(node.func.value) if isinstance(node.func, ast.Attribute) else ""
+                receiver_taint = self.expression(node.func.value, env, depth, stack) if isinstance(node.func, ast.Attribute) else _Taint()
             if isinstance(node.func, ast.Attribute) and node.func.attr in {"encode", "decode"}:
                 return combined.merge(receiver_taint)
             if isinstance(node.func, ast.Attribute) and node.func.attr == "set" and len(node.args) >= 3:
@@ -481,8 +605,10 @@ class _ModuleAnalyzer:
                             ):
                                 analyzer.constructor_cache[class_type] = instance
                 return instance
-            if isinstance(node.func, ast.Attribute) and receiver_taint.object_types:
-                candidates = [self._object_method(kind, node.func.attr) for kind in receiver_taint.object_types]
+            if isinstance(node.func, ast.Attribute) and (receiver_taint.object_types or is_zero_arg_super):
+                candidates = [(super_candidate, super_gap)] if is_zero_arg_super else [
+                    self._object_method(kind, node.func.attr) for kind in receiver_taint.object_types
+                ]
                 resolved = [item for item, _ in candidates if item is not None]
                 inheritance_gaps = sorted({gap for _, gap in candidates if gap})
                 if len(resolved) == 1:
@@ -494,7 +620,7 @@ class _ModuleAnalyzer:
                     stateful_receiver = _has_flow_state(receiver_taint)
                     if not (
                         combined.sources or combined.unmodeled or stateful_receiver
-                        or target.name in analyzer.source_functions
+                        or target.name in analyzer.source_functions or _contains_zero_arg_super(target)
                     ):
                         return combined
                     if qualified_target in stack:
@@ -508,6 +634,33 @@ class _ModuleAnalyzer:
                     result, updated_receiver = analyzer.execute_method(
                         target, receiver_taint, argument_taints, depth + 1, stack + (qualified_target,)
                     )
+                    receiver_modules = {kind.partition(":")[0] for kind in receiver_taint.object_types}
+                    if _mutates_receiver_attributes(target) and any(module != analyzer.module_name for module in receiver_modules):
+                        boundary_gap = _gap(
+                            "cross_module_inherited_state",
+                            f"cross-module inherited attribute state from {qualified_target}",
+                        )
+                        updated_receiver = _Taint(
+                            updated_receiver.sources,
+                            updated_receiver.sanitizers,
+                            tuple(dict.fromkeys(updated_receiver.unmodeled + (boundary_gap,))),
+                            updated_receiver.object_types,
+                            tuple(
+                                (
+                                    name,
+                                    _Taint(
+                                        value.sources,
+                                        value.sanitizers,
+                                        tuple(dict.fromkeys(value.unmodeled + (boundary_gap,))),
+                                        value.object_types,
+                                        value.attributes,
+                                        value.object_ids,
+                                    ),
+                                )
+                                for name, value in updated_receiver.attributes
+                            ),
+                            updated_receiver.object_ids,
+                        )
                     if receiver_taint.object_ids:
                         for name, value in tuple(env.items()):
                             env[name] = _replace_object(value, receiver_taint.object_ids, updated_receiver)

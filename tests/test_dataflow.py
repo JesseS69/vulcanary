@@ -393,23 +393,22 @@ class DataflowPrototypeTests(unittest.TestCase):
             (root / "base.py").write_text(
                 "raise RuntimeError('scanned code executed')\n\n"
                 "class Base:\n"
-                "    def __init__(self):\n"
-                "        self.value = request.args.get('value')\n"
-                "    def consume(self):\n"
-                "        return eval(self.value)\n",
+                "    def read(self):\n"
+                "        return request.args.get('value')\n",
                 encoding="utf-8",
             )
             (root / "app.py").write_text(
                 "from base import Base\n\n"
                 "class Child(Base):\n"
-                "    pass\n\n"
-                "Child().consume()\n",
+                "    def read(self):\n"
+                "        return super().read()\n\n"
+                "eval(Child().read())\n",
                 encoding="utf-8",
             )
             report = analyze_python_dataflow(root)
         self.assertEqual(
             [(item["path"], item["line"]) for item in report["exposures"]],
-            [("base.py", 7)],
+            [("app.py", 7)],
         )
         self.assertFalse(report["unmodeled_constructs"])
 
@@ -484,6 +483,350 @@ class DataflowPrototypeTests(unittest.TestCase):
         self.assertEqual(
             {item["category"] for item in report["unmodeled_constructs"]},
             {"missing_base"},
+        )
+
+    def test_zero_argument_super_resolves_parent_return(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "class Base:\n"
+                "    def value(self, supplied):\n"
+                "        return supplied\n\n"
+                "class Child(Base):\n"
+                "    def value(self):\n"
+                "        return super().value(request.args.get('value'))\n\n"
+                "eval(Child().value())\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([item["line"] for item in report["exposures"]], [9])
+        self.assertFalse(report["unmodeled_constructs"])
+
+    def test_super_method_mutation_updates_child_instance_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "class Base:\n"
+                "    def store(self, value):\n"
+                "        self.value = value\n\n"
+                "class Child(Base):\n"
+                "    def store(self, value):\n"
+                "        super().store(value)\n"
+                "    def consume(self):\n"
+                "        return eval(self.value)\n\n"
+                "child = Child()\n"
+                "child.store(request.form.get('value'))\n"
+                "child.consume()\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([item["line"] for item in report["exposures"]], [9])
+        self.assertFalse(report["unmodeled_constructs"])
+
+    def test_cross_file_super_mutation_updates_child_instance_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "base.py").write_text(
+                "raise RuntimeError('scanned code executed')\n\n"
+                "class Base:\n"
+                "    def load(self):\n"
+                "        self.data = request.args.get('value')\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "from base import Base\n\n"
+                "class Child(Base):\n"
+                "    def load(self):\n"
+                "        super().load()\n"
+                "    def consume(self):\n"
+                "        return eval(self.data)\n\n"
+                "child = Child()\n"
+                "child.load()\n"
+                "child.consume()\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(
+            [(item["path"], item["line"]) for item in report["exposures"]],
+            [("app.py", 7)],
+        )
+        self.assertEqual(
+            {item["category"] for item in report["unmodeled_constructs"]},
+            {"cross_module_inherited_state"},
+        )
+
+    def test_cross_file_super_mutation_reaches_sink_in_same_method(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "base.py").write_text(
+                "class Base:\n"
+                "    def load(self):\n"
+                "        self.data = request.args.get('value')\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "import base\n\n"
+                "class Child(base.Base):\n"
+                "    def consume(self):\n"
+                "        super().load()\n"
+                "        return eval(self.data)\n\n"
+                "Child().consume()\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(
+            [(item["path"], item["line"]) for item in report["exposures"]],
+            [("app.py", 6)],
+        )
+        self.assertEqual(
+            {item["category"] for item in report["unmodeled_constructs"]},
+            {"cross_module_inherited_state"},
+        )
+
+    def test_cross_file_super_mutation_propagates_tainted_argument(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "base.py").write_text(
+                "class Base:\n"
+                "    def load(self, value):\n"
+                "        self.data = value\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "from base import Base\n\n"
+                "class Child(Base):\n"
+                "    def load(self, value):\n"
+                "        super().load(value)\n"
+                "    def consume(self):\n"
+                "        return eval(self.data)\n\n"
+                "child = Child()\n"
+                "child.load(request.form.get('value'))\n"
+                "child.consume()\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(
+            [(item["path"], item["line"]) for item in report["exposures"]],
+            [("app.py", 7)],
+        )
+        self.assertEqual(
+            {item["category"] for item in report["unmodeled_constructs"]},
+            {"cross_module_inherited_state"},
+        )
+
+    def test_plain_cross_file_inherited_mutation_is_never_silent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "base.py").write_text(
+                "class Base:\n"
+                "    def load(self):\n"
+                "        self.data = request.args.get('value')\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "from base import Base\n\n"
+                "class Child(Base):\n"
+                "    def consume(self):\n"
+                "        return eval(self.data)\n\n"
+                "child = Child()\n"
+                "child.load()\n"
+                "child.consume()\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([item["line"] for item in report["exposures"]], [5])
+        self.assertEqual(
+            {item["category"] for item in report["unmodeled_constructs"]},
+            {"cross_module_inherited_state"},
+        )
+
+    def test_cross_file_inherited_state_survives_local_function_sequence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "base.py").write_text(
+                "class Base:\n"
+                "    def load(self, value):\n"
+                "        self.data = value\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "from base import Base\n\n"
+                "class Child(Base):\n"
+                "    def consume(self):\n"
+                "        return eval(self.data)\n\n"
+                "def handler():\n"
+                "    child = Child()\n"
+                "    child.load(request.args.get('value'))\n"
+                "    return child.consume()\n\n"
+                "handler()\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([item["line"] for item in report["exposures"]], [5])
+        self.assertEqual(
+            {item["category"] for item in report["unmodeled_constructs"]},
+            {"cross_module_inherited_state"},
+        )
+
+    def test_unresolved_cross_file_inherited_attribute_at_sink_is_never_silent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "base.py").write_text("class Base:\n    pass\n", encoding="utf-8")
+            (root / "app.py").write_text(
+                "from base import Base\n\n"
+                "class Child(Base):\n"
+                "    def consume(self):\n"
+                "        return eval(self.data)\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(report["exposures"], [])
+        self.assertEqual(
+            {item["category"] for item in report["unmodeled_constructs"]},
+            {"cross_module_inherited_state"},
+        )
+
+    def test_uninvoked_child_method_with_inherited_state_sink_is_never_silent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "base.py").write_text(
+                "class Base:\n"
+                "    def load(self):\n"
+                "        self.data = request.args.get('value')\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "from base import Base\n\n"
+                "class Child(Base):\n"
+                "    def load_data(self):\n"
+                "        self.load()\n"
+                "    def consume(self):\n"
+                "        return eval(self.data)\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertTrue(
+            report["exposures"] or any(
+                item["category"] == "cross_module_inherited_state"
+                for item in report["unmodeled_constructs"]
+            )
+        )
+
+    def test_plain_inherited_mutation_reaches_read_in_same_child_method(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "base.py").write_text(
+                "class Base:\n"
+                "    def load(self, value):\n"
+                "        self.data = value\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "from base import Base\n\n"
+                "class Child(Base):\n"
+                "    def run(self):\n"
+                "        self.load(request.args.get('value'))\n"
+                "        return eval(self.data)\n\n"
+                "Child().run()\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([item["line"] for item in report["exposures"]], [6])
+        self.assertEqual(
+            {item["category"] for item in report["unmodeled_constructs"]},
+            {"cross_module_inherited_state"},
+        )
+
+    def test_plain_inherited_mutation_reaches_different_child_method(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "base.py").write_text(
+                "class Base:\n"
+                "    def load(self, value):\n"
+                "        self.data = value\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "from base import Base\n\n"
+                "class Child(Base):\n"
+                "    def consume(self):\n"
+                "        return eval(self.data)\n"
+                "    def run(self):\n"
+                "        self.load(request.args.get('value'))\n"
+                "        return self.consume()\n\n"
+                "Child().run()\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([item["line"] for item in report["exposures"]], [5])
+        self.assertEqual(
+            {item["category"] for item in report["unmodeled_constructs"]},
+            {"cross_module_inherited_state"},
+        )
+
+    def test_cross_file_super_call_does_not_taint_clean_child_return(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "base.py").write_text(
+                "class Base:\n"
+                "    def read(self):\n"
+                "        return request.args.get('value')\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "from base import Base\n\n"
+                "class Child(Base):\n"
+                "    def read(self):\n"
+                "        super().read()\n"
+                "        return 'clean'\n\n"
+                "eval(Child().read())\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(report["exposures"], [])
+        self.assertFalse(report["unmodeled_constructs"])
+
+    def test_super_with_multiple_bases_is_an_explicit_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "class Left:\n"
+                "    def value(self, supplied):\n"
+                "        return supplied\n\n"
+                "class Right:\n"
+                "    def value(self, supplied):\n"
+                "        return 'clean'\n\n"
+                "class Child(Left, Right):\n"
+                "    def value(self):\n"
+                "        return super().value(request.args.get('value'))\n\n"
+                "eval(Child().value())\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([item["line"] for item in report["exposures"]], [13])
+        self.assertEqual(
+            {item["category"] for item in report["unmodeled_constructs"]},
+            {"ambiguous_inheritance"},
+        )
+
+    def test_explicit_argument_super_remains_an_explicit_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "class Base:\n"
+                "    def value(self, supplied):\n"
+                "        return supplied\n\n"
+                "class Child(Base):\n"
+                "    def value(self):\n"
+                "        return super(Child, self).value(request.args.get('value'))\n\n"
+                "eval(Child().value())\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual([item["line"] for item in report["exposures"]], [9])
+        self.assertEqual(
+            {item["category"] for item in report["unmodeled_constructs"]},
+            {"dynamic_dispatch"},
         )
 
     def test_unknown_receiver_method_remains_an_explicit_dynamic_dispatch_gap(self) -> None:
