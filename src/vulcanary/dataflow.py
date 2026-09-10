@@ -136,7 +136,7 @@ def _source(node: ast.AST) -> str | None:
     name = _name(target)
     if name in {"input", "request.get_json"}:
         return name
-    if name.startswith(("request.args", "request.form", "request.cookies", "request.headers", "request.values", "request.GET", "request.POST", "request.data", "request.json")):
+    if name.startswith(("request.args", "request.form", "request.cookies", "request.headers", "request.values", "request.GET", "request.POST", "request.data", "request.json", "request.query_string")):
         return name
     if name.endswith((".get_form_parameter", ".get_query_parameter", ".get_cookie")):
         return name
@@ -197,6 +197,22 @@ def _gap(category: str, construct: str) -> str:
 
 def _split_gap(value: str) -> tuple[str, str]:
     return tuple(value.split("\0", 1)) if "\0" in value else ("unclassified", value)
+
+
+def _assignment_names(node: ast.AST) -> tuple[str, ...]:
+    if isinstance(node, ast.Name):
+        return (node.id,)
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return tuple(name for item in node.elts for name in _assignment_names(item))
+    return ()
+
+
+def _sink_calls(node: ast.AST) -> tuple[ast.Call, ...]:
+    return tuple(
+        child for child in ast.walk(node)
+        if isinstance(child, ast.Call)
+        and _name(child.func) in {"eval", "builtins.eval", "exec", "builtins.exec"}
+    )
 
 
 def _source_capable_functions(tree: ast.Module) -> set[str]:
@@ -512,6 +528,31 @@ class _ModuleAnalyzer:
         if isinstance(node, ast.Subscript):
             key = _subscript_key(node)
             return env[key] if key and key in env else self.expression(node.value, env, depth, stack)
+        if isinstance(node, ast.NamedExpr):
+            gap = _gap("unsupported_named_expression", "assignment expression may carry taint")
+            value = _Taint(unmodeled=(gap,))
+            if isinstance(node.target, ast.Name):
+                env[node.target.id] = value
+            for sink in _sink_calls(node):
+                self.unmodeled_constructs.add((self.path, gap, sink.lineno, sink.col_offset))
+            return value
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            comprehension_env = dict(env)
+            combined = _Taint()
+            for generator in node.generators:
+                iterable = self.expression(generator.iter, comprehension_env, depth, stack)
+                names = _assignment_names(generator.target)
+                if not names:
+                    gap = _gap("unsupported_comprehension_target", "comprehension target is not modeled")
+                    combined = combined.merge(_Taint(unmodeled=(gap,)))
+                for name in names:
+                    comprehension_env[name] = iterable
+                for condition in generator.ifs:
+                    combined = combined.merge(self.expression(condition, comprehension_env, depth, stack))
+            values = (node.key, node.value) if isinstance(node, ast.DictComp) else (node.elt,)
+            for value in values:
+                combined = combined.merge(self.expression(value, comprehension_env, depth, stack))
+            return combined
         if isinstance(node, ast.Call):
             if limit := self.budget.consume_call():
                 return _Taint(unmodeled=(_gap(limit, f"analysis stopped at {limit}"),))
@@ -738,11 +779,65 @@ class _ModuleAnalyzer:
                         env[qualified] = value
                     elif isinstance(target, ast.Subscript) and (key := _subscript_key(target)):
                         env[key] = value
+                    elif isinstance(target, (ast.Tuple, ast.List)):
+                        gap = _gap("unsupported_unpacking", "assignment unpacking may carry taint")
+                        for name in _assignment_names(target):
+                            env[name] = _Taint(unmodeled=(gap,))
+            elif isinstance(statement, ast.AugAssign):
+                value = self.expression(statement.target, env, depth, stack).merge(
+                    self.expression(statement.value, env, depth, stack)
+                )
+                if isinstance(statement.target, ast.Name):
+                    env[statement.target.id] = value
+                elif isinstance(statement.target, ast.Attribute) and (qualified := _name(statement.target)):
+                    env[qualified] = value
+                elif isinstance(statement.target, ast.Subscript) and (key := _subscript_key(statement.target)):
+                    env[key] = value
+                else:
+                    gap = _gap("unsupported_augmented_target", "augmented assignment target is not modeled")
+                    for sink in _sink_calls(statement):
+                        self.unmodeled_constructs.add((self.path, gap, sink.lineno, sink.col_offset))
             elif isinstance(statement, ast.Return):
                 returned = returned.merge(self.expression(statement.value, env, depth, stack))
             elif isinstance(statement, ast.Expr):
                 self.expression(statement.value, env, depth, stack)
-            elif isinstance(statement, (ast.If, ast.For, ast.While, ast.With, ast.Try)):
+            elif isinstance(statement, (ast.For, ast.AsyncFor)):
+                iterable = self.expression(statement.iter, env, depth, stack)
+                branch_env = dict(env)
+                names = _assignment_names(statement.target)
+                if not names:
+                    gap = _gap("unsupported_loop_target", "loop target is not modeled")
+                    iterable = iterable.merge(_Taint(unmodeled=(gap,)))
+                for name in names:
+                    branch_env[name] = iterable
+                returned = returned.merge(self.statements(statement.body, branch_env, depth, stack))
+                for name, value in branch_env.items():
+                    env[name] = env.get(name, _Taint()).merge(value)
+                returned = returned.merge(self.statements(statement.orelse, dict(env), depth, stack))
+            elif isinstance(statement, ast.Match):
+                gap = _gap("unsupported_match", "match/case binding and branch selection are not modeled")
+                branch_environments = []
+                for case in statement.cases:
+                    branch_env = dict(env)
+                    assigned = {
+                        name for child in case.body
+                        for node in ast.walk(child)
+                        if isinstance(node, (ast.Assign, ast.AnnAssign))
+                        for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+                        for name in _assignment_names(target)
+                    }
+                    returned = returned.merge(self.statements(case.body, branch_env, depth, stack))
+                    for name in assigned:
+                        branch_env[name] = _Taint(unmodeled=(gap,))
+                    branch_environments.append(branch_env)
+                for name in set().union(*(branch.keys() for branch in branch_environments)):
+                    merged = _Taint()
+                    for branch in branch_environments:
+                        merged = merged.merge(branch.get(name, env.get(name, _Taint())))
+                    env[name] = merged
+            elif isinstance(statement, (ast.If, ast.While, ast.With, ast.Try)):
+                if isinstance(statement, (ast.If, ast.While)):
+                    self.expression(statement.test, env, depth, stack)
                 branch_environments = []
                 for body in (getattr(statement, "body", []), getattr(statement, "orelse", []), getattr(statement, "finalbody", [])):
                     branch_env = dict(env)
