@@ -56,6 +56,41 @@ class DataflowPrototypeTests(unittest.TestCase):
         self.assertEqual(shadowed["exposures"], [])
         self.assertEqual(shadowed["unmodeled_constructs"], [])
 
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "def handler():\n"
+                "    value = request.args.get('value')\n"
+                "    def decorator():\n"
+                "        def callback():\n"
+                "            return eval(value)\n"
+                "        return callback\n"
+                "    return decorator()()\n",
+                encoding="utf-8",
+            )
+            nested = analyze_python_dataflow(root)
+        self.assertEqual(nested["exposures"], [])
+        self.assertEqual(
+            [(item["category"], item["construct"], item["sink_line"]) for item in nested["unmodeled_constructs"]],
+            [("unsupported_closure", "nested function callback may carry captured taint", 5)],
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "def handler():\n"
+                "    value = 'safe'\n"
+                "    def decorator():\n"
+                "        def callback():\n"
+                "            return eval(value)\n"
+                "        return callback\n"
+                "    return decorator()()\n",
+                encoding="utf-8",
+            )
+            clean_nested = analyze_python_dataflow(root)
+        self.assertEqual(clean_nested["exposures"], [])
+        self.assertEqual(clean_nested["unmodeled_constructs"], [])
+
     def test_unsupported_statement_forms_surface_taint_analysis_gaps(self) -> None:
         cases = {
             "named_expression": (
