@@ -24,6 +24,18 @@ class _Taint:
     object_ids: tuple[str, ...] = ()
 
     def merge(self, other: "_Taint") -> "_Taint":
+        if self is other:
+            return self
+        if not (
+            other.sources or other.sanitizers or other.unmodeled
+            or other.object_types or other.attributes or other.object_ids
+        ):
+            return self
+        if not (
+            self.sources or self.sanitizers or self.unmodeled
+            or self.object_types or self.attributes or self.object_ids
+        ):
+            return other
         merged_attributes = dict(self.attributes)
         for name, value in other.attributes:
             merged_attributes[name] = merged_attributes.get(name, _Taint()).merge(value)
@@ -254,6 +266,41 @@ def _captured_names(function: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[s
 
     Visitor().visit(function)
     return tuple(sorted(loaded - bound - globals_))
+
+
+def _closure_functions(function: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[ast.FunctionDef | ast.AsyncFunctionDef, ...]:
+    """Return a nested function and all function descendants in source order."""
+    return tuple(
+        node for node in ast.walk(function)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    )
+
+
+def _direct_function_sinks(function: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[ast.Call, ...]:
+    """Return sinks in one function body without attributing descendant closures."""
+    sinks: list[ast.Call] = []
+
+    class Visitor(ast.NodeVisitor):
+        def visit_Call(self, node: ast.Call) -> None:
+            if _name(node.func) in {"eval", "builtins.eval", "exec", "builtins.exec"}:
+                sinks.append(node)
+            self.generic_visit(node)
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if node is function:
+                for statement in node.body:
+                    self.visit(statement)
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Lambda(self, node: ast.Lambda) -> None:
+            return
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            return
+
+    Visitor().visit(function)
+    return tuple(sinks)
 
 
 def _source_capable_functions(tree: ast.Module) -> set[str]:
@@ -843,18 +890,20 @@ class _ModuleAnalyzer:
             elif isinstance(statement, ast.Expr):
                 self.expression(statement.value, env, depth, stack)
             elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                captured = _Taint()
-                for name in _captured_names(statement):
-                    captured = captured.merge(env.get(name, _Taint()))
                 # Module-level functions are analyzed independently by run(). A
                 # nested definition is a closure only while executing its owner.
-                if stack and _has_flow_state(captured):
-                    gap = _gap(
-                        "unsupported_closure",
-                        f"nested function {statement.name} may carry captured taint",
-                    )
-                    for sink in _sink_calls(statement):
-                        self.unmodeled_constructs.add((self.path, gap, sink.lineno, sink.col_offset))
+                if stack:
+                    for closure in _closure_functions(statement):
+                        captured = _Taint()
+                        for name in _captured_names(closure):
+                            captured = captured.merge(env.get(name, _Taint()))
+                        if _has_flow_state(captured):
+                            gap = _gap(
+                                "unsupported_closure",
+                                f"nested function {closure.name} may carry captured taint",
+                            )
+                            for sink in _direct_function_sinks(closure):
+                                self.unmodeled_constructs.add((self.path, gap, sink.lineno, sink.col_offset))
             elif isinstance(statement, (ast.For, ast.AsyncFor)):
                 iterable = self.expression(statement.iter, env, depth, stack)
                 branch_env = dict(env)
