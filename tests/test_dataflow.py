@@ -9,6 +9,53 @@ from vulcanary.dataflow import analyze_python_dataflow, benchmark_python_score
 
 
 class DataflowPrototypeTests(unittest.TestCase):
+    def test_nested_closures_surface_captured_taint_without_flagging_clean_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "def handler():\n"
+                "    value = request.args.get('value')\n"
+                "    def callback():\n"
+                "        return eval(value)\n"
+                "    return callback()\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(report["exposures"], [])
+        self.assertEqual(
+            [(item["category"], item["sink_line"]) for item in report["unmodeled_constructs"]],
+            [("unsupported_closure", 4)],
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "def handler():\n"
+                "    value = 'safe'\n"
+                "    def callback():\n"
+                "        return eval(value)\n"
+                "    return callback()\n",
+                encoding="utf-8",
+            )
+            clean = analyze_python_dataflow(root)
+        self.assertEqual(clean["exposures"], [])
+        self.assertEqual(clean["unmodeled_constructs"], [])
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "def handler():\n"
+                "    value = request.args.get('value')\n"
+                "    def callback():\n"
+                "        value = 'shadowed-safe'\n"
+                "        return eval(value)\n"
+                "    return callback()\n",
+                encoding="utf-8",
+            )
+            shadowed = analyze_python_dataflow(root)
+        self.assertEqual(shadowed["exposures"], [])
+        self.assertEqual(shadowed["unmodeled_constructs"], [])
+
     def test_unsupported_statement_forms_surface_taint_analysis_gaps(self) -> None:
         cases = {
             "named_expression": (
