@@ -215,6 +215,47 @@ def _sink_calls(node: ast.AST) -> tuple[ast.Call, ...]:
     )
 
 
+def _captured_names(function: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[str, ...]:
+    """Return lexically captured names without executing or importing scanned code."""
+    parameters = {
+        argument.arg
+        for argument in (
+            *function.args.posonlyargs, *function.args.args,
+            *function.args.kwonlyargs,
+            *((function.args.vararg,) if function.args.vararg else ()),
+            *((function.args.kwarg,) if function.args.kwarg else ()),
+        )
+    }
+    bound = set(parameters)
+    loaded: set[str] = set()
+    globals_: set[str] = set()
+
+    class Visitor(ast.NodeVisitor):
+        def visit_Name(self, node: ast.Name) -> None:
+            (bound if isinstance(node.ctx, (ast.Store, ast.Del)) else loaded).add(node.id)
+
+        def visit_Global(self, node: ast.Global) -> None:
+            globals_.update(node.names)
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if node is function:
+                for statement in node.body:
+                    self.visit(statement)
+            else:
+                bound.add(node.name)
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Lambda(self, node: ast.Lambda) -> None:
+            return
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:
+            bound.add(node.name)
+
+    Visitor().visit(function)
+    return tuple(sorted(loaded - bound - globals_))
+
+
 def _source_capable_functions(tree: ast.Module) -> set[str]:
     direct: set[str] = set()
     calls: dict[str, set[str]] = {}
@@ -801,6 +842,19 @@ class _ModuleAnalyzer:
                 returned = returned.merge(self.expression(statement.value, env, depth, stack))
             elif isinstance(statement, ast.Expr):
                 self.expression(statement.value, env, depth, stack)
+            elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                captured = _Taint()
+                for name in _captured_names(statement):
+                    captured = captured.merge(env.get(name, _Taint()))
+                # Module-level functions are analyzed independently by run(). A
+                # nested definition is a closure only while executing its owner.
+                if stack and _has_flow_state(captured):
+                    gap = _gap(
+                        "unsupported_closure",
+                        f"nested function {statement.name} may carry captured taint",
+                    )
+                    for sink in _sink_calls(statement):
+                        self.unmodeled_constructs.add((self.path, gap, sink.lineno, sink.col_offset))
             elif isinstance(statement, (ast.For, ast.AsyncFor)):
                 iterable = self.expression(statement.iter, env, depth, stack)
                 branch_env = dict(env)
