@@ -9,6 +9,84 @@ from vulcanary.dataflow import analyze_python_dataflow, benchmark_python_score
 
 
 class DataflowPrototypeTests(unittest.TestCase):
+    def test_unsupported_statement_forms_surface_taint_analysis_gaps(self) -> None:
+        cases = {
+            "named_expression": (
+                "if value := request.args.get('value'):\n    pass\neval(value)\n",
+                "unsupported_named_expression",
+            ),
+            "unpacking": (
+                "pair = (request.args.get('value'), 'safe')\nvalue, other = pair\neval(value)\n",
+                "unsupported_unpacking",
+            ),
+            "match": (
+                "value = request.args.get('value')\n"
+                "match 'A':\n"
+                "    case 'A':\n"
+                "        result = value\n"
+                "    case _:\n"
+                "        result = 'safe'\n"
+                "eval(result)\n",
+                "unsupported_match",
+            ),
+        }
+        for name, (source, category) in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "app.py").write_text(source, encoding="utf-8")
+                report = analyze_python_dataflow(root)
+            self.assertIn(category, {item["category"] for item in report["unmodeled_constructs"]})
+
+    def test_augmented_assignments_propagate_taint_and_visit_nested_sinks(self) -> None:
+        cases = {
+            "augmented_sink": "value = request.args.get('value')\nresult = ''\nresult += eval(value)\n",
+            "augmented_value": "value = ''\nvalue += request.args.get('value')\neval(value)\n",
+            "attribute_augmented_value": (
+                "class Handler:\n"
+                "    def run(self):\n"
+                "        self.value = ''\n"
+                "        self.value += request.args.get('value')\n"
+                "        return eval(self.value)\n"
+            ),
+        }
+        for name, source in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "app.py").write_text(source, encoding="utf-8")
+                report = analyze_python_dataflow(root)
+            self.assertEqual(len(report["exposures"]), 1)
+            self.assertFalse(
+                any(item["category"].startswith("unsupported_augmented") for item in report["unmodeled_constructs"])
+            )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text("value = 'safe'\nvalue += '-still-safe'\neval(value)\n", encoding="utf-8")
+            clean = analyze_python_dataflow(root)
+        self.assertEqual(clean["exposures"], [])
+
+    def test_loop_targets_and_comprehensions_propagate_taint(self) -> None:
+        cases = {
+            "for": "for value in request.args.getlist('value'):\n    eval(value)\n",
+            "async_for": "async def run():\n    async for value in request.args.getlist('value'):\n        eval(value)\n",
+            "list_comprehension": "values = request.args.getlist('value')\n[eval(value) for value in values]\n",
+            "generator": "values = request.args.getlist('value')\ntuple(eval(value) for value in values)\n",
+            "query_string": "value = request.query_string.decode('utf-8')\neval(value)\n",
+        }
+        for name, source in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "app.py").write_text(source, encoding="utf-8")
+                report = analyze_python_dataflow(root)
+            self.assertEqual(len(report["exposures"]), 1)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "app.py").write_text(
+                "for value in ['safe']:\n    eval(value)\n[eval(value) for value in ['safe']]\n",
+                encoding="utf-8",
+            )
+            clean = analyze_python_dataflow(root)
+        self.assertEqual(clean["exposures"], [])
+
     def test_tracks_request_data_across_same_module_calls_to_eval(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
