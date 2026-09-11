@@ -735,6 +735,15 @@ class ScannerTests(unittest.TestCase):
                 urlopen(Request(url, data=b"[]", method="POST", headers={"Content-Type": "application/json", **authorized}), timeout=5)
             self.assertEqual(non_object.exception.code, 400)
             non_object.exception.close()
+            oversized_body = json.dumps({"padding": "x" * 16_384}).encode("utf-8")
+            with self.assertRaises(HTTPError) as oversized:
+                urlopen(Request(
+                    url, data=oversized_body, method="POST",
+                    headers={"Content-Type": "application/json", **authorized},
+                ), timeout=5)
+            self.assertEqual(oversized.exception.code, 400)
+            self.assertEqual(json.loads(oversized.exception.read()), {"error": "Request is too large"})
+            oversized.exception.close()
             response = urlopen(Request(
                 url, data=b"{}", method="POST",
                 headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{server.server_port}", **authorized},
