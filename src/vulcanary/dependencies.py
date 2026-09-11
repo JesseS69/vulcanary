@@ -79,7 +79,7 @@ def _dependency_input_name(name: str) -> bool:
             "package-lock.json", "package.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock", "uv.lock", "pdm.lock",
             "Cargo.lock", "Cargo.toml", "go.mod", "composer.lock", "composer.json", "packages.lock.json",
             "maven-dependency-tree.json", "dependency-tree.json", "gradle.lockfile", "pom.xml", "build.gradle",
-            "build.gradle.kts", "Gemfile.lock", "Pipfile.lock", "bom.json", "cyclonedx.json",
+            "build.gradle.kts", "Gemfile", "Gemfile.lock", "Pipfile.lock", "pyproject.toml", "bom.json", "cyclonedx.json",
         }
         or (name.startswith("requirements") and name.endswith(".txt"))
         or name.endswith(".cdx.json")
@@ -213,25 +213,17 @@ def _pnpm_packages(lock: Path, root: Path) -> list[Package]:
 
 def _python_toml_lock_packages(lock: Path, root: Path, manager: str) -> list[Package]:
     """Read package name/version pairs from Poetry, uv, and PDM TOML lockfiles."""
-    found = []
-    name: str | None = None
-    version: str | None = None
-    in_package = False
-    for raw in _dependency_text(lock).splitlines() + ["[[package]]"]:
-        if raw.strip() == "[[package]]":
-            if in_package and name and version:
-                found.append(Package(name, version, "PyPI", relative_path(lock, root), False, manager))
-            in_package, name, version = True, None, None
-            continue
-        if not in_package:
-            continue
-        match = re.match(r'^\s*(name|version)\s*=\s*["\']([^"\']+)["\']\s*$', raw)
-        if match:
-            if match.group(1) == "name":
-                name = match.group(2)
-            else:
-                version = match.group(2)
-    return found
+    document = tomllib.loads(_dependency_text(lock))
+    if not isinstance(document, dict):
+        raise ValueError("Python lock document is not a table")
+    records = document.get("package", [])
+    if not isinstance(records, list):
+        raise ValueError("Python lock package list is invalid")
+    return [
+        Package(record["name"], record["version"], "PyPI", relative_path(lock, root), False, manager)
+        for record in records
+        if isinstance(record, dict) and isinstance(record.get("name"), str) and isinstance(record.get("version"), str)
+    ]
 
 
 def _cargo_declared_names(directory: Path) -> set[str]:
@@ -265,15 +257,15 @@ def _cargo_declared_names(directory: Path) -> set[str]:
 
 
 def _cargo_packages(lock: Path, root: Path) -> list[Package]:
-    try:
-        document = tomllib.loads(_dependency_text(lock))
-    except (OSError, UnicodeError, tomllib.TOMLDecodeError):
-        return []
+    document = tomllib.loads(_dependency_text(lock))
     if not isinstance(document, dict):
-        return []
+        raise ValueError("Cargo lock document is not a table")
+    records = document.get("package", [])
+    if not isinstance(records, list):
+        raise ValueError("Cargo package list is invalid")
     direct = _cargo_declared_names(lock.parent)
     found = []
-    for record in document.get("package", []):
+    for record in records:
         if not isinstance(record, dict):
             continue
         name, version, source = record.get("name"), record.get("version"), record.get("source")
@@ -313,12 +305,11 @@ def _go_packages(manifest: Path, root: Path) -> list[Package]:
 
 
 def _composer_packages(lock: Path, root: Path) -> list[Package]:
-    try:
-        document = json.loads(_dependency_text(lock))
-    except (OSError, UnicodeError, ValueError, RecursionError):
-        return []
+    document = json.loads(_dependency_text(lock))
     if not isinstance(document, dict):
-        return []
+        raise ValueError("Composer lock document is not an object")
+    if not any(section in document for section in ("packages", "packages-dev")):
+        raise ValueError("Composer lock has no package sections")
     try:
         manifest = json.loads(_dependency_text(lock.parent / "composer.json"))
     except (OSError, UnicodeError, ValueError, RecursionError):
@@ -351,15 +342,14 @@ def _composer_packages(lock: Path, root: Path) -> list[Package]:
 
 def _nuget_packages(lock: Path, root: Path) -> list[Package]:
     """Read resolved NuGet packages without invoking restore or evaluating project files."""
-    try:
-        document = json.loads(_dependency_text(lock))
-    except (OSError, UnicodeError, ValueError, RecursionError):
-        return []
+    document = json.loads(_dependency_text(lock))
     if not isinstance(document, dict):
-        return []
-    targets = document.get("dependencies", {})
+        raise ValueError("NuGet lock document is not an object")
+    if "dependencies" not in document:
+        raise ValueError("NuGet lock has no dependency targets")
+    targets = document.get("dependencies")
     if not isinstance(targets, dict):
-        return []
+        raise ValueError("NuGet dependency targets are invalid")
     records: dict[tuple[str, str], Package] = {}
     path = relative_path(lock, root)
     for dependencies in targets.values():
@@ -383,12 +373,9 @@ def _nuget_packages(lock: Path, root: Path) -> list[Package]:
 
 def _maven_packages(report: Path, root: Path) -> list[Package]:
     """Read Maven Dependency Plugin's resolved JSON dependency tree."""
-    try:
-        document = json.loads(_dependency_text(report))
-    except (OSError, UnicodeError, ValueError, RecursionError):
-        return []
+    document = json.loads(_dependency_text(report))
     if not isinstance(document, dict):
-        return []
+        raise ValueError("Maven dependency tree is not an object")
     found: dict[tuple[str, str], Package] = {}
     path = relative_path(report, root)
 
@@ -418,7 +405,7 @@ def _maven_packages(report: Path, root: Path) -> list[Package]:
 def _maven_report_is_resolved(report: Path) -> bool:
     try:
         document = json.loads(_dependency_text(report))
-    except (OSError, UnicodeError, ValueError):
+    except (OSError, UnicodeError, ValueError, RecursionError):
         return False
     return isinstance(document, dict) and isinstance(document.get("children"), list)
 
@@ -486,21 +473,51 @@ def _gem_packages(lock: Path, root: Path) -> list[Package]:
     return found
 
 
+def _invalid_dependency_warning(path: Path, root: Path, kind: str) -> str:
+    return f"{relative_path(path, root)}: invalid {kind} dependency input"
+
+
+def _has_governing_input(manifest: Path, resolved_inputs: list[Path]) -> bool:
+    """Return whether an input in this directory or an ancestor governs a manifest."""
+    return any(candidate.parent == manifest.parent or candidate.parent in manifest.parents for candidate in resolved_inputs)
+
+
+def _valid_json_object(path: Path) -> bool:
+    try:
+        return isinstance(json.loads(_dependency_text(path)), dict)
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        return False
+
+
+def _valid_toml_table(path: Path) -> bool:
+    try:
+        return isinstance(tomllib.loads(_dependency_text(path)), dict)
+    except (OSError, UnicodeError, ValueError, RecursionError, tomllib.TOMLDecodeError):
+        return False
+
+
 def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
     packages: dict[tuple[str, str, str, str], Package] = {}
     unresolved = [
         f"{relative_path(path, root)}: dependency input is {size} bytes and exceeds the {MAX_DEPENDENCY_INPUT_BYTES}-byte limit"
         for path, size in _oversized_dependency_inputs(root)
     ]
-    for lock in _dependency_files(root, lambda name: name == "package-lock.json"):
+    npm_locks = _dependency_files(root, lambda name: name in {"package-lock.json", "yarn.lock", "pnpm-lock.yaml"})
+    for lock in (path for path in npm_locks if path.name == "package-lock.json"):
         try:
             data = json.loads(_dependency_text(lock))
         except (OSError, UnicodeError, ValueError, RecursionError):
+            unresolved.append(_invalid_dependency_warning(lock, root, "npm"))
             continue
         if not isinstance(data, dict):
+            unresolved.append(_invalid_dependency_warning(lock, root, "npm"))
             continue
-        package_records = data.get("packages", {})
+        if "packages" not in data:
+            unresolved.append(_invalid_dependency_warning(lock, root, "npm"))
+            continue
+        package_records = data.get("packages")
         if not isinstance(package_records, dict):
+            unresolved.append(_invalid_dependency_warning(lock, root, "npm"))
             continue
         root_package = package_records.get("", {})
         if not isinstance(root_package, dict):
@@ -516,37 +533,97 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
             if name and isinstance(version, str):
                 package = Package(name, version, "npm", relative_path(lock, root), name in direct_names)
                 packages[(package.ecosystem, name, version, package.path)] = package
+        resolved_names = {
+            package.name for package in packages.values()
+            if package.path == relative_path(lock, root) and package.ecosystem == "npm"
+        }
+        if direct_names and not direct_names.issubset(resolved_names):
+            unresolved.append(_invalid_dependency_warning(lock, root, "npm"))
     for pattern, reader in (("yarn.lock", _yarn_packages), ("pnpm-lock.yaml", _pnpm_packages)):
-        for lock in _dependency_files(root, lambda name, expected=pattern: name == expected):
+        for lock in (path for path in npm_locks if path.name == pattern):
             try:
                 discovered = reader(lock, root)
             except (OSError, UnicodeError):
+                unresolved.append(_invalid_dependency_warning(lock, root, pattern))
                 continue
+            direct = _declared_names(lock.parent)
+            if direct and not direct.issubset({package.name for package in discovered}):
+                unresolved.append(_invalid_dependency_warning(lock, root, pattern))
             for package in discovered:
                 packages[(package.ecosystem, package.name, package.version, package.path)] = package
+    for manifest in _dependency_files(root, lambda name: name == "package.json"):
+        valid_manifest = _valid_json_object(manifest)
+        if not valid_manifest:
+            unresolved.append(_invalid_dependency_warning(manifest, root, "npm manifest"))
+        elif _declared_names(manifest.parent) and not _has_governing_input(manifest, npm_locks):
+            unresolved.append(f"{relative_path(manifest, root)}: resolved npm lockfile missing")
     for filename, manager in (("poetry.lock", "poetry"), ("uv.lock", "uv"), ("pdm.lock", "pdm")):
         for lock in _dependency_files(root, lambda name, expected=filename: name == expected):
             try:
                 discovered = _python_toml_lock_packages(lock, root, manager)
-            except (OSError, UnicodeError):
+            except (OSError, UnicodeError, ValueError, RecursionError, tomllib.TOMLDecodeError):
+                unresolved.append(_invalid_dependency_warning(lock, root, manager))
                 continue
             for package in discovered:
                 packages[(package.ecosystem, package.name.lower(), package.version, package.path)] = package
-    for lock in _dependency_files(root, lambda name: name == "Cargo.lock"):
-        for package in _cargo_packages(lock, root):
+    cargo_locks = _dependency_files(root, lambda name: name == "Cargo.lock")
+    for lock in cargo_locks:
+        try:
+            discovered = _cargo_packages(lock, root)
+        except (OSError, UnicodeError, ValueError, RecursionError, tomllib.TOMLDecodeError):
+            unresolved.append(_invalid_dependency_warning(lock, root, "Cargo"))
+            continue
+        for package in discovered:
             packages[(package.ecosystem, package.name, package.version, package.path)] = package
+    for manifest in _dependency_files(root, lambda name: name == "Cargo.toml"):
+        valid_manifest = _valid_toml_table(manifest)
+        if not valid_manifest:
+            unresolved.append(_invalid_dependency_warning(manifest, root, "Cargo manifest"))
+        elif _cargo_declared_names(manifest.parent) and not _has_governing_input(manifest, cargo_locks):
+            unresolved.append(f"{relative_path(manifest, root)}: resolved Cargo lockfile missing")
     for manifest in _dependency_files(root, lambda name: name == "go.mod"):
         try:
             discovered = _go_packages(manifest, root)
         except (OSError, UnicodeError):
+            unresolved.append(_invalid_dependency_warning(manifest, root, "Go"))
             continue
         for package in discovered:
             packages[(package.ecosystem, package.name, package.version, package.path)] = package
-    for lock in _dependency_files(root, lambda name: name == "composer.lock"):
-        for package in _composer_packages(lock, root):
+    composer_locks = _dependency_files(root, lambda name: name == "composer.lock")
+    for lock in composer_locks:
+        try:
+            discovered = _composer_packages(lock, root)
+        except (OSError, UnicodeError, ValueError, RecursionError):
+            unresolved.append(_invalid_dependency_warning(lock, root, "Composer"))
+            continue
+        try:
+            composer_document = json.loads(_dependency_text(lock))
+            raw_records = composer_document.get("packages", []) + composer_document.get("packages-dev", [])
+        except (OSError, UnicodeError, ValueError, TypeError, RecursionError):
+            raw_records = []
+        if raw_records and not discovered:
+            unresolved.append(_invalid_dependency_warning(lock, root, "Composer"))
+        for package in discovered:
             packages[(package.ecosystem, package.name, package.version, package.path)] = package
+    for manifest in _dependency_files(root, lambda name: name == "composer.json"):
+        valid_manifest = _valid_json_object(manifest)
+        if not valid_manifest:
+            unresolved.append(_invalid_dependency_warning(manifest, root, "Composer manifest"))
+        else:
+            document = json.loads(_dependency_text(manifest))
+            runtime = document.get("require", {})
+            development = document.get("require-dev", {})
+            declared = set(runtime if isinstance(runtime, dict) else {}) | set(development if isinstance(development, dict) else {})
+            declared = {name for name in declared if name != "php" and not str(name).startswith(("ext-", "lib-"))}
+            if declared and not _has_governing_input(manifest, composer_locks):
+                unresolved.append(f"{relative_path(manifest, root)}: resolved Composer lockfile missing")
     for lock in _dependency_files(root, lambda name: name == "packages.lock.json"):
-        for package in _nuget_packages(lock, root):
+        try:
+            discovered = _nuget_packages(lock, root)
+        except (OSError, UnicodeError, ValueError, RecursionError):
+            unresolved.append(_invalid_dependency_warning(lock, root, "NuGet"))
+            continue
+        for package in discovered:
             packages[(package.ecosystem, package.name.lower(), package.version, package.path)] = package
     maven_reports = _dependency_files(root, lambda name: name in {"maven-dependency-tree.json", "dependency-tree.json"})
     resolved_maven_reports = [report for report in maven_reports if _maven_report_is_resolved(report)]
@@ -558,7 +635,18 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
             unresolved.append(f"{relative_path(report, root)}: invalid Maven dependency tree")
     gradle_locks = _dependency_files(root, lambda name: name == "gradle.lockfile")
     for lock in gradle_locks:
-        for package in _gradle_packages(lock, root):
+        discovered = _gradle_packages(lock, root)
+        if not discovered:
+            try:
+                meaningful = [
+                    line for line in _dependency_text(lock).splitlines()
+                    if line.strip() and not line.lstrip().startswith(("#", "empty="))
+                ]
+            except (OSError, UnicodeError):
+                meaningful = ["unreadable"]
+            if meaningful:
+                unresolved.append(_invalid_dependency_warning(lock, root, "Gradle"))
+        for package in discovered:
             packages[(package.ecosystem, package.name, package.version, package.path)] = package
     maven_report_directories = {report.parent.resolve() for report in maven_reports}
     for manifest in _dependency_files(root, lambda name: name == "pom.xml"):
@@ -568,19 +656,38 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
     for manifest in _dependency_files(root, lambda name: name in {"build.gradle", "build.gradle.kts"}):
         if manifest.parent.resolve() not in gradle_lock_directories:
             unresolved.append(f"{relative_path(manifest, root)}: Gradle dependency locking missing")
-    for lock in _dependency_files(root, lambda name: name == "Gemfile.lock"):
+    gem_locks = _dependency_files(root, lambda name: name == "Gemfile.lock")
+    for lock in gem_locks:
         try:
             discovered = _gem_packages(lock, root)
         except (OSError, UnicodeError):
+            unresolved.append(_invalid_dependency_warning(lock, root, "Bundler"))
             continue
         for package in discovered:
             packages[(package.ecosystem, package.name, package.version, package.path)] = package
+    for manifest in _dependency_files(root, lambda name: name == "Gemfile"):
+        try:
+            declares_gems = any(re.match(r"^\s*gem\s+['\"]", line) for line in _dependency_text(manifest).splitlines())
+        except (OSError, UnicodeError):
+            unresolved.append(_invalid_dependency_warning(manifest, root, "Bundler manifest"))
+            continue
+        if declares_gems and not _has_governing_input(manifest, gem_locks):
+            unresolved.append(f"{relative_path(manifest, root)}: resolved Bundler lockfile missing")
+        elif declares_gems:
+            governed = [lock for lock in gem_locks if _has_governing_input(manifest, [lock])]
+            if governed and not any(package.manager == "bundler" and package.path == relative_path(governed[0], root) for package in packages.values()):
+                unresolved.append(_invalid_dependency_warning(governed[0], root, "Bundler"))
     for lock in _dependency_files(root, lambda name: name == "Pipfile.lock"):
         try:
             document = json.loads(_dependency_text(lock))
         except (OSError, UnicodeError, ValueError, RecursionError):
+            unresolved.append(_invalid_dependency_warning(lock, root, "Pipenv"))
             continue
         if not isinstance(document, dict):
+            unresolved.append(_invalid_dependency_warning(lock, root, "Pipenv"))
+            continue
+        if not any(section in document for section in ("default", "develop")):
+            unresolved.append(_invalid_dependency_warning(lock, root, "Pipenv"))
             continue
         for section, scope in (("default", "runtime"), ("develop", "development")):
             records = document.get(section, {})
@@ -599,13 +706,15 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
         try:
             lines = _dependency_text(lock).splitlines()
         except (OSError, UnicodeError):
+            unresolved.append(_invalid_dependency_warning(lock, root, "Python requirements"))
             continue
-        for line in lines:
+        for line_number, line in enumerate(lines, 1):
             stripped = line.strip()
             if not stripped or stripped.startswith(("#", "-")):
                 continue
             match = requirement.match(line)
             if not match:
+                unresolved.append(f"{relative_path(lock, root)}: invalid Python requirement at line {line_number}")
                 continue
             name, operator, version = match.groups()
             if operator in {"==", "==="} and version and "*" not in version:
