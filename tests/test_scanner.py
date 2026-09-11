@@ -84,7 +84,7 @@ class ScannerTests(unittest.TestCase):
             "node_modules/second": {"version": "2.0.0"},
         }})
         cache = {}
-        with patch.object(Path, "read_text", return_value=lock) as read_lock:
+        with patch("vulcanary.dependencies._dependency_text", return_value=lock) as read_lock:
             first = dependency_context(Path("repo"), Package("first", "1.0.0", "npm", "package-lock.json"), cache)
             second = dependency_context(Path("repo"), Package("second", "2.0.0", "npm", "package-lock.json"), cache)
         self.assertEqual(first[0], ["parent"])

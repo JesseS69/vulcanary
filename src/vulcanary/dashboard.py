@@ -118,13 +118,19 @@ def _coverage_matrix(root: Path, packages: list[Package], unresolved: list[str],
         if ecosystem == "PyPI":
             manifest_present = manifest_present or any(name.startswith("requirements") and name.endswith(".txt") for name in names)
         packages_present = ecosystem in package_ecosystems
-        if not (source_present or manifest_present or packages_present):
-            continue
         warning_markers = {
+            "npm": ("package-lock", "package.json", "yarn.lock", "pnpm-lock"),
             "PyPI": ("requirements", "pipfile"),
             "Maven": ("maven", "gradle", "pom.xml", "build.gradle"),
+            "NuGet": ("packages.lock.json",),
+            "Go": ("go.mod",),
+            "crates.io": ("cargo.lock", "cargo.toml"),
+            "Packagist": ("composer.lock", "composer.json"),
+            "RubyGems": ("gemfile.lock",),
         }.get(ecosystem, ())
         relevant_warnings = [item for item in unresolved if any(marker.lower() in item.lower() for marker in warning_markers)]
+        if not (source_present or manifest_present or packages_present or relevant_warnings):
+            continue
         dependency = "gap" if relevant_warnings else "analyzed" if (manifest_present or packages_present) else "not_applicable"
         rows.append({
             "ecosystem": label,

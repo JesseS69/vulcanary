@@ -13,10 +13,24 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from .config import Config
 from .models import Finding, Severity, relative_path
+
+
+class SourceInputTooLarge(OSError):
+    def __init__(self, observed: int):
+        super().__init__(f"source input exceeds its {observed - 1}-byte read boundary")
+        self.observed = observed
+
+
+def read_source_text(path: Path, max_bytes: int) -> str:
+    with path.open("rb") as source:
+        payload = source.read(max_bytes + 1)
+    if len(payload) > max_bytes:
+        raise SourceInputTooLarge(len(payload))
+    return payload.decode("utf-8")
 
 
 @dataclass(frozen=True)
@@ -149,7 +163,7 @@ def inline_suppression_register(root: Path, config: Config, today: date | None =
         if not _supports_inline_suppressions(path):
             continue
         try:
-            lines = path.read_text(encoding="utf-8").splitlines()
+            lines = read_source_text(path, config.max_file_bytes).splitlines()
         except (UnicodeDecodeError, OSError):
             continue
         rel = relative_path(path, root)
@@ -170,7 +184,7 @@ def is_excluded(path: str | Path, config: Config, root: Path | None = None) -> b
     )
 
 
-def iter_files(root: Path, config: Config) -> Iterable[Path]:
+def iter_files(root: Path, config: Config, on_oversized: Callable[[Path, int], None] | None = None) -> Iterable[Path]:
     def excluded(path: Path) -> bool:
         return is_excluded(path, config, root)
 
@@ -182,7 +196,10 @@ def iter_files(root: Path, config: Config) -> Iterable[Path]:
             if excluded(path):
                 continue
             try:
-                if path.stat().st_size > config.max_file_bytes:
+                size = path.stat().st_size
+                if size > config.max_file_bytes:
+                    if on_oversized is not None:
+                        on_oversized(path, size)
                     continue
             except OSError:
                 continue
@@ -629,7 +646,7 @@ def scan(root: Path, config: Config) -> list[Finding]:
     rules = rules_for(config)
     for path in iter_files(root, config):
         try:
-            text = path.read_text(encoding="utf-8")
+            text = read_source_text(path, config.max_file_bytes)
         except (UnicodeDecodeError, OSError):
             continue
         rel = relative_path(path, root)

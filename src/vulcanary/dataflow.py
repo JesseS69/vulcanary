@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .config import Config
 from .models import relative_path
-from .scanners import iter_files
+from .scanners import SourceInputTooLarge, iter_files, read_source_text
 
 
 @dataclass(frozen=True)
@@ -1109,7 +1109,9 @@ def analyze_python_dataflow(
     analyzed_modules = 0
     module_exhausted = False
     parsed_modules: list[tuple[str, ast.Module]] = []
-    for path in iter_files(root, Config.load(root)):
+    oversized_sources: list[tuple[Path, int]] = []
+    config = Config.load(root)
+    for path in iter_files(root, config, lambda path, size: oversized_sources.append((path, size))):
         if path.suffix.lower() != ".py":
             continue
         current = time.monotonic()
@@ -1122,7 +1124,10 @@ def analyze_python_dataflow(
             break
         analyzed_modules += 1
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = ast.parse(read_source_text(path, config.max_file_bytes))
+        except SourceInputTooLarge as error:
+            oversized_sources.append((path, error.observed))
+            continue
         except (OSError, UnicodeDecodeError, SyntaxError):
             parse_errors += 1
             continue
@@ -1161,6 +1166,11 @@ def analyze_python_dataflow(
             "category": "time_limit", "limit": timeout_seconds,
             "observed": round(budget.elapsed_when_exhausted or timeout_seconds, 3),
         })
+    oversized_by_path = {path: size for path, size in oversized_sources}
+    limits.extend({
+        "category": "source_size_limit", "limit": config.max_file_bytes, "observed": size,
+        "path": relative_path(path, root),
+    } for path, size in sorted(oversized_by_path.items()) if path.suffix.lower() == ".py")
     return {
         "schema": "vulcanary.experimental-dataflow.v1", "experimental": True,
         "policy_effect": "none", "max_call_depth": max_depth,
