@@ -43,12 +43,13 @@ class InputLimitTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / ".vulcanary.json").write_text(json.dumps({"max_file_bytes": 8}), encoding="utf-8")
-            (root / "app.py").write_text("eval(request.args.get('value'))\n", encoding="utf-8")
+            source = b"eval(request.args.get('value'))\n"
+            (root / "app.py").write_bytes(source)
             report = analyze_python_dataflow(root)
         self.assertEqual(report["exposures"], [])
         self.assertEqual(report["analyzed_modules"], 0)
         self.assertEqual(report["analysis_limits"], [{
-            "category": "source_size_limit", "limit": 8, "observed": 33, "path": "app.py",
+            "category": "source_size_limit", "limit": 8, "observed": len(source), "path": "app.py",
         }])
 
     def test_repository_cannot_raise_source_limit_without_bound(self) -> None:
