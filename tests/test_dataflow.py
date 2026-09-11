@@ -282,6 +282,7 @@ class DataflowPrototypeTests(unittest.TestCase):
         self.assertEqual(call_limited["analysis_limits"][0]["category"], "call_limit")
         self.assertEqual(call_limited["analyzed_calls"], 1)
         self.assertEqual(time_limited["analysis_limits"][0]["category"], "time_limit")
+        self.assertEqual(time_limited["analysis_limits"][0]["observed"], 2.0)
         self.assertEqual(time_limited["analyzed_modules"], 0)
 
     def test_trivially_static_helper_return_does_not_dilute_gap_count(self) -> None:
@@ -795,6 +796,35 @@ class DataflowPrototypeTests(unittest.TestCase):
             )
             report = analyze_python_dataflow(root)
         self.assertEqual([item["line"] for item in report["exposures"]], [5])
+        self.assertEqual(
+            {item["category"] for item in report["unmodeled_constructs"]},
+            {"cross_module_inherited_state"},
+        )
+
+    def test_inherited_attribute_return_reaches_external_sink(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "base.py").write_text(
+                "raise RuntimeError('scanned code executed')\n\n"
+                "class Base:\n"
+                "    def load(self):\n"
+                "        self.data = request.args.get('value')\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "from base import Base\n\n"
+                "class Child(Base):\n"
+                "    def read(self):\n"
+                "        self.load()\n"
+                "        return self.data\n\n"
+                "eval(Child().read())\n",
+                encoding="utf-8",
+            )
+            report = analyze_python_dataflow(root)
+        self.assertEqual(
+            [(item["path"], item["line"]) for item in report["exposures"]],
+            [("app.py", 8)],
+        )
         self.assertEqual(
             {item["category"] for item in report["unmodeled_constructs"]},
             {"cross_module_inherited_state"},
