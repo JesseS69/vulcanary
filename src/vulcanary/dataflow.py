@@ -91,14 +91,18 @@ def _reidentify_objects(value: _Taint, allocation: str) -> _Taint:
 @dataclass
 class _AnalysisBudget:
     max_calls: int
+    started: float
     deadline: float
     calls: int = 0
     time_exhausted: bool = False
     call_exhausted: bool = False
+    elapsed_when_exhausted: float | None = None
 
     def consume_call(self) -> str | None:
-        if time.monotonic() >= self.deadline:
+        current = time.monotonic()
+        if current >= self.deadline:
             self.time_exhausted = True
+            self.elapsed_when_exhausted = current - self.started
             return "time_limit"
         if self.calls >= self.max_calls:
             self.call_exhausted = True
@@ -141,6 +145,32 @@ def _mutates_receiver_attributes(function: ast.FunctionDef | ast.AsyncFunctionDe
         if any(isinstance(target, ast.Attribute) and _name(target).startswith(f"{receiver}.") for target in targets):
             return True
     return False
+
+
+def _returns_receiver_attribute(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Return whether this method directly returns state from its receiver."""
+    if not function.args.args:
+        return False
+    receiver = function.args.args[0].arg
+    found = False
+
+    class Visitor(ast.NodeVisitor):
+        def visit_Return(self, node: ast.Return) -> None:
+            nonlocal found
+            found = found or bool(node.value is not None and any(
+                isinstance(child, ast.Attribute) and _name(child).startswith(f"{receiver}.")
+                for child in ast.walk(node.value)
+            ))
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            if node is function:
+                for statement in node.body:
+                    self.visit(statement)
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+    Visitor().visit(function)
+    return found
 
 
 def _source(node: ast.AST) -> str | None:
@@ -750,6 +780,7 @@ class _ModuleAnalyzer:
                     if not (
                         combined.sources or combined.unmodeled or stateful_receiver
                         or target.name in analyzer.source_functions or _contains_zero_arg_super(target)
+                        or _returns_receiver_attribute(target)
                     ):
                         return combined
                     if qualified_target in stack:
@@ -1069,7 +1100,8 @@ def analyze_python_dataflow(
     root = root.resolve()
     if min(max_depth, max_modules, max_calls, timeout_seconds) <= 0:
         raise ValueError("analysis limits must be positive")
-    budget = _AnalysisBudget(max_calls=max_calls, deadline=time.monotonic() + timeout_seconds)
+    started = time.monotonic()
+    budget = _AnalysisBudget(max_calls=max_calls, started=started, deadline=started + timeout_seconds)
     exposures: dict[str, dict] = {}
     truncations: list[dict] = []
     unmodeled: list[dict] = []
@@ -1080,8 +1112,10 @@ def analyze_python_dataflow(
     for path in iter_files(root, Config.load(root)):
         if path.suffix.lower() != ".py":
             continue
-        if time.monotonic() >= budget.deadline:
+        current = time.monotonic()
+        if current >= budget.deadline:
             budget.time_exhausted = True
+            budget.elapsed_when_exhausted = current - budget.started
             break
         if analyzed_modules >= max_modules:
             module_exhausted = True
@@ -1099,8 +1133,10 @@ def analyze_python_dataflow(
     project_truncations: set[tuple[str, str, int]] = set()
     project_unmodeled: set[tuple[str, str, int, int]] = set()
     for module_path, tree in parsed_modules:
-        if time.monotonic() >= budget.deadline:
+        current = time.monotonic()
+        if current >= budget.deadline:
             budget.time_exhausted = True
+            budget.elapsed_when_exhausted = current - budget.started
             break
         module_name = _module_name(module_path)
         analyzer = analyzer_cache.get(module_name)
@@ -1121,7 +1157,10 @@ def analyze_python_dataflow(
     if budget.call_exhausted:
         limits.append({"category": "call_limit", "limit": max_calls, "observed": budget.calls})
     if budget.time_exhausted:
-        limits.append({"category": "time_limit", "limit": timeout_seconds, "observed": None})
+        limits.append({
+            "category": "time_limit", "limit": timeout_seconds,
+            "observed": round(budget.elapsed_when_exhausted or timeout_seconds, 3),
+        })
     return {
         "schema": "vulcanary.experimental-dataflow.v1", "experimental": True,
         "policy_effect": "none", "max_call_depth": max_depth,
