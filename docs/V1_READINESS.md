@@ -27,7 +27,7 @@ A criterion moves to **Met** only when its evidence is repeatable by another con
 | **Met** | Passive web auditing requires explicit authorization and refuses unsafe targets. | Exact-host authorization, redirect refusal, private-address refusal by default, and pre/post-request DNS checks are tested and documented. |
 | **Met** | External executable trust is explicit. | History scanning accepts only an absolute Gitleaks path, runs outside the repository working directory, disables text conversion, and forces redaction. |
 | **Partial** | Every supported untrusted-input parser has a retained mutation corpus. | Deterministic coverage exists; add the independently useful deletion, insertion, duplication, astral/surrogate Unicode, brace-corruption, byte-swap, and bounded 50 KiB inflation operators to the permanent suite. |
-| **Open** | Resource-exhaustion behavior is bounded for hostile input. | Add explicit maximum document/file sizes or measured safe upper bounds for report imports, SBOM ingestion, dependency manifests, and AST source parsing; prove over-limit input yields a coverage gap or typed error rather than memory exhaustion. |
+| **Met** | Resource-exhaustion behavior is bounded for hostile input. | Source reads have a 10 MB hard ceiling, repository configuration a 1 MB ceiling, dependency manifests and CycloneDX inputs a 32 MiB ceiling, and external reports a 64 MiB ceiling. Bounded reads occur at parser entry; tests prove over-limit input yields a surfaced dataflow limit, dependency coverage warning, or typed error before parsing. |
 
 ### 2. Scanner correctness and honest coverage
 

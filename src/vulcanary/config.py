@@ -16,6 +16,15 @@ DEFAULT_EXCLUDES = [
 ]
 SUPPRESSION_REASONS = {"false_positive", "mitigated", "accepted_risk", "deferred"}
 DEFAULT_REMEDIATION_SLA_DAYS = {"critical": 1, "high": 7, "medium": 30, "low": 90, "info": 180}
+MAX_CONFIG_BYTES = 1_000_000
+
+
+def _config_text(path: Path) -> str:
+    with path.open("rb") as source:
+        payload = source.read(MAX_CONFIG_BYTES + 1)
+    if len(payload) > MAX_CONFIG_BYTES:
+        raise ValueError(f"configuration exceeds the {MAX_CONFIG_BYTES}-byte input limit")
+    return payload.decode("utf-8")
 
 
 @dataclass(frozen=True)
@@ -75,7 +84,10 @@ class Config:
         path = explicit or root / ".vulcanary.json"
         if not path.exists():
             return cls()
-        data = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(_config_text(path))
+        except RecursionError as error:
+            raise ValueError("configuration nesting is too deep") from error
         commands = data.get("verify_commands", [])
         if not isinstance(commands, list) or any(
             not isinstance(command, list) or not command or not all(isinstance(part, str) and part for part in command)
@@ -174,7 +186,7 @@ class Config:
             ignored_rules=set(ignored_rules),
             ignored_fingerprints=set(ignored_fingerprints),
             suppressions=tuple(suppressions),
-            max_file_bytes=int(data.get("max_file_bytes", 1_000_000)),
+            max_file_bytes=max(1, min(int(data.get("max_file_bytes", 1_000_000)), 10_000_000)),
             verify_commands=commands,
             verify_timeout_seconds=max(1, min(int(data.get("verify_timeout_seconds", 300)), 1800)),
             repository_owner=repository_owner.strip(),

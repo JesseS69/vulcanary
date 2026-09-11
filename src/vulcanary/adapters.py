@@ -7,8 +7,19 @@ from typing import Any, Callable
 from .models import Finding, Severity
 
 
+MAX_REPORT_BYTES = 64 * 1024 * 1024
+
+
 class AdapterError(ValueError):
     """Raised when an external scanner report cannot be safely normalized."""
+
+
+def _bounded_report_text(report: Path, scanner: str) -> str:
+    with report.open("rb") as source:
+        payload = source.read(MAX_REPORT_BYTES + 1)
+    if len(payload) > MAX_REPORT_BYTES:
+        raise AdapterError(f"{scanner} report exceeds the {MAX_REPORT_BYTES}-byte input limit: {report}")
+    return payload.decode("utf-8")
 
 
 def _severity(value: object, default: Severity = Severity.MEDIUM) -> Severity:
@@ -255,8 +266,10 @@ def import_report(scanner: str, report: Path, root: Path) -> list[Finding]:
     except KeyError as error:
         raise AdapterError(f"Unsupported external scanner: {scanner}") from error
     try:
-        document = json.loads(report.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        document = json.loads(_bounded_report_text(report, scanner))
+    except AdapterError:
+        raise
+    except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as error:
         raise AdapterError(f"{scanner} report is not readable JSON: {report}") from error
     return parser(document, root)
 

@@ -146,6 +146,8 @@ Copy `.vulcanary.example.json` to `.vulcanary.json` in the repository being scan
 }
 ```
 
+Source scanning defaults to 1 MB per file and clamps repository-configured values to a 10 MB safety ceiling. Repository configuration itself is limited to 1 MB. Dependency manifests and discovered CycloneDX inputs are limited to 32 MiB each; oversized recognized inputs produce explicit coverage warnings. Imported external scanner reports are limited to 64 MiB and fail with a typed error before parsing. Experimental dataflow records every skipped Python source under `analysis_limits` with its path, configured limit, and observed size, so an oversized source cannot look clean. Reads are bounded at the parser boundary rather than relying only on a prior size check.
+
 Verification commands are opt-in and executed directly without a shell after a proposed dependency fix passes its security rescan. Command output is not returned to the dashboard, preventing accidental leakage of tokens or other build-log secrets.
 
 > **Trust boundary: `verify_commands` comes from the scanned repository.**

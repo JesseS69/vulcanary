@@ -21,6 +21,19 @@ from ._vendor.cvss import CVSS4
 
 
 _CACHE_TTL_SECONDS = 6 * 60 * 60
+MAX_DEPENDENCY_INPUT_BYTES = 32 * 1024 * 1024
+
+
+class DependencyInputTooLarge(OSError):
+    pass
+
+
+def _dependency_text(path: Path) -> str:
+    with path.open("rb") as source:
+        payload = source.read(MAX_DEPENDENCY_INPUT_BYTES + 1)
+    if len(payload) > MAX_DEPENDENCY_INPUT_BYTES:
+        raise DependencyInputTooLarge(f"dependency input exceeds {MAX_DEPENDENCY_INPUT_BYTES} bytes: {path}")
+    return payload.decode("utf-8")
 
 
 @dataclass(frozen=True)
@@ -47,15 +60,55 @@ def _dependency_files(root: Path, accepted: Callable[[str], bool]) -> list[Path]
     for directory, names, files in os.walk(root, topdown=True):
         names[:] = [name for name in names if name not in _SKIPPED_PARTS]
         parent = Path(directory)
-        found.extend(parent / name for name in files if accepted(name))
+        for name in files:
+            path = parent / name
+            if not accepted(name):
+                continue
+            try:
+                if path.stat().st_size > MAX_DEPENDENCY_INPUT_BYTES:
+                    continue
+            except OSError:
+                continue
+            found.append(path)
+    return found
+
+
+def _dependency_input_name(name: str) -> bool:
+    return (
+        name in {
+            "package-lock.json", "package.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock", "uv.lock", "pdm.lock",
+            "Cargo.lock", "Cargo.toml", "go.mod", "composer.lock", "composer.json", "packages.lock.json",
+            "maven-dependency-tree.json", "dependency-tree.json", "gradle.lockfile", "pom.xml", "build.gradle",
+            "build.gradle.kts", "Gemfile.lock", "Pipfile.lock", "bom.json", "cyclonedx.json",
+        }
+        or (name.startswith("requirements") and name.endswith(".txt"))
+        or name.endswith(".cdx.json")
+    )
+
+
+def _oversized_dependency_inputs(root: Path) -> list[tuple[Path, int]]:
+    found = []
+    for directory, names, files in os.walk(root, topdown=True):
+        names[:] = [name for name in names if name not in _SKIPPED_PARTS]
+        parent = Path(directory)
+        for name in files:
+            if not _dependency_input_name(name):
+                continue
+            path = parent / name
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            if size > MAX_DEPENDENCY_INPUT_BYTES:
+                found.append((path, size))
     return found
 
 
 def _cyclonedx_packages(report: Path, root: Path) -> tuple[list[Package], str | None]:
     """Read pinned package identities from a CycloneDX JSON document."""
     try:
-        document = json.loads(report.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        document = json.loads(_dependency_text(report))
+    except (OSError, ValueError, RecursionError):
         return [], f"{relative_path(report, root)}: invalid CycloneDX JSON"
     if not isinstance(document, dict) or document.get("bomFormat") != "CycloneDX" or not isinstance(document.get("components"), list):
         return [], f"{relative_path(report, root)}: invalid CycloneDX document"
@@ -103,8 +156,8 @@ def _cyclonedx_packages(report: Path, root: Path) -> tuple[list[Package], str | 
 
 def _declared_names(directory: Path) -> set[str]:
     try:
-        package = json.loads((directory / "package.json").read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError):
+        package = json.loads(_dependency_text(directory / "package.json"))
+    except (OSError, UnicodeError, ValueError, RecursionError):
         return set()
     if not isinstance(package, dict):
         return set()
@@ -117,7 +170,7 @@ def _yarn_packages(lock: Path, root: Path) -> list[Package]:
     direct = _declared_names(lock.parent)
     found = []
     header: str | None = None
-    for raw in lock.read_text(encoding="utf-8").splitlines():
+    for raw in _dependency_text(lock).splitlines():
         if raw and not raw[0].isspace() and raw.rstrip().endswith(":"):
             header = raw.strip().rstrip(":").strip('"')
             continue
@@ -137,7 +190,7 @@ def _pnpm_packages(lock: Path, root: Path) -> list[Package]:
     direct = _declared_names(lock.parent)
     found = []
     in_packages = False
-    for raw in lock.read_text(encoding="utf-8").splitlines():
+    for raw in _dependency_text(lock).splitlines():
         if raw == "packages:":
             in_packages = True
             continue
@@ -164,7 +217,7 @@ def _python_toml_lock_packages(lock: Path, root: Path, manager: str) -> list[Pac
     name: str | None = None
     version: str | None = None
     in_package = False
-    for raw in lock.read_text(encoding="utf-8").splitlines() + ["[[package]]"]:
+    for raw in _dependency_text(lock).splitlines() + ["[[package]]"]:
         if raw.strip() == "[[package]]":
             if in_package and name and version:
                 found.append(Package(name, version, "PyPI", relative_path(lock, root), False, manager))
@@ -186,7 +239,7 @@ def _cargo_declared_names(directory: Path) -> set[str]:
     names = set()
     for manifest in _dependency_files(directory, lambda name: name == "Cargo.toml"):
         try:
-            document = tomllib.loads(manifest.read_text(encoding="utf-8"))
+            document = tomllib.loads(_dependency_text(manifest))
         except (OSError, UnicodeError, tomllib.TOMLDecodeError):
             continue
         if not isinstance(document, dict):
@@ -213,7 +266,7 @@ def _cargo_declared_names(directory: Path) -> set[str]:
 
 def _cargo_packages(lock: Path, root: Path) -> list[Package]:
     try:
-        document = tomllib.loads(lock.read_text(encoding="utf-8"))
+        document = tomllib.loads(_dependency_text(lock))
     except (OSError, UnicodeError, tomllib.TOMLDecodeError):
         return []
     if not isinstance(document, dict):
@@ -238,7 +291,7 @@ def _go_packages(manifest: Path, root: Path) -> list[Package]:
     """Read resolved module requirements without invoking the Go toolchain."""
     found = []
     in_require = False
-    for raw in manifest.read_text(encoding="utf-8").splitlines():
+    for raw in _dependency_text(manifest).splitlines():
         stripped = raw.strip()
         if stripped == "require (":
             in_require = True
@@ -261,14 +314,14 @@ def _go_packages(manifest: Path, root: Path) -> list[Package]:
 
 def _composer_packages(lock: Path, root: Path) -> list[Package]:
     try:
-        document = json.loads(lock.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError):
+        document = json.loads(_dependency_text(lock))
+    except (OSError, UnicodeError, ValueError, RecursionError):
         return []
     if not isinstance(document, dict):
         return []
     try:
-        manifest = json.loads((lock.parent / "composer.json").read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError):
+        manifest = json.loads(_dependency_text(lock.parent / "composer.json"))
+    except (OSError, UnicodeError, ValueError, RecursionError):
         manifest = {}
     if not isinstance(manifest, dict):
         manifest = {}
@@ -299,8 +352,8 @@ def _composer_packages(lock: Path, root: Path) -> list[Package]:
 def _nuget_packages(lock: Path, root: Path) -> list[Package]:
     """Read resolved NuGet packages without invoking restore or evaluating project files."""
     try:
-        document = json.loads(lock.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError):
+        document = json.loads(_dependency_text(lock))
+    except (OSError, UnicodeError, ValueError, RecursionError):
         return []
     if not isinstance(document, dict):
         return []
@@ -331,8 +384,8 @@ def _nuget_packages(lock: Path, root: Path) -> list[Package]:
 def _maven_packages(report: Path, root: Path) -> list[Package]:
     """Read Maven Dependency Plugin's resolved JSON dependency tree."""
     try:
-        document = json.loads(report.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError):
+        document = json.loads(_dependency_text(report))
+    except (OSError, UnicodeError, ValueError, RecursionError):
         return []
     if not isinstance(document, dict):
         return []
@@ -364,7 +417,7 @@ def _maven_packages(report: Path, root: Path) -> list[Package]:
 
 def _maven_report_is_resolved(report: Path) -> bool:
     try:
-        document = json.loads(report.read_text(encoding="utf-8"))
+        document = json.loads(_dependency_text(report))
     except (OSError, UnicodeError, ValueError):
         return False
     return isinstance(document, dict) and isinstance(document.get("children"), list)
@@ -375,7 +428,7 @@ def _gradle_packages(lock: Path, root: Path) -> list[Package]:
     found: dict[tuple[str, str], Package] = {}
     path = relative_path(lock, root)
     try:
-        lines = lock.read_text(encoding="utf-8").splitlines()
+        lines = _dependency_text(lock).splitlines()
     except (OSError, UnicodeError):
         return []
     for raw in lines:
@@ -400,7 +453,7 @@ def _gradle_packages(lock: Path, root: Path) -> list[Package]:
 
 
 def _gem_packages(lock: Path, root: Path) -> list[Package]:
-    lines = lock.read_text(encoding="utf-8").splitlines()
+    lines = _dependency_text(lock).splitlines()
     section = None
     platforms = set()
     direct = set()
@@ -435,11 +488,14 @@ def _gem_packages(lock: Path, root: Path) -> list[Package]:
 
 def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
     packages: dict[tuple[str, str, str, str], Package] = {}
-    unresolved: list[str] = []
+    unresolved = [
+        f"{relative_path(path, root)}: dependency input is {size} bytes and exceeds the {MAX_DEPENDENCY_INPUT_BYTES}-byte limit"
+        for path, size in _oversized_dependency_inputs(root)
+    ]
     for lock in _dependency_files(root, lambda name: name == "package-lock.json"):
         try:
-            data = json.loads(lock.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, ValueError):
+            data = json.loads(_dependency_text(lock))
+        except (OSError, UnicodeError, ValueError, RecursionError):
             continue
         if not isinstance(data, dict):
             continue
@@ -521,8 +577,8 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
             packages[(package.ecosystem, package.name, package.version, package.path)] = package
     for lock in _dependency_files(root, lambda name: name == "Pipfile.lock"):
         try:
-            document = json.loads(lock.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, ValueError):
+            document = json.loads(_dependency_text(lock))
+        except (OSError, UnicodeError, ValueError, RecursionError):
             continue
         if not isinstance(document, dict):
             continue
@@ -541,7 +597,7 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
     requirement = re.compile(r"^\s*([A-Za-z0-9_.-]+)\s*(?:\[[^\]]+\])?\s*(===|==|~=|!=|<=|>=|<|>)?\s*([^\s;#]+)?")
     for lock in _dependency_files(root, lambda name: name.startswith("requirements") and name.endswith(".txt")):
         try:
-            lines = lock.read_text(encoding="utf-8").splitlines()
+            lines = _dependency_text(lock).splitlines()
         except (OSError, UnicodeError):
             continue
         for line in lines:
@@ -850,7 +906,7 @@ def dependency_context(root: Path, package: Package, graph_cache: dict | None = 
     prepared = cache.get(cache_key)
     if prepared is None:
         try:
-            data = json.loads(lock.read_text(encoding="utf-8"))
+            data = json.loads(_dependency_text(lock))
         except (OSError, ValueError):
             return [], [], {}
         packages = data.get("packages", {})
