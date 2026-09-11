@@ -70,7 +70,9 @@ def _cyclonedx_packages(report: Path, root: Path) -> tuple[list[Package], str | 
     dependencies = document.get("dependencies") if isinstance(document.get("dependencies"), list) else []
     for dependency in dependencies:
         if isinstance(dependency, dict) and dependency.get("ref") == root_ref:
-            direct_refs.update(str(item) for item in dependency.get("dependsOn", []) if isinstance(item, str))
+            depends_on = dependency.get("dependsOn", [])
+            if isinstance(depends_on, list):
+                direct_refs.update(str(item) for item in depends_on if isinstance(item, str))
     found = []
     for component in document["components"]:
         if not isinstance(component, dict) or component.get("scope") == "excluded":
@@ -87,9 +89,10 @@ def _cyclonedx_packages(report: Path, root: Path) -> tuple[list[Package], str | 
         if ecosystem == "Maven" and "/" in name:
             group, artifact = name.rsplit("/", 1)
             name = f"{group}:{artifact}"
+        raw_properties = component.get("properties", [])
         properties = {
             str(item.get("name")): str(item.get("value"))
-            for item in component.get("properties", []) if isinstance(item, dict)
+            for item in raw_properties if isinstance(raw_properties, list) and isinstance(item, dict)
         }
         direct = component.get("bom-ref") in direct_refs or properties.get("vulcanary:dependency:direct") == "true"
         scopes = properties.get("vulcanary:dependency:scopes", "")
@@ -101,9 +104,13 @@ def _cyclonedx_packages(report: Path, root: Path) -> tuple[list[Package], str | 
 def _declared_names(directory: Path) -> set[str]:
     try:
         package = json.loads((directory / "package.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, UnicodeError, ValueError):
         return set()
-    return set(package.get("dependencies", {})) | set(package.get("devDependencies", {}))
+    if not isinstance(package, dict):
+        return set()
+    runtime = package.get("dependencies", {})
+    development = package.get("devDependencies", {})
+    return set(runtime if isinstance(runtime, dict) else {}) | set(development if isinstance(development, dict) else {})
 
 
 def _yarn_packages(lock: Path, root: Path) -> list[Package]:
@@ -180,7 +187,9 @@ def _cargo_declared_names(directory: Path) -> set[str]:
     for manifest in _dependency_files(directory, lambda name: name == "Cargo.toml"):
         try:
             document = tomllib.loads(manifest.read_text(encoding="utf-8"))
-        except (OSError, tomllib.TOMLDecodeError):
+        except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+            continue
+        if not isinstance(document, dict):
             continue
 
         def collect(value: dict) -> None:
@@ -205,7 +214,9 @@ def _cargo_declared_names(directory: Path) -> set[str]:
 def _cargo_packages(lock: Path, root: Path) -> list[Package]:
     try:
         document = tomllib.loads(lock.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+        return []
+    if not isinstance(document, dict):
         return []
     direct = _cargo_declared_names(lock.parent)
     found = []
@@ -251,14 +262,23 @@ def _go_packages(manifest: Path, root: Path) -> list[Package]:
 def _composer_packages(lock: Path, root: Path) -> list[Package]:
     try:
         document = json.loads(lock.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, UnicodeError, ValueError):
+        return []
+    if not isinstance(document, dict):
         return []
     try:
         manifest = json.loads((lock.parent / "composer.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, UnicodeError, ValueError):
         manifest = {}
-    runtime_direct = {str(name).lower() for name in manifest.get("require", {}) if name != "php" and not str(name).startswith(("ext-", "lib-"))}
-    development_direct = {str(name).lower() for name in manifest.get("require-dev", {})}
+    if not isinstance(manifest, dict):
+        manifest = {}
+    runtime = manifest.get("require", {})
+    development = manifest.get("require-dev", {})
+    runtime_direct = {
+        str(name).lower() for name in (runtime if isinstance(runtime, dict) else {})
+        if name != "php" and not str(name).startswith(("ext-", "lib-"))
+    }
+    development_direct = {str(name).lower() for name in (development if isinstance(development, dict) else {})}
     found = []
     for section, scope in (("packages", "runtime"), ("packages-dev", "development")):
         records = document.get(section, [])
@@ -280,7 +300,9 @@ def _nuget_packages(lock: Path, root: Path) -> list[Package]:
     """Read resolved NuGet packages without invoking restore or evaluating project files."""
     try:
         document = json.loads(lock.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, UnicodeError, ValueError):
+        return []
+    if not isinstance(document, dict):
         return []
     targets = document.get("dependencies", {})
     if not isinstance(targets, dict):
@@ -310,7 +332,7 @@ def _maven_packages(report: Path, root: Path) -> list[Package]:
     """Read Maven Dependency Plugin's resolved JSON dependency tree."""
     try:
         document = json.loads(report.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, UnicodeError, ValueError):
         return []
     if not isinstance(document, dict):
         return []
@@ -343,7 +365,7 @@ def _maven_packages(report: Path, root: Path) -> list[Package]:
 def _maven_report_is_resolved(report: Path) -> bool:
     try:
         document = json.loads(report.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, UnicodeError, ValueError):
         return False
     return isinstance(document, dict) and isinstance(document.get("children"), list)
 
@@ -354,7 +376,7 @@ def _gradle_packages(lock: Path, root: Path) -> list[Package]:
     path = relative_path(lock, root)
     try:
         lines = lock.read_text(encoding="utf-8").splitlines()
-    except OSError:
+    except (OSError, UnicodeError):
         return []
     for raw in lines:
         stripped = raw.strip()
@@ -417,12 +439,21 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
     for lock in _dependency_files(root, lambda name: name == "package-lock.json"):
         try:
             data = json.loads(lock.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, UnicodeError, ValueError):
             continue
-        root_package = data.get("packages", {}).get("", {})
-        direct_names = set(root_package.get("dependencies", {})) | set(root_package.get("devDependencies", {}))
-        for key, value in data.get("packages", {}).items():
-            if not key.startswith("node_modules/") or not isinstance(value, dict):
+        if not isinstance(data, dict):
+            continue
+        package_records = data.get("packages", {})
+        if not isinstance(package_records, dict):
+            continue
+        root_package = package_records.get("", {})
+        if not isinstance(root_package, dict):
+            root_package = {}
+        runtime = root_package.get("dependencies", {})
+        development = root_package.get("devDependencies", {})
+        direct_names = set(runtime if isinstance(runtime, dict) else {}) | set(development if isinstance(development, dict) else {})
+        for key, value in package_records.items():
+            if not isinstance(key, str) or not key.startswith("node_modules/") or not isinstance(value, dict):
                 continue
             name = key.rsplit("node_modules/", 1)[-1]
             version = value.get("version")
@@ -433,7 +464,7 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
         for lock in _dependency_files(root, lambda name, expected=pattern: name == expected):
             try:
                 discovered = reader(lock, root)
-            except OSError:
+            except (OSError, UnicodeError):
                 continue
             for package in discovered:
                 packages[(package.ecosystem, package.name, package.version, package.path)] = package
@@ -441,7 +472,7 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
         for lock in _dependency_files(root, lambda name, expected=filename: name == expected):
             try:
                 discovered = _python_toml_lock_packages(lock, root, manager)
-            except OSError:
+            except (OSError, UnicodeError):
                 continue
             for package in discovered:
                 packages[(package.ecosystem, package.name.lower(), package.version, package.path)] = package
@@ -451,7 +482,7 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
     for manifest in _dependency_files(root, lambda name: name == "go.mod"):
         try:
             discovered = _go_packages(manifest, root)
-        except OSError:
+        except (OSError, UnicodeError):
             continue
         for package in discovered:
             packages[(package.ecosystem, package.name, package.version, package.path)] = package
@@ -484,14 +515,16 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
     for lock in _dependency_files(root, lambda name: name == "Gemfile.lock"):
         try:
             discovered = _gem_packages(lock, root)
-        except OSError:
+        except (OSError, UnicodeError):
             continue
         for package in discovered:
             packages[(package.ecosystem, package.name, package.version, package.path)] = package
     for lock in _dependency_files(root, lambda name: name == "Pipfile.lock"):
         try:
             document = json.loads(lock.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, UnicodeError, ValueError):
+            continue
+        if not isinstance(document, dict):
             continue
         for section, scope in (("default", "runtime"), ("develop", "development")):
             records = document.get(section, {})
@@ -509,7 +542,7 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
     for lock in _dependency_files(root, lambda name: name.startswith("requirements") and name.endswith(".txt")):
         try:
             lines = lock.read_text(encoding="utf-8").splitlines()
-        except OSError:
+        except (OSError, UnicodeError):
             continue
         for line in lines:
             stripped = line.strip()

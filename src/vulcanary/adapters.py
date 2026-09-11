@@ -100,7 +100,10 @@ def _trivy(document: Any, root: Path) -> list[Finding]:
         if not isinstance(result, dict):
             raise AdapterError("Trivy result is malformed")
         target = result.get("Target")
-        for item in result.get("Vulnerabilities") or []:
+        vulnerabilities = result.get("Vulnerabilities") or []
+        if not isinstance(vulnerabilities, list):
+            raise AdapterError("Trivy Vulnerabilities must be an array when present")
+        for item in vulnerabilities:
             if not isinstance(item, dict):
                 raise AdapterError("Trivy vulnerability is malformed")
             findings.append(_finding(scanner="trivy", rule=item.get("VulnerabilityID"), title=item.get("Title"),
@@ -109,7 +112,10 @@ def _trivy(document: Any, root: Path) -> list[Finding]:
                 remediation=f"Upgrade {item.get('PkgName', 'the package')} to {item.get('FixedVersion') or 'a patched version'} and rebuild the image from a reviewed base.",
                 evidence=f"{item.get('PkgName', 'package')}@{item.get('InstalledVersion', 'unknown')}",
                 metadata={"package": item.get("PkgName"), "installed_version": item.get("InstalledVersion"), "current_version": item.get("InstalledVersion"), "fixed_version": item.get("FixedVersion"), "advisory": item.get("VulnerabilityID"), "artifact_type": artifact_type, "image": image_name, "package_type": result.get("Type")}))
-        for item in result.get("Misconfigurations") or []:
+        misconfigurations = result.get("Misconfigurations") or []
+        if not isinstance(misconfigurations, list):
+            raise AdapterError("Trivy Misconfigurations must be an array when present")
+        for item in misconfigurations:
             if not isinstance(item, dict):
                 raise AdapterError("Trivy misconfiguration is malformed")
             cause = item.get("CauseMetadata") if isinstance(item.get("CauseMetadata"), dict) else {}
