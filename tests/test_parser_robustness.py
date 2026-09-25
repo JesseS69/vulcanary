@@ -157,6 +157,31 @@ class ParserRobustnessTests(unittest.TestCase):
                 self.assertEqual(packages, [])
                 self.assertEqual(warnings, [])
 
+    def test_bundler_distinguishes_valid_empty_structure_from_malformed_content(self) -> None:
+        valid_empty = "GEM\n  specs:\n\nPLATFORMS\n  ruby\n\nDEPENDENCIES\n"
+        malformed = (
+            b"not a bundler lockfile\n",
+            b"GEM\n  specs:\n    demo (\n",
+            b"GIT\n  remote: https://example.invalid/repo.git\n  specs:\n    demo ???\n",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            lock = root / "Gemfile.lock"
+            lock.write_text(valid_empty, encoding="utf-8")
+            packages, warnings = discover_dependency_state(root)
+            self.assertEqual(packages, [])
+            self.assertEqual(warnings, [])
+
+            for case_number, payload in enumerate(malformed):
+                with self.subTest(case=case_number):
+                    lock.write_bytes(payload)
+                    packages, warnings = discover_dependency_state(root)
+                    self.assertEqual(packages, [])
+                    self.assertEqual(warnings, ["Gemfile.lock: invalid Bundler dependency input"])
+                    rows = _coverage_matrix(root, packages, warnings, False, Config())
+                    ruby = next(item for item in rows if item["ecosystem"] == "RubyGems")
+                    self.assertEqual(ruby["dependency"], "gap")
+
     def test_dependency_discovery_survives_deterministic_manifest_mutations(self) -> None:
         for filename, seed in _MANIFEST_SEEDS.items():
             for case_number, payload in enumerate(_mutations(seed)):

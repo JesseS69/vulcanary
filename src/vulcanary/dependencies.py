@@ -441,6 +441,10 @@ def _gradle_packages(lock: Path, root: Path) -> list[Package]:
 
 def _gem_packages(lock: Path, root: Path) -> list[Package]:
     lines = _dependency_text(lock).splitlines()
+    known_sections = {"GEM", "GIT", "PATH", "PLATFORMS", "DEPENDENCIES", "BUNDLED WITH"}
+    present_sections = {raw.strip() for raw in lines if raw and not raw[0].isspace()} & known_sections
+    if any(raw.strip() for raw in lines) and not present_sections:
+        raise ValueError("Bundler lock has no recognized sections")
     section = None
     platforms = set()
     direct = set()
@@ -457,9 +461,11 @@ def _gem_packages(lock: Path, root: Path) -> list[Package]:
             match = re.match(r"^\s{2}([A-Za-z0-9_.-]+)(?:\s|!|$)", raw)
             if match:
                 direct.add(match.group(1))
-        elif section == "GEM":
+        elif section in {"GEM", "GIT", "PATH"}:
             match = re.match(r"^\s{4}([A-Za-z0-9_.-]+)\s+\(([^ ()]+)\)\s*$", raw)
-            if match:
+            if raw.startswith("    ") and not raw.startswith("      ") and not match:
+                raise ValueError("Bundler lock contains an invalid resolved spec")
+            if match and section == "GEM":
                 raw_specs.append((match.group(1), match.group(2)))
     found = []
     for name, version in raw_specs:
@@ -660,7 +666,7 @@ def _discover_packages(root: Path) -> tuple[list[Package], list[str]]:
     for lock in gem_locks:
         try:
             discovered = _gem_packages(lock, root)
-        except (OSError, UnicodeError):
+        except (OSError, UnicodeError, ValueError):
             unresolved.append(_invalid_dependency_warning(lock, root, "Bundler"))
             continue
         for package in discovered:
