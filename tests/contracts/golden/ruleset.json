@@ -1,0 +1,210 @@
+{
+  "version": 1,
+  "algorithm": "sha256",
+  "digest": "67ec8cc62b96b8c22596d5075cbc8f00c4b051fe2cea6191582dd323ab89f767",
+  "rules": [
+    {
+      "id": "CI-GHA-MUTABLE-ACTION",
+      "title": "GitHub Action uses a mutable branch reference",
+      "severity": "high",
+      "category": "ci",
+      "extensions": [],
+      "engine": "regex",
+      "pattern": "^\\s*-?\\s*uses\\s*:\\s*(?!\\./)[^\\s#]+@(?:main|master)\\s*(?:#.*)?$",
+      "pattern_flags": 42,
+      "remediation": "Pin third-party actions to a reviewed full commit SHA and let dependency automation propose updates."
+    },
+    {
+      "id": "CI-GHA-PERSIST-CREDENTIALS",
+      "title": "Checkout credentials remain available to later steps",
+      "severity": "medium",
+      "category": "ci",
+      "extensions": [],
+      "engine": "regex",
+      "pattern": "^\\s*persist-credentials\\s*:\\s*true\\s*(?:#.*)?$",
+      "pattern_flags": 42,
+      "remediation": "Set persist-credentials to false unless later steps explicitly require GitHub token-backed pushes."
+    },
+    {
+      "id": "CI-GHA-WRITE-ALL",
+      "title": "GitHub Actions grants write-all permissions",
+      "severity": "high",
+      "category": "ci",
+      "extensions": [],
+      "engine": "regex",
+      "pattern": "^\\s*permissions\\s*:\\s*write-all\\s*$",
+      "pattern_flags": 42,
+      "remediation": "Declare the minimum required permissions and default unspecified scopes to none."
+    },
+    {
+      "id": "CODE-JS-EVAL",
+      "title": "Dynamic JavaScript eval",
+      "severity": "high",
+      "category": "sast",
+      "extensions": [
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx"
+      ],
+      "engine": "javascript_syntax_with_regex_fallback",
+      "pattern": "(?<![\\w.])eval\\s*\\(",
+      "pattern_flags": 32,
+      "remediation": "Avoid eval and use a safe parser for the expected input format."
+    },
+    {
+      "id": "CODE-JS-INNERHTML",
+      "title": "Potential DOM XSS sink",
+      "severity": "medium",
+      "category": "sast",
+      "extensions": [
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx"
+      ],
+      "engine": "javascript_syntax_with_regex_fallback",
+      "pattern": "\\.innerHTML\\s*=",
+      "pattern_flags": 32,
+      "remediation": "Use textContent or sanitize trusted HTML with a maintained sanitizer."
+    },
+    {
+      "id": "CODE-PY-EVAL",
+      "title": "Dynamic Python eval",
+      "severity": "high",
+      "category": "sast",
+      "extensions": [
+        ".py"
+      ],
+      "engine": "python_ast_with_regex_fallback",
+      "pattern": "(?<![\\w.])eval\\s*\\(",
+      "pattern_flags": 32,
+      "remediation": "Avoid eval; parse and validate structured input explicitly."
+    },
+    {
+      "id": "CODE-PY-PICKLE",
+      "title": "Unsafe Python deserialization",
+      "severity": "high",
+      "category": "sast",
+      "extensions": [
+        ".py"
+      ],
+      "engine": "python_ast_with_regex_fallback",
+      "pattern": "(?<![\\w.])pickle\\.(?:load|loads)\\s*\\(",
+      "pattern_flags": 32,
+      "remediation": "Do not deserialize untrusted pickle data; use a constrained data format such as JSON and validate its schema."
+    },
+    {
+      "id": "CODE-PY-SHELL",
+      "title": "Shell command execution enabled",
+      "severity": "high",
+      "category": "sast",
+      "extensions": [
+        ".py"
+      ],
+      "engine": "python_ast_with_regex_fallback",
+      "pattern": "subprocess\\.(?:run|Popen|call)\\s*\\([^\\n]*shell\\s*=\\s*True",
+      "pattern_flags": 32,
+      "remediation": "Pass an argument list with shell=False and validate all user-controlled values."
+    },
+    {
+      "id": "IAC-DOCKER-CURL-PIPE",
+      "title": "Container build pipes a download to a shell",
+      "severity": "high",
+      "category": "iac",
+      "extensions": [],
+      "engine": "regex",
+      "pattern": "^\\s*RUN\\s+[^\\n]*(?:curl|wget)[^\\n]*\\|\\s*(?:sh|bash)\\b",
+      "pattern_flags": 42,
+      "remediation": "Download a pinned artifact, verify its checksum or signature, and execute it as a separate build step."
+    },
+    {
+      "id": "IAC-DOCKER-LATEST",
+      "title": "Container base image uses the latest tag",
+      "severity": "medium",
+      "category": "iac",
+      "extensions": [],
+      "engine": "regex",
+      "pattern": "^\\s*FROM\\s+\\S+:latest(?:\\s|$)",
+      "pattern_flags": 42,
+      "remediation": "Pin the base image to a reviewed immutable digest or explicit version tag."
+    },
+    {
+      "id": "IAC-DOCKER-ROOT",
+      "title": "Container runs as root",
+      "severity": "medium",
+      "category": "iac",
+      "extensions": [],
+      "engine": "regex",
+      "pattern": "^\\s*USER\\s+(?:root|0)\\s*$",
+      "pattern_flags": 42,
+      "remediation": "Create and switch to an unprivileged user."
+    },
+    {
+      "id": "IAC-TF-PUBLIC-ACL",
+      "title": "Terraform configures a public object-storage ACL",
+      "severity": "high",
+      "category": "iac",
+      "extensions": [],
+      "engine": "regex",
+      "pattern": "\\bacl\\s*=\\s*[\"\\']public-(?:read|read-write)[\"\\']",
+      "pattern_flags": 32,
+      "remediation": "Use a private ACL and grant narrowly scoped access through an explicit policy."
+    },
+    {
+      "id": "IAC-TF-PUBLIC-INGRESS",
+      "title": "Terraform allows ingress from the internet",
+      "severity": "high",
+      "category": "iac",
+      "extensions": [],
+      "engine": "regex",
+      "pattern": "cidr_blocks\\s*=\\s*\\[[^\\]]*[\"\\']0\\.0\\.0\\.0/0[\"\\']",
+      "pattern_flags": 32,
+      "remediation": "Restrict ingress CIDRs and ports to required sources."
+    },
+    {
+      "id": "SECRET-AWS-KEY",
+      "title": "AWS access key in source",
+      "severity": "critical",
+      "category": "secret",
+      "extensions": [],
+      "engine": "regex",
+      "pattern": "\\b(?:AKIA|ASIA)[A-Z0-9]{16}\\b",
+      "pattern_flags": 32,
+      "remediation": "Revoke the key, remove it from history, and use a secret manager."
+    },
+    {
+      "id": "SECRET-GITHUB-TOKEN",
+      "title": "GitHub token in source",
+      "severity": "critical",
+      "category": "secret",
+      "extensions": [],
+      "engine": "regex",
+      "pattern": "\\b(?:ghp|github_pat)_[A-Za-z0-9_]{30,255}\\b",
+      "pattern_flags": 32,
+      "remediation": "Revoke the token and replace it with a short-lived credential."
+    },
+    {
+      "id": "SECRET-HIGH-ENTROPY",
+      "title": "High-entropy credential in secret-like assignment",
+      "severity": "high",
+      "category": "secret",
+      "extensions": [],
+      "engine": "contextual_entropy",
+      "pattern": "(?im)(?P<key>[\"']?(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer[_-]?token|client[_-]?secret|credential|password|passwd|secret|token)[\"']?)\\s*(?:=|:)\\s*(?P<value>\"[^\"\\r\\n]{20,200}\"|'[^'\\r\\n]{20,200}'|(?=[A-Za-z0-9_./+=:@-]{0,199}\\d)[A-Za-z0-9_./+=:@-]{20,200})",
+      "pattern_flags": 42,
+      "remediation": "Rotate the credential, remove it from source and history, and load it from a managed secret store."
+    },
+    {
+      "id": "SECRET-PRIVATE-KEY",
+      "title": "Private key in source",
+      "severity": "critical",
+      "category": "secret",
+      "extensions": [],
+      "engine": "regex",
+      "pattern": "-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
+      "pattern_flags": 32,
+      "remediation": "Remove and rotate the key; load it from a managed secret store."
+    }
+  ]
+}

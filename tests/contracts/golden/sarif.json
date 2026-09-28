@@ -1,0 +1,167 @@
+{
+  "version": "2.1.0",
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Vulcanary",
+          "version": "0.0.0-contract",
+          "rules": [
+            {
+              "id": "SCA-CONTRACT",
+              "shortDescription": {
+                "text": "Synthetic advisory"
+              },
+              "help": {
+                "text": "Upgrade to 1.0.1."
+              },
+              "properties": {
+                "security-severity": "10.0"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "SCA-CONTRACT",
+          "level": "note",
+          "message": {
+            "text": "Synthetic advisory"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "package-lock.json"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "vulcanaryFingerprint/v1": "bcd4fab770d4b25f5d1a"
+          }
+        },
+        {
+          "ruleId": "SCA-CONTRACT",
+          "level": "note",
+          "message": {
+            "text": "Synthetic advisory"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "package-lock.json"
+                },
+                "region": {
+                  "startLine": 2
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "vulcanaryFingerprint/v1": "752ff8b89f59b1434666"
+          }
+        },
+        {
+          "ruleId": "SCA-CONTRACT",
+          "level": "note",
+          "message": {
+            "text": "Synthetic advisory"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "package-lock.json"
+                },
+                "region": {
+                  "startLine": 3
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "vulcanaryFingerprint/v1": "67ffb800811269d28bc9"
+          }
+        },
+        {
+          "ruleId": "SCA-CONTRACT",
+          "level": "warning",
+          "message": {
+            "text": "Synthetic advisory"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "package-lock.json"
+                },
+                "region": {
+                  "startLine": 4
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "vulcanaryFingerprint/v1": "21f45dd073196987b41d"
+          }
+        },
+        {
+          "ruleId": "SCA-CONTRACT",
+          "level": "error",
+          "message": {
+            "text": "Synthetic advisory"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "package-lock.json"
+                },
+                "region": {
+                  "startLine": 5
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "vulcanaryFingerprint/v1": "3d7a3fddcf9f3c971b6d"
+          }
+        },
+        {
+          "ruleId": "SCA-CONTRACT",
+          "level": "error",
+          "message": {
+            "text": "Synthetic advisory"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "package-lock.json"
+                },
+                "region": {
+                  "startLine": 6
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "vulcanaryFingerprint/v1": "b96973082fc45c6ad55e"
+          }
+        }
+      ],
+      "properties": {
+        "vulcanaryPolicy": {
+          "fail_on": "high"
+        }
+      }
+    }
+  ]
+}

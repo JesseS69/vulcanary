@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JesseS69/vulcanary/contracts/experimental-dataflow/v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "experimental",
+    "policy_effect",
+    "max_call_depth",
+    "exposures",
+    "analysis_truncations",
+    "unmodeled_constructs",
+    "unmodeled_construct_count",
+    "parse_errors",
+    "analysis_limits",
+    "analyzed_modules",
+    "analyzed_calls",
+    "analysis_budget"
+  ],
+  "properties": {
+    "schema": {
+      "const": "vulcanary.experimental-dataflow.v1"
+    },
+    "experimental": {
+      "const": true
+    },
+    "policy_effect": {
+      "const": "none"
+    },
+    "max_call_depth": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "exposures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "fingerprint",
+          "rule_id",
+          "path",
+          "line",
+          "sink",
+          "sources",
+          "sanitizers",
+          "confidence",
+          "experimental",
+          "lifecycle"
+        ],
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{20}$"
+          },
+          "rule_id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sink": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sanitizers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "lower"
+            ]
+          },
+          "experimental": {
+            "const": true
+          },
+          "lifecycle": {
+            "const": "prototype_only"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "analysis_truncations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "function": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "path",
+          "function",
+          "line"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "unmodeled_constructs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "construct": {
+            "type": "string"
+          },
+          "sink_line": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sink_column": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "path",
+          "category",
+          "construct",
+          "sink_line",
+          "sink_column"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "unmodeled_construct_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "parse_errors": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "analysis_limits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "enum": [
+              "module_limit",
+              "call_limit",
+              "time_limit",
+              "source_size_limit"
+            ]
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 0
+          },
+          "observed": {
+            "type": "number",
+            "minimum": 0
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "limit",
+          "observed"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "analyzed_modules": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "analyzed_calls": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "analysis_budget": {
+      "type": "object",
+      "required": [
+        "max_modules",
+        "max_calls",
+        "timeout_seconds"
+      ],
+      "properties": {
+        "max_modules": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeout_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

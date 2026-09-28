@@ -56,7 +56,10 @@ class SecretNonPersistenceTests(unittest.TestCase):
                 "console": render_console(findings),
                 "GitHub annotations": render_github_annotations(findings),
                 "Markdown summary": render_markdown_summary(findings, "repository"),
-                "OpenVEX": json.dumps(openvex_document("repository", [findings[0].to_dict()])),
+                "OpenVEX": json.dumps(openvex_document("repository", [findings[0].to_dict(), {
+                    "rule_id": "SCA-demo", "category": "dependency",
+                    "metadata": {"package": "demo", "current_version": "1.0.0", "ecosystem": "npm"},
+                }])),
             }
             ticket = finding_ticket({**findings[0].to_dict(), "repository": "repository"})
             surfaces["ticket record"] = json.dumps(ticket)

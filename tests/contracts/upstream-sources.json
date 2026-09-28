@@ -1,0 +1,52 @@
+[
+  {
+    "file": "cyclonedx.json",
+    "sha256": "067f7824b08653839ea050ae9e09ca48375eadc2652b0e2a299476e7db90335b",
+    "url": "https://raw.githubusercontent.com/CycloneDX/specification/c320fc0f0b46873864927d9d5684eea7ba439728/schema/bom-1.5.schema.json"
+  },
+  {
+    "file": "jsf.json",
+    "sha256": "8bae002c25e723db7ee1f26afde680ae1a2b1a8f6b4b4b0fd65dc3becb090aae",
+    "url": "https://raw.githubusercontent.com/CycloneDX/specification/c320fc0f0b46873864927d9d5684eea7ba439728/schema/jsf-0.82.schema.json"
+  },
+  {
+    "file": "LICENSE-CycloneDX",
+    "sha256": "6c29f22a4a7385285c6f579ec9f33c5e989f00739d6b257243a0b082ec9447ae",
+    "url": "https://raw.githubusercontent.com/CycloneDX/specification/c320fc0f0b46873864927d9d5684eea7ba439728/LICENSE"
+  },
+  {
+    "file": "LICENSE-OpenVEX",
+    "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+    "url": "https://raw.githubusercontent.com/openvex/spec/61b5f885d0f481f48683c93345e49ef1a6e9fdff/LICENSE"
+  },
+  {
+    "file": "LICENSE-SARIF",
+    "sha256": "1ee371a08c4bc2a64cf4382990271676835c3d75bc984560a181de54c88471c5",
+    "url": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/adbb670c018335b0f384e6dd8819f4ea055d7ee1/LICENSE.md"
+  },
+  {
+    "file": "LICENSE-SPDX",
+    "sha256": "017e38491cccbd2bdb6da0a32a33db9ec245b5dab30fdcd09f2c742c975e5b35",
+    "url": "https://raw.githubusercontent.com/spdx/spdx-spec/aadf3b0b8dbbabdb4d880b0fc714255fea436ff7/LICENSE"
+  },
+  {
+    "file": "openvex.json",
+    "sha256": "9373597734ed1d3ea5161a8b46d3866c4a8cfe76fd632fdd16aef01fb34b3238",
+    "url": "https://raw.githubusercontent.com/openvex/spec/61b5f885d0f481f48683c93345e49ef1a6e9fdff/openvex_json_schema.json"
+  },
+  {
+    "file": "sarif.json",
+    "sha256": "c3b4bb2d6093897483348925aaa73af03b3e3f4bd4ca38cef26dcb4212a2682e",
+    "url": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/adbb670c018335b0f384e6dd8819f4ea055d7ee1/sarif-2.1/schema/sarif-schema-2.1.0.json"
+  },
+  {
+    "file": "spdx-licenses.json",
+    "sha256": "4f6e2b05c05d26a4f2dc5879fbc2fca94b0a28db46289d0c51345621b71cfbfc",
+    "url": "https://raw.githubusercontent.com/CycloneDX/specification/c320fc0f0b46873864927d9d5684eea7ba439728/schema/spdx.schema.json"
+  },
+  {
+    "file": "spdx.json",
+    "sha256": "239208b7ac287b3cf5d9a9af23f9d69863971102a5e1587a27a398b43490b89b",
+    "url": "https://raw.githubusercontent.com/spdx/spdx-spec/aadf3b0b8dbbabdb4d880b0fc714255fea436ff7/schemas/spdx-schema.json"
+  }
+]

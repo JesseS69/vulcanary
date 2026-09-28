@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "findings": [
+    {
+      "rule_id": "SCA-CONTRACT",
+      "title": "Synthetic advisory",
+      "description": "Contract fixture",
+      "severity": "unknown",
+      "category": "dependency",
+      "path": "package-lock.json",
+      "line": 1,
+      "evidence": "demo-0@1.0.0",
+      "remediation": "Upgrade to 1.0.1.",
+      "scanner": "builtin",
+      "metadata": {
+        "package": "demo-0",
+        "current_version": "1.0.0",
+        "ecosystem": "npm",
+        "manager": "npm",
+        "direct": true,
+        "advisory": "GHSA-contract-0"
+      },
+      "fingerprint": "bcd4fab770d4b25f5d1a"
+    },
+    {
+      "rule_id": "SCA-CONTRACT",
+      "title": "Synthetic advisory",
+      "description": "Contract fixture",
+      "severity": "info",
+      "category": "dependency",
+      "path": "package-lock.json",
+      "line": 2,
+      "evidence": "demo-1@1.0.0",
+      "remediation": "Upgrade to 1.0.1.",
+      "scanner": "builtin",
+      "metadata": {
+        "package": "demo-1",
+        "current_version": "1.0.0",
+        "ecosystem": "npm",
+        "manager": "npm",
+        "direct": false,
+        "advisory": "GHSA-contract-1"
+      },
+      "fingerprint": "752ff8b89f59b1434666"
+    },
+    {
+      "rule_id": "SCA-CONTRACT",
+      "title": "Synthetic advisory",
+      "description": "Contract fixture",
+      "severity": "low",
+      "category": "dependency",
+      "path": "package-lock.json",
+      "line": 3,
+      "evidence": "demo-2@1.0.0",
+      "remediation": "Upgrade to 1.0.1.",
+      "scanner": "builtin",
+      "metadata": {
+        "package": "demo-2",
+        "current_version": "1.0.0",
+        "ecosystem": "npm",
+        "manager": "npm",
+        "direct": false,
+        "advisory": "GHSA-contract-2"
+      },
+      "fingerprint": "67ffb800811269d28bc9"
+    },
+    {
+      "rule_id": "SCA-CONTRACT",
+      "title": "Synthetic advisory",
+      "description": "Contract fixture",
+      "severity": "medium",
+      "category": "dependency",
+      "path": "package-lock.json",
+      "line": 4,
+      "evidence": "demo-3@1.0.0",
+      "remediation": "Upgrade to 1.0.1.",
+      "scanner": "builtin",
+      "metadata": {
+        "package": "demo-3",
+        "current_version": "1.0.0",
+        "ecosystem": "npm",
+        "manager": "npm",
+        "direct": false,
+        "advisory": "GHSA-contract-3"
+      },
+      "fingerprint": "21f45dd073196987b41d"
+    },
+    {
+      "rule_id": "SCA-CONTRACT",
+      "title": "Synthetic advisory",
+      "description": "Contract fixture",
+      "severity": "high",
+      "category": "dependency",
+      "path": "package-lock.json",
+      "line": 5,
+      "evidence": "demo-4@1.0.0",
+      "remediation": "Upgrade to 1.0.1.",
+      "scanner": "builtin",
+      "metadata": {
+        "package": "demo-4",
+        "current_version": "1.0.0",
+        "ecosystem": "npm",
+        "manager": "npm",
+        "direct": false,
+        "advisory": "GHSA-contract-4"
+      },
+      "fingerprint": "3d7a3fddcf9f3c971b6d"
+    },
+    {
+      "rule_id": "SCA-CONTRACT",
+      "title": "Synthetic advisory",
+      "description": "Contract fixture",
+      "severity": "critical",
+      "category": "dependency",
+      "path": "package-lock.json",
+      "line": 6,
+      "evidence": "demo-5@1.0.0",
+      "remediation": "Upgrade to 1.0.1.",
+      "scanner": "builtin",
+      "metadata": {
+        "package": "demo-5",
+        "current_version": "1.0.0",
+        "ecosystem": "npm",
+        "manager": "npm",
+        "direct": false,
+        "advisory": "GHSA-contract-5"
+      },
+      "fingerprint": "b96973082fc45c6ad55e"
+    }
+  ],
+  "exceptions": [],
+  "policy": {
+    "fail_on": "high"
+  }
+}

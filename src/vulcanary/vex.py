@@ -10,6 +10,10 @@ from .sbom import package_url
 from .version import __version__
 
 
+class NoVexStatements(ValueError):
+    """No observed dependency advisory can support a valid OpenVEX statement."""
+
+
 def _purl(metadata: dict) -> str | None:
     name, version = str(metadata.get("package") or ""), str(metadata.get("current_version") or "")
     if not name or not version:
@@ -35,11 +39,14 @@ def openvex_document(repository_name: str, findings: list[dict]) -> dict:
         statements.append({
             "vulnerability": {"name": advisory}, "products": [{"@id": product}], "status": "affected",
             "status_notes": "Vulcanary observed the vulnerable version in the dependency inventory. Reachability context does not prove safety.",
+            "action_statement": str(finding.get("remediation") or "Review the advisory and upgrade to a fixed release where available."),
         })
+    if not statements:
+        raise NoVexStatements("No dependency advisory statements to export; use JSON or an SBOM for an empty scan.")
     return {
         "@context": "https://openvex.dev/ns/v0.2.0", "@id": f"https://github.com/JesseS69/vulcanary/vex/{uuid4()}",
         "author": "Vulcanary local scanner", "role": "Document Creator", "timestamp": datetime.now(timezone.utc).isoformat(),
-        "version": 1, "tooling": f"Vulcanary {__version__}", "product": repository_name, "statements": statements,
+        "version": 1, "tooling": f"Vulcanary {__version__}", "statements": statements,
     }
 
 

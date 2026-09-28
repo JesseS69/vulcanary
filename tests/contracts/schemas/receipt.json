@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JesseS69/vulcanary/contracts/receipt/v1",
+  "type": "object",
+  "required": [
+    "repository",
+    "branch",
+    "created_at",
+    "selected_fingerprints",
+    "changed_files",
+    "rescan_passed",
+    "remaining_selected",
+    "finding_count",
+    "checks_passed",
+    "checks_skipped",
+    "checks",
+    "proof"
+  ],
+  "properties": {
+    "repository": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "selected_fingerprints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{20}$"
+      }
+    },
+    "changed_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "rescan_passed": {
+      "type": "boolean"
+    },
+    "remaining_selected": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{20}$"
+      }
+    },
+    "finding_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "checks_passed": {
+      "type": "boolean"
+    },
+    "checks_skipped": {
+      "type": "boolean"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "proof": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "additionalProperties": true
+}

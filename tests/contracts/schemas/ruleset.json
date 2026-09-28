@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JesseS69/vulcanary/contracts/ruleset/v1",
+  "type": "object",
+  "required": [
+    "version",
+    "algorithm",
+    "digest",
+    "rules"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "algorithm": {
+      "const": "sha256"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "severity",
+          "category",
+          "extensions",
+          "engine",
+          "pattern",
+          "pattern_flags",
+          "remediation"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "unknown",
+              "info",
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "category": {
+            "type": "string"
+          },
+          "extensions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "engine": {
+            "type": "string"
+          },
+          "pattern": {
+            "type": "string"
+          },
+          "pattern_flags": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "remediation": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

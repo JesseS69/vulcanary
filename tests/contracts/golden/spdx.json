@@ -1,0 +1,200 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "contract-demo-vulcanary-sbom",
+  "documentNamespace": "https://vulcanary.dev/spdx/contract-demo/00000000-0000-0000-0000-000000000001",
+  "creationInfo": {
+    "created": "2026-01-02T03:04:05+00:00",
+    "creators": [
+      "Tool: Vulcanary-0.0.0-contract"
+    ]
+  },
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Repository",
+      "name": "contract-demo",
+      "versionInfo": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "primaryPackagePurpose": "APPLICATION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-c072b86decdb8655",
+      "name": "demo-0",
+      "versionInfo": "1.0.0",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "primaryPackagePurpose": "LIBRARY",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/demo-0@1.0.0"
+        }
+      ],
+      "comment": "Vulcanary managers: npm; scopes: runtime; direct: true",
+      "annotations": [
+        {
+          "annotationType": "OTHER",
+          "annotator": "Tool: Vulcanary-0.0.0-contract",
+          "annotationDate": "2026-01-02T03:04:05+00:00",
+          "comment": "OSV advisories: GHSA-contract-0"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-f4e685d8a64d1eac",
+      "name": "demo-1",
+      "versionInfo": "1.0.0",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "primaryPackagePurpose": "LIBRARY",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/demo-1@1.0.0"
+        }
+      ],
+      "comment": "Vulcanary managers: npm; scopes: runtime; direct: false",
+      "annotations": [
+        {
+          "annotationType": "OTHER",
+          "annotator": "Tool: Vulcanary-0.0.0-contract",
+          "annotationDate": "2026-01-02T03:04:05+00:00",
+          "comment": "OSV advisories: GHSA-contract-1"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-aa24c045600d2f3b",
+      "name": "demo-2",
+      "versionInfo": "1.0.0",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "primaryPackagePurpose": "LIBRARY",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/demo-2@1.0.0"
+        }
+      ],
+      "comment": "Vulcanary managers: npm; scopes: runtime; direct: false",
+      "annotations": [
+        {
+          "annotationType": "OTHER",
+          "annotator": "Tool: Vulcanary-0.0.0-contract",
+          "annotationDate": "2026-01-02T03:04:05+00:00",
+          "comment": "OSV advisories: GHSA-contract-2"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-b1742234ae0c1f0c",
+      "name": "demo-3",
+      "versionInfo": "1.0.0",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "primaryPackagePurpose": "LIBRARY",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/demo-3@1.0.0"
+        }
+      ],
+      "comment": "Vulcanary managers: npm; scopes: runtime; direct: false",
+      "annotations": [
+        {
+          "annotationType": "OTHER",
+          "annotator": "Tool: Vulcanary-0.0.0-contract",
+          "annotationDate": "2026-01-02T03:04:05+00:00",
+          "comment": "OSV advisories: GHSA-contract-3"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-e98b7a5b7e0019d1",
+      "name": "demo-4",
+      "versionInfo": "1.0.0",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "primaryPackagePurpose": "LIBRARY",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/demo-4@1.0.0"
+        }
+      ],
+      "comment": "Vulcanary managers: npm; scopes: runtime; direct: false",
+      "annotations": [
+        {
+          "annotationType": "OTHER",
+          "annotator": "Tool: Vulcanary-0.0.0-contract",
+          "annotationDate": "2026-01-02T03:04:05+00:00",
+          "comment": "OSV advisories: GHSA-contract-4"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-bd01ea53dea929e0",
+      "name": "demo-5",
+      "versionInfo": "1.0.0",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "primaryPackagePurpose": "LIBRARY",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/demo-5@1.0.0"
+        }
+      ],
+      "comment": "Vulcanary managers: npm; scopes: runtime; direct: false",
+      "annotations": [
+        {
+          "annotationType": "OTHER",
+          "annotator": "Tool: Vulcanary-0.0.0-contract",
+          "annotationDate": "2026-01-02T03:04:05+00:00",
+          "comment": "OSV advisories: GHSA-contract-5"
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relationshipType": "DESCRIBES",
+      "relatedSpdxElement": "SPDXRef-Repository"
+    },
+    {
+      "spdxElementId": "SPDXRef-Repository",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c072b86decdb8655"
+    }
+  ]
+}
