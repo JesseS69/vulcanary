@@ -6,6 +6,7 @@ import secrets
 import subprocess
 import sys
 import time
+import threading
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -66,9 +67,15 @@ def save_app_config(config: dict) -> Path:
     except OSError:
         pass
     path = config_path()
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        temporary.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
     try:
         path.chmod(0o600)
     except OSError:

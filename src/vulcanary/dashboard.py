@@ -173,6 +173,9 @@ class DashboardState:
         self.repositories: dict[str, RepositoryScan] = {}
         self.dependency_packages: dict[str, list[Package]] = {}
         self.history_path = history_path
+        self.persistence_error: dict | None = None
+        self._history_write_blocked = False
+        self.rescan_errors: list[dict] = []
         self.history: list[dict] = []
         self.inventory_snapshots: dict[str, dict[str, dict]] = {}
         self.suppression_snapshots: dict[str, dict[str, dict]] = {}
@@ -214,6 +217,14 @@ class DashboardState:
         if history_path and history_path.exists():
             try:
                 payload = json.loads(history_path.read_text(encoding="utf-8"))
+                if not isinstance(payload, dict):
+                    raise ValueError("History must be an object")
+                for key in ("history", "suppression_audit", "remediation_audit", "resolved_findings", "monitor_events"):
+                    if key in payload and (not isinstance(payload[key], list) or any(not isinstance(item, dict) for item in payload[key])):
+                        raise ValueError("Invalid history collection")
+                for key in ("inventory_snapshots", "suppression_snapshots", "verified_fixes", "web_audits", "finding_first_seen", "finding_snapshots", "history_exposures", "history_scan_heads", "history_acknowledgements", "monitor"):
+                    if key in payload and not isinstance(payload[key], dict):
+                        raise ValueError("Invalid history mapping")
                 self.history = list(payload.get("history", []))[-100:]
                 snapshots = payload.get("inventory_snapshots", {})
                 self.inventory_snapshots = snapshots if isinstance(snapshots, dict) else {}
@@ -246,7 +257,13 @@ class DashboardState:
                     self.monitor_enabled = monitor.get("enabled", True) is True
                     interval = monitor.get("interval_seconds", 300)
                     self.monitor_interval_seconds = interval if isinstance(interval, int) and 30 <= interval <= 86_400 else 300
-            except (OSError, ValueError, TypeError):
+            except (OSError, ValueError, TypeError, RecursionError):
+                self._history_write_blocked = True
+                self.persistence_error = {
+                    "code": "history_load_failed",
+                    "message": "Local history could not be loaded; the original file is preserved and this session is memory-only.",
+                    "action": "Stop the dashboard, back up the history file, restore a known-good copy or move it aside, then restart.",
+                }
                 self.history = []
                 self.inventory_snapshots = {}
                 self.suppression_snapshots = {}
@@ -263,7 +280,7 @@ class DashboardState:
 
     def _persist_history(self) -> None:
         """Replace the local state file atomically so an interrupted write cannot truncate it."""
-        if not self.history_path:
+        if not self.history_path or self._history_write_blocked:
             return
         temporary = self.history_path.with_name(
             f".{self.history_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
@@ -286,7 +303,13 @@ class DashboardState:
                 "history_acknowledgements": self.history_acknowledgements,
             }, indent=2) + "\n", encoding="utf-8")
             temporary.replace(self.history_path)
+            self.persistence_error = None
         except OSError:
+            self.persistence_error = {
+                "code": "history_write_failed",
+                "message": "Local history was not saved; the previous file is unchanged and newer results are memory-only.",
+                "action": "Check available disk space and history-directory permissions, then rescan to retry saving.",
+            }
             # Scanning and remediation must still work in restricted or read-only environments.
             try:
                 temporary.unlink(missing_ok=True)
@@ -565,10 +588,12 @@ class DashboardState:
                 "enabled": self.monitor_enabled, "interval_seconds": self.monitor_interval_seconds,
                 "last_scan": self.monitor_last_scan, "next_scan": self.monitor_next_scan,
                 "scanning": self._rescan_lock.locked(), "error": self.monitor_error,
+                "repository_errors": list(self.rescan_errors),
             },
             "diagnostics": {
                 "version": __version__, "python": platform.python_version(),
-                "history": "writable" if self.history_path and self.history_path.parent.is_dir() and os.access(self.history_path.parent, os.W_OK) else "memory-only",
+                "history": "memory-only" if self.persistence_error else "writable" if self.history_path and self.history_path.parent.is_dir() and os.access(self.history_path.parent, os.W_OK) else "memory-only",
+                "persistence_error": self.persistence_error,
                 "startup": {"total": self.startup_total, "completed": self.startup_completed, "errors": list(self.startup_errors)},
                 "scanner_health": {"healthy": sum(repo.get("health", {}).get("status") == "healthy" for repo in scans), "warning": sum(repo.get("health", {}).get("status") != "healthy" for repo in scans)},
             },
@@ -650,11 +675,23 @@ class DashboardState:
         try:
             with self._lock:
                 repositories = [Path(repository) for repository in self.repositories]
-            results = [self.scan_repository(repository) for repository in repositories]
+            results = []
+            errors = []
+            for repository in repositories:
+                try:
+                    results.append(self.scan_repository(repository))
+                except (OSError, ValueError, TypeError):
+                    # Retain the previous snapshot; a failed attempt is not resolution.
+                    errors.append({
+                        "repository": str(repository), "code": "repository_scan_failed",
+                        "message": "Scan failed; the last successful snapshot is retained and may be stale.",
+                        "action": "Check repository access, scanner configuration and imported reports, then retry the scan.",
+                    })
+            self.rescan_errors = errors
             if self.history_secrets_enabled:
                 self.scan_all_history_async(repositories)
             self.monitor_last_scan = datetime.now(timezone.utc).isoformat()
-            self.monitor_error = None
+            self.monitor_error = f"{len(errors)} repository scan(s) failed; previous results may be stale. Check repository access and configuration, then retry." if errors else None
             return results
         finally:
             self._rescan_lock.release()
