@@ -29,7 +29,7 @@ from .evaluator import create_expo_candidate_branch, evaluate_expo_platform, eva
 from .adapters import PARSERS, import_report
 from .source_fixes import apply_source_fix, preview_source_fix
 from .tickets import finding_ticket, ticket_csv, ticket_markdown
-from .vex import openvex_document
+from .vex import NoVexStatements, openvex_document
 from .webaudit import audit_web_target
 from .version import __version__
 from .history_secrets import HistoryScanError, scan_history
@@ -898,7 +898,11 @@ def make_handler(state: DashboardState):
                     return
                 safe_name = "".join(character if character.isalnum() or character in {"-", "_"} else "-" for character in scan_result.name)
                 if path.endswith("/openvex"):
-                    document = openvex_document(scan_result.name, scan_result.findings)
+                    try:
+                        document = openvex_document(scan_result.name, scan_result.findings)
+                    except NoVexStatements as error:
+                        self._json({"error": str(error), "code": "no_vex_statements"}, HTTPStatus.UNPROCESSABLE_ENTITY)
+                        return
                     self._download_json(document, f"{safe_name}-vulcanary.openvex.json")
                 elif path.endswith("/spdx"):
                     packages = state.dependency_packages[repository] if repository in state.dependency_packages else discover_packages(Path(repository))

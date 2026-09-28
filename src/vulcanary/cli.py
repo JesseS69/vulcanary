@@ -15,7 +15,7 @@ from .reachability import analyze_reachability
 from .sbom import cyclonedx_document, spdx_document, write_cyclonedx, write_spdx
 from .governance import suppression_findings
 from .provenance import scan_provenance, write_provenance
-from .vex import openvex_document, write_openvex
+from .vex import NoVexStatements, openvex_document, write_openvex
 from .adapters import AdapterError, import_report
 
 
@@ -313,12 +313,22 @@ def main(argv: list[str] | None = None) -> int:
         write_cyclonedx(cyclonedx_document(root.name, packages, [finding.to_dict() for finding in findings]), args.sbom)
     if args.spdx:
         write_spdx(spdx_document(root.name, packages, [finding.to_dict() for finding in findings]), args.spdx)
+    openvex_artifact = None
     if args.openvex:
-        write_openvex(openvex_document(root.name, [finding.to_dict() for finding in findings]), args.openvex)
+        try:
+            vex_document = openvex_document(root.name, [finding.to_dict() for finding in findings])
+        except NoVexStatements as error:
+            print(f"warning: OpenVEX export skipped: {error}", file=sys.stderr)
+            if args.openvex.exists():
+                print("error: Existing OpenVEX output was not changed; choose a fresh output path to avoid mistaking stale output for this scan.", file=sys.stderr)
+                return 2
+        else:
+            write_openvex(vex_document, args.openvex)
+            openvex_artifact = args.openvex
     if args.ruleset_manifest:
         args.ruleset_manifest.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     if args.provenance:
-        artifacts = [path for path in (args.json_path, args.sarif, args.sbom, args.spdx, args.openvex, args.ruleset_manifest) if path]
+        artifacts = [path for path in (args.json_path, args.sarif, args.sbom, args.spdx, openvex_artifact, args.ruleset_manifest) if path]
         write_provenance(scan_provenance(root.name, artifacts, manifest["digest"]), args.provenance)
     policy_findings = findings
     if args.baseline_json:

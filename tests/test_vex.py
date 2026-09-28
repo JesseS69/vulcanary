@@ -1,11 +1,62 @@
 import tempfile
 import unittest
+import io
+import json
+import threading
+from contextlib import redirect_stderr, redirect_stdout
+from http.server import ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
+from urllib.error import HTTPError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
-from vulcanary.vex import openvex_document, write_openvex
+from vulcanary.cli import main
+from vulcanary.dashboard import DashboardState, make_handler
+from vulcanary.vex import NoVexStatements, openvex_document, write_openvex
 
 
 class VexTests(unittest.TestCase):
+    def test_empty_export_is_explicit_and_never_claims_safety(self) -> None:
+        with self.assertRaises(NoVexStatements):
+            openvex_document("empty", [])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output, provenance = root / "vex.json", root / "provenance.json"
+            error = io.StringIO()
+            with redirect_stderr(error), redirect_stdout(io.StringIO()):
+                result = main([str(root), "--offline", "--openvex", str(output), "--provenance", str(provenance)])
+            self.assertEqual(result, 0)
+            self.assertFalse(output.exists())
+            self.assertIn("OpenVEX export skipped", error.getvalue())
+            self.assertEqual(json.loads(provenance.read_text(encoding="utf-8"))["subject"], [])
+            output.write_text("previous output", encoding="utf-8")
+            with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+                result = main([str(root), "--offline", "--openvex", str(output)])
+            self.assertEqual(result, 2)
+            self.assertEqual(output.read_text(encoding="utf-8"), "previous output")
+
+    def test_dashboard_empty_export_has_typed_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            state = DashboardState(root / "history.json")
+            state.control_token = "contract-test"
+            state.repositories[str(root)] = SimpleNamespace(name="empty", findings=[])
+            server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(state))
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                request = Request(f"http://127.0.0.1:{server.server_port}/api/repositories/openvex?" + urlencode({"repository": str(root)}), headers={"X-Vulcanary-Control": "contract-test"})
+                with self.assertRaises(HTTPError) as raised:
+                    urlopen(request)
+                self.assertEqual(raised.exception.code, 422)
+                self.assertEqual(json.loads(raised.exception.read())["code"], "no_vex_statements")
+                raised.exception.close()
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join()
+
     def test_reports_observed_dependencies_as_affected_without_claiming_safety(self) -> None:
         finding = {"rule_id": "SCA-GHSA-demo", "category": "dependency", "metadata": {"advisory": "GHSA-demo", "package": "demo", "current_version": "1.0.0", "ecosystem": "npm"}}
         document = openvex_document("demo-repo", [finding, finding])

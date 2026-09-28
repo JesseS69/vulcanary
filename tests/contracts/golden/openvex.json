@@ -1,0 +1,89 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/JesseS69/vulcanary/vex/00000000-0000-0000-0000-000000000001",
+  "author": "Vulcanary local scanner",
+  "role": "Document Creator",
+  "timestamp": "2026-01-02T03:04:05+00:00",
+  "version": 1,
+  "tooling": "Vulcanary 0.0.0-contract",
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "GHSA-contract-0"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/demo-0@1.0.0"
+        }
+      ],
+      "status": "affected",
+      "status_notes": "Vulcanary observed the vulnerable version in the dependency inventory. Reachability context does not prove safety.",
+      "action_statement": "Upgrade to 1.0.1."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-contract-1"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/demo-1@1.0.0"
+        }
+      ],
+      "status": "affected",
+      "status_notes": "Vulcanary observed the vulnerable version in the dependency inventory. Reachability context does not prove safety.",
+      "action_statement": "Upgrade to 1.0.1."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-contract-2"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/demo-2@1.0.0"
+        }
+      ],
+      "status": "affected",
+      "status_notes": "Vulcanary observed the vulnerable version in the dependency inventory. Reachability context does not prove safety.",
+      "action_statement": "Upgrade to 1.0.1."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-contract-3"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/demo-3@1.0.0"
+        }
+      ],
+      "status": "affected",
+      "status_notes": "Vulcanary observed the vulnerable version in the dependency inventory. Reachability context does not prove safety.",
+      "action_statement": "Upgrade to 1.0.1."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-contract-4"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/demo-4@1.0.0"
+        }
+      ],
+      "status": "affected",
+      "status_notes": "Vulcanary observed the vulnerable version in the dependency inventory. Reachability context does not prove safety.",
+      "action_statement": "Upgrade to 1.0.1."
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-contract-5"
+      },
+      "products": [
+        {
+          "@id": "pkg:npm/demo-5@1.0.0"
+        }
+      ],
+      "status": "affected",
+      "status_notes": "Vulcanary observed the vulnerable version in the dependency inventory. Reachability context does not prove safety.",
+      "action_statement": "Upgrade to 1.0.1."
+    }
+  ]
+}

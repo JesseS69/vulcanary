@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JesseS69/vulcanary/contracts/normalized/v1",
+  "type": "object",
+  "required": [
+    "version",
+    "findings"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "rule_id",
+          "title",
+          "description",
+          "severity",
+          "category",
+          "path",
+          "line",
+          "evidence",
+          "remediation",
+          "scanner",
+          "metadata",
+          "fingerprint"
+        ],
+        "properties": {
+          "rule_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "unknown",
+              "info",
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "category": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "remediation": {
+            "type": "string"
+          },
+          "scanner": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object"
+          },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{20}$"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "exceptions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "policy": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": true
+}

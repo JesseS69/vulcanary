@@ -1,0 +1,311 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000001",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-01-02T03:04:05+00:00",
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "Vulcanary",
+          "version": "0.0.0-contract"
+        }
+      ]
+    },
+    "component": {
+      "type": "application",
+      "bom-ref": "urn:vulcanary:repository:contract-demo",
+      "name": "contract-demo"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/demo-0@1.0.0",
+      "name": "demo-0",
+      "version": "1.0.0",
+      "purl": "pkg:npm/demo-0@1.0.0",
+      "properties": [
+        {
+          "name": "vulcanary:dependency:direct",
+          "value": "true"
+        },
+        {
+          "name": "vulcanary:dependency:managers",
+          "value": "npm"
+        },
+        {
+          "name": "vulcanary:dependency:scopes",
+          "value": "runtime"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/demo-1@1.0.0",
+      "name": "demo-1",
+      "version": "1.0.0",
+      "purl": "pkg:npm/demo-1@1.0.0",
+      "properties": [
+        {
+          "name": "vulcanary:dependency:direct",
+          "value": "false"
+        },
+        {
+          "name": "vulcanary:dependency:managers",
+          "value": "npm"
+        },
+        {
+          "name": "vulcanary:dependency:scopes",
+          "value": "runtime"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/demo-2@1.0.0",
+      "name": "demo-2",
+      "version": "1.0.0",
+      "purl": "pkg:npm/demo-2@1.0.0",
+      "properties": [
+        {
+          "name": "vulcanary:dependency:direct",
+          "value": "false"
+        },
+        {
+          "name": "vulcanary:dependency:managers",
+          "value": "npm"
+        },
+        {
+          "name": "vulcanary:dependency:scopes",
+          "value": "runtime"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/demo-3@1.0.0",
+      "name": "demo-3",
+      "version": "1.0.0",
+      "purl": "pkg:npm/demo-3@1.0.0",
+      "properties": [
+        {
+          "name": "vulcanary:dependency:direct",
+          "value": "false"
+        },
+        {
+          "name": "vulcanary:dependency:managers",
+          "value": "npm"
+        },
+        {
+          "name": "vulcanary:dependency:scopes",
+          "value": "runtime"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/demo-4@1.0.0",
+      "name": "demo-4",
+      "version": "1.0.0",
+      "purl": "pkg:npm/demo-4@1.0.0",
+      "properties": [
+        {
+          "name": "vulcanary:dependency:direct",
+          "value": "false"
+        },
+        {
+          "name": "vulcanary:dependency:managers",
+          "value": "npm"
+        },
+        {
+          "name": "vulcanary:dependency:scopes",
+          "value": "runtime"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/demo-5@1.0.0",
+      "name": "demo-5",
+      "version": "1.0.0",
+      "purl": "pkg:npm/demo-5@1.0.0",
+      "properties": [
+        {
+          "name": "vulcanary:dependency:direct",
+          "value": "false"
+        },
+        {
+          "name": "vulcanary:dependency:managers",
+          "value": "npm"
+        },
+        {
+          "name": "vulcanary:dependency:scopes",
+          "value": "runtime"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "urn:vulcanary:repository:contract-demo",
+      "dependsOn": [
+        "pkg:npm/demo-0@1.0.0"
+      ]
+    }
+  ],
+  "vulnerabilities": [
+    {
+      "id": "GHSA-contract-0",
+      "source": {
+        "name": "OSV",
+        "url": "https://osv.dev"
+      },
+      "ratings": [
+        {
+          "severity": "unknown"
+        }
+      ],
+      "description": "Synthetic advisory",
+      "recommendation": "Upgrade to 1.0.1.",
+      "affects": [
+        {
+          "ref": "pkg:npm/demo-0@1.0.0"
+        }
+      ],
+      "properties": [
+        {
+          "name": "vulcanary:reachability",
+          "value": "unknown"
+        }
+      ]
+    },
+    {
+      "id": "GHSA-contract-1",
+      "source": {
+        "name": "OSV",
+        "url": "https://osv.dev"
+      },
+      "ratings": [
+        {
+          "severity": "info"
+        }
+      ],
+      "description": "Synthetic advisory",
+      "recommendation": "Upgrade to 1.0.1.",
+      "affects": [
+        {
+          "ref": "pkg:npm/demo-1@1.0.0"
+        }
+      ],
+      "properties": [
+        {
+          "name": "vulcanary:reachability",
+          "value": "unknown"
+        }
+      ]
+    },
+    {
+      "id": "GHSA-contract-2",
+      "source": {
+        "name": "OSV",
+        "url": "https://osv.dev"
+      },
+      "ratings": [
+        {
+          "severity": "low"
+        }
+      ],
+      "description": "Synthetic advisory",
+      "recommendation": "Upgrade to 1.0.1.",
+      "affects": [
+        {
+          "ref": "pkg:npm/demo-2@1.0.0"
+        }
+      ],
+      "properties": [
+        {
+          "name": "vulcanary:reachability",
+          "value": "unknown"
+        }
+      ]
+    },
+    {
+      "id": "GHSA-contract-3",
+      "source": {
+        "name": "OSV",
+        "url": "https://osv.dev"
+      },
+      "ratings": [
+        {
+          "severity": "medium"
+        }
+      ],
+      "description": "Synthetic advisory",
+      "recommendation": "Upgrade to 1.0.1.",
+      "affects": [
+        {
+          "ref": "pkg:npm/demo-3@1.0.0"
+        }
+      ],
+      "properties": [
+        {
+          "name": "vulcanary:reachability",
+          "value": "unknown"
+        }
+      ]
+    },
+    {
+      "id": "GHSA-contract-4",
+      "source": {
+        "name": "OSV",
+        "url": "https://osv.dev"
+      },
+      "ratings": [
+        {
+          "severity": "high"
+        }
+      ],
+      "description": "Synthetic advisory",
+      "recommendation": "Upgrade to 1.0.1.",
+      "affects": [
+        {
+          "ref": "pkg:npm/demo-4@1.0.0"
+        }
+      ],
+      "properties": [
+        {
+          "name": "vulcanary:reachability",
+          "value": "unknown"
+        }
+      ]
+    },
+    {
+      "id": "GHSA-contract-5",
+      "source": {
+        "name": "OSV",
+        "url": "https://osv.dev"
+      },
+      "ratings": [
+        {
+          "severity": "critical"
+        }
+      ],
+      "description": "Synthetic advisory",
+      "recommendation": "Upgrade to 1.0.1.",
+      "affects": [
+        {
+          "ref": "pkg:npm/demo-5@1.0.0"
+        }
+      ],
+      "properties": [
+        {
+          "name": "vulcanary:reachability",
+          "value": "unknown"
+        }
+      ]
+    }
+  ]
+}

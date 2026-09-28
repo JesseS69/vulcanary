@@ -1,0 +1,2 @@
+tests/contracts/upstream/* -text
+tests/contracts/golden/*.json text eol=lf
