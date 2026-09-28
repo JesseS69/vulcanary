@@ -126,7 +126,7 @@ def _coverage_matrix(root: Path, packages: list[Package], unresolved: list[str],
             "Go": ("go.mod",),
             "crates.io": ("cargo.lock", "cargo.toml"),
             "Packagist": ("composer.lock", "composer.json"),
-            "RubyGems": ("gemfile.lock",),
+            "RubyGems": ("gemfile", "bundler"),
         }.get(ecosystem, ())
         relevant_warnings = [item for item in unresolved if any(marker.lower() in item.lower() for marker in warning_markers)]
         if not (source_present or manifest_present or packages_present or relevant_warnings):
