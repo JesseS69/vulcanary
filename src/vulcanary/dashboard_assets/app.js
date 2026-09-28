@@ -85,13 +85,14 @@ function renderDiagnostics() {
   const diagnostic = state.diagnostics || {};
   const startup = diagnostic.startup || {total:0, completed:0, errors:[]};
   const health = diagnostic.scanner_health || {healthy:0, warning:0};
-  const ready = startup.completed >= startup.total && !startup.errors.length && !health.warning;
+  const ready = startup.completed >= startup.total && !startup.errors.length && !health.warning && !diagnostic.persistence_error && !state.monitor?.error;
   $('#diagnostic-status').textContent = startup.completed < startup.total ? 'Starting' : ready ? 'Healthy' : 'Attention';
   const values = [
     ['Vulcanary', diagnostic.version || 'unknown'], ['Python', diagnostic.python || 'unknown'],
     ['Local history', diagnostic.history || 'unknown'], ['Initial scans', `${startup.completed}/${startup.total}`],
     ['Scanner health', `${health.healthy} healthy · ${health.warning} warning`], ['Startup errors', String(startup.errors?.length || 0)],
   ];
+  if (diagnostic.persistence_error) values.push(['History needs attention', `${diagnostic.persistence_error.message} ${diagnostic.persistence_error.action}`]);
   const target = $('#diagnostic-grid'); target.replaceChildren();
   for (const [label, value] of values) { const card=document.createElement('div'); card.className='diagnostic-card'; const key=document.createElement('span'); key.textContent=label; const result=document.createElement('strong'); result.textContent=value; card.append(key,result); target.append(card); }
 }
@@ -285,7 +286,8 @@ function renderRepositories() {
     const inventoryLabel = changes.baseline ? `${changes.current_count || 0} components · baseline` : `${changes.current_count || 0} components · +${changes.added.length} / −${changes.removed.length}`;
     const inventoryButton = `<button class="inventory-change secondary" data-repository="${escapeHtml(repo.repository)}" type="button">Inventory changes</button>`;
     const scanners = [...new Set(repo.findings.map(f => f.scanner))].sort().join(' · ');
-    const health = repo.health || {status:'healthy'};
+    const failure = (state.monitor?.repository_errors || []).find(item => item.repository === repo.repository);
+    const health = failure ? {status:'warning', dependency_warning: failure.message} : repo.health || {status:'healthy'};
     const healthLabel = health.status === 'healthy' ? 'scanner healthy' : `scanner warning: ${health.dependency_warning || 'dependency coverage degraded'}`;
     const owner = repo.policy?.owner || 'unassigned';
     const overdue = Number(repo.policy?.overdue_count) || 0;

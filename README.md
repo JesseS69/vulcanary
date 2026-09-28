@@ -387,6 +387,8 @@ The evidence-based [v1.0 readiness gate](docs/V1_READINESS.md) tracks required s
 
 [Report compatibility contracts](docs/REPORT_CONTRACTS.md) document format versions, fingerprint stability, offline official-schema validation, and the separate experimental dataflow contract. OpenVEX exports require an observed dependency advisory; empty scans emit no VEX file, with an explicit message.
 
+[Local state recovery](docs/STATE_RECOVERY.md) explains stale results after failed rescans, failed saves, and recovering unreadable history without silently overwriting it.
+
 Vulcanary is intentionally local-first. It has no hosted control plane, multi-user RBAC, tenant isolation, remote worker fleet, or runtime agent. Keep the dashboard on loopback; do not expose it through a public proxy. Anyone who can act as your local user may be able to read its local configuration or control its process.
 
 - **Coverage is explicit, not universal.** The dashboard matrix distinguishes analyzed, incomplete, unsupported or disabled, and not-applicable capabilities. A green finding count does not override a coverage gap.
