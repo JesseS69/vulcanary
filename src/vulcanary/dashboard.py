@@ -171,6 +171,7 @@ class DashboardState:
     def __init__(self, history_path: Path | None = None) -> None:
         self._lock = threading.Lock()
         self.repositories: dict[str, RepositoryScan] = {}
+        self.pending_repositories: set[str] = set()
         self.dependency_packages: dict[str, list[Package]] = {}
         self.history_path = history_path
         self.persistence_error: dict | None = None
@@ -438,6 +439,8 @@ class DashboardState:
                 coverage=_coverage_matrix(root, packages, unresolved, self.history_secrets_enabled, config),
             )
             self.repositories[str(root)] = result
+            self.pending_repositories.discard(str(root))
+            self.startup_errors = [item for item in self.startup_errors if item.get("repository_path") != str(root)]
             self.dependency_packages[str(root)] = packages
             current_fingerprints = {finding["fingerprint"] for finding in result.findings}
             previous_findings = self.finding_snapshots.get(str(root))
@@ -589,6 +592,7 @@ class DashboardState:
                 "last_scan": self.monitor_last_scan, "next_scan": self.monitor_next_scan,
                 "scanning": self._rescan_lock.locked(), "error": self.monitor_error,
                 "repository_errors": list(self.rescan_errors),
+                "pending_repositories": sorted(self.pending_repositories),
             },
             "diagnostics": {
                 "version": __version__, "python": platform.python_version(),
@@ -674,7 +678,7 @@ class DashboardState:
             raise ValueError("A repository scan cycle is already running")
         try:
             with self._lock:
-                repositories = [Path(repository) for repository in self.repositories]
+                repositories = [Path(repository) for repository in dict.fromkeys([*self.repositories, *sorted(self.pending_repositories)])]
             results = []
             errors = []
             for repository in repositories:
@@ -684,7 +688,7 @@ class DashboardState:
                     # Retain the previous snapshot; a failed attempt is not resolution.
                     errors.append({
                         "repository": str(repository), "code": "repository_scan_failed",
-                        "message": "Scan failed; the last successful snapshot is retained and may be stale.",
+                        "message": "Scan failed; the last successful snapshot is retained and may be stale." if str(repository) in self.repositories else "Scan failed before a first result was available; the repository remains pending for retry.",
                         "action": "Check repository access, scanner configuration and imported reports, then retry the scan.",
                     })
             self.rescan_errors = errors
@@ -699,9 +703,14 @@ class DashboardState:
     def remove_repository(self, repository: str) -> None:
         resolved = str(Path(repository).resolve())
         with self._lock:
-            if resolved not in self.repositories:
+            if resolved not in self.repositories and resolved not in self.pending_repositories:
                 raise ValueError("Repository is not currently watched")
-            self.repositories.pop(resolved)
+            self.repositories.pop(resolved, None)
+            self.pending_repositories.discard(resolved)
+            self.startup_errors = [item for item in self.startup_errors if item.get("repository_path") != resolved]
+            self.rescan_errors = [item for item in self.rescan_errors if item.get("repository") != resolved]
+            if not self.rescan_errors:
+                self.monitor_error = None
             self.dependency_packages.pop(resolved, None)
             self.external_reports.pop(resolved, None)
             self._persist_history()
@@ -790,6 +799,8 @@ class DashboardState:
 
     def start_monitor(self) -> None:
         if self._monitor_thread and self._monitor_thread.is_alive():
+            if self._monitor_stop.is_set():
+                raise ValueError("The previous monitor is still stopping; retry after its active scan finishes")
             return
         self._monitor_stop.clear()
         self._monitor_thread = threading.Thread(target=self._monitor_loop, name="vulcanary-monitor", daemon=True)
@@ -1087,8 +1098,8 @@ def make_handler(state: DashboardState):
                     self._json({"state": state.snapshot()})
                 elif route == "/api/repositories/remove":
                     state.remove_repository(payload["repository"])
-                    from .local_app import save_watched_repositories
-                    save_watched_repositories(list(state.repositories))
+                    from .local_app import remove_watched_repository
+                    remove_watched_repository(payload["repository"])
                     self._json({"state": state.snapshot()})
                 elif route == "/api/scan":
                     repository = Path(payload["repository"])
@@ -1250,6 +1261,7 @@ def serve(host: str, port: int, repositories: list[Path], open_browser: bool = T
         state.gitleaks_executable = validate_executable(gitleaks_executable or "")
         state.history_secrets_enabled = True
     state.startup_total = len(repositories)
+    state.pending_repositories.update(str(repository.resolve()) for repository in repositories)
     if monitor_interval is not None:
         state.configure_monitor(monitor_interval > 0, monitor_interval if monitor_interval > 0 else state.monitor_interval_seconds)
     server = ThreadingHTTPServer((host, port), make_handler(state))
@@ -1259,9 +1271,9 @@ def serve(host: str, port: int, repositories: list[Path], open_browser: bool = T
         for repository in repositories:
             try:
                 state.scan_repository(repository)
-            except (OSError, ValueError) as error:
+            except (OSError, ValueError, TypeError) as error:
                 with state._lock:
-                    state.startup_errors.append({"repository": repository.name, "error": str(error)})
+                    state.startup_errors.append({"repository": repository.name, "repository_path": str(repository.resolve()), "error": "Initial scan failed; monitoring or a manual rescan will retry. Check repository access and configuration."})
             finally:
                 with state._lock:
                     state.startup_completed += 1

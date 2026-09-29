@@ -134,10 +134,12 @@ function renderMonitor() {
   const monitor = state.monitor || {enabled:false, interval_seconds:300};
   const strip = document.querySelector('.monitor-strip');
   strip.classList.toggle('paused', !monitor.enabled);
-  strip.classList.toggle('error', Boolean(monitor.error));
-  $('#monitor-status').textContent = monitor.error ? 'Monitor needs attention' : monitor.scanning ? 'Scanning repositories' : monitor.enabled ? 'Continuous watch active' : 'Continuous watch paused';
+  const pending = monitor.pending_repositories || [];
+  strip.classList.toggle('error', Boolean(monitor.error) || pending.length > 0);
+  $('#monitor-status').textContent = monitor.error || pending.length ? 'Monitor needs attention' : monitor.scanning ? 'Scanning repositories' : monitor.enabled ? 'Continuous watch active' : 'Continuous watch paused';
   const timing = monitor.error
     ? monitor.error
+    : pending.length ? `${pending.length} repositories awaiting a successful scan; ${monitor.enabled ? 'automatic retry is enabled' : 'resume monitoring or rescan to retry'}`
     : monitor.next_scan && monitor.enabled ? `Next scan ${new Date(monitor.next_scan).toLocaleTimeString()}`
     : monitor.last_scan ? `Last automatic scan ${new Date(monitor.last_scan).toLocaleString()}` : 'Waiting for its first automatic cycle';
   $('#monitor-next').textContent = `· ${timing}`;
