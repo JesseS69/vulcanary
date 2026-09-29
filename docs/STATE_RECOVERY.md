@@ -6,7 +6,7 @@ sources of truth: a failed scan must not remove a configured repository.
 
 ## Partial rescans
 
-A rescan of repositories already loaded in the dashboard attempts each repository
+A rescan of loaded repositories and pending startup targets attempts each repository
 even if an earlier scan raises an input/access error. Successful repositories update
 normally. Failed repositories retain the last successful snapshot, which may be
 stale; they are not treated as newly clean or resolved. The monitor and repository
@@ -19,6 +19,20 @@ Fix repository access, configuration, or imported reports and rescan. A fully
 successful rescan clears these errors. The rescan lock is released after failure,
 so retry is possible. This does not change finding identities, severity, policy
 gates, or resolution criteria.
+
+Startup targets are registered before the first scan. A failed first scan stays in
+`monitor.pending_repositories` and is retried by each monitoring cycle or manual
+rescan; it does not require a prior successful snapshot. Success removes its pending
+entry and startup error. When monitoring is paused, use manual rescan or resume it.
+The pending list is session state; service restart reconstructs targets from the
+configured watch list. Removing a target removes only that configured path, retaining
+other targets even when unavailable or absent from a one-off dashboard session.
+
+Stopping the monitor signals its thread and waits up to two seconds. It does not
+cancel an active scanner. Starting it while that thread is still stopping raises an
+explicit retry error instead of silently returning or launching a duplicate. Once
+the active cycle finishes, starting again creates a fresh thread. This is not a
+guarantee of bounded shutdown for a hung scanner.
 
 ## Failed saves
 
@@ -57,9 +71,14 @@ concurrent independent writers, or sync tools rewriting `.git` or app state.
 
 ## Remaining readiness work
 
-This is a partial completion of the interrupted/failed-scan readiness criterion.
-Startup failures that never entered the in-memory repository list still need a
-dedicated retry/restart design and fault tests. Mid-commit in-memory mutation,
-concurrent writer coordination, and a monitor restart fault matrix are not claimed
-as solved by these tests. All tests use temporary app/history paths; they do not
-modify the user's live application configuration.
+This remains a partial completion of the interrupted/failed-scan readiness criterion.
+Tests now cover real startup failure and retry, monitor stop during an active cycle
+and subsequent restart, and abrupt subprocess exit immediately before history/config
+replacement. The latter preserves watch-list/token bytes, first-seen history and a
+sealed receipt across restart, despite leftover temporary files (which are ignored).
+It is a test-owned subprocess, never execution of scanned repository code.
+
+Mid-commit in-memory mutation, concurrent writer coordination, arbitrary termination
+points, startup/shutdown races, and power-loss durability are not claimed as solved.
+All tests use temporary app/history paths; they do not modify the user's live
+application configuration.

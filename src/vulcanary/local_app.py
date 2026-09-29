@@ -182,6 +182,14 @@ def add_watched_repositories(repositories: list[str]) -> Path:
     return save_watched_repositories(combined)
 
 
+def remove_watched_repository(repository: str) -> Path:
+    """Remove only the selected target, preserving unavailable and one-off-session peers."""
+    target = str(Path(repository).expanduser().resolve())
+    config = load_app_config()
+    config["repositories"] = [item for item in config["repositories"] if str(Path(item).expanduser().resolve()) != target]
+    return save_app_config(config)
+
+
 def service_status(config: dict | None = None, timeout: float = 1.5) -> dict:
     current = config or load_app_config()
     url = f"http://{current['host']}:{current['port']}"
