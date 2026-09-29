@@ -67,18 +67,22 @@ The tool does not attempt to guess missing records or repair damaged JSON. Shape
 checks cover the top-level persisted containers, not every possible nested semantic
 corruption. Atomic replacement protects the previous file in the tested process/I/O
 failure windows; it is not a guarantee against power loss, filesystem corruption,
-concurrent independent writers, or sync tools rewriting `.git` or app state.
+uncooperative independent writers, or sync tools rewriting `.git` or app state.
 
 ## Remaining readiness work
 
-This remains a partial completion of the interrupted/failed-scan readiness criterion.
 Tests now cover real startup failure and retry, monitor stop during an active cycle
 and subsequent restart, and abrupt subprocess exit immediately before history/config
 replacement. The latter preserves watch-list/token bytes, first-seen history and a
 sealed receipt across restart, despite leftover temporary files (which are ignored).
 It is a test-owned subprocess, never execution of scanned repository code.
 
-Mid-commit in-memory mutation, concurrent writer coordination, arbitrary termination
-points, startup/shutdown races, and power-loss durability are not claimed as solved.
+`tests/test_state_bounds.py` adds rollback after in-memory resolution mutation,
+cooperating-process writer locks and stale-revision checks, process-death lock release,
+capacity refusal, and shutdown overlapping a blocked startup scan. See
+[retention and concurrency](STATE_RETENTION.md) for exact semantics. These close the
+named interrupted/partial-scan acceptance cases; arbitrary termination points,
+uncooperative/older writers, hung-scanner cancellation, network-filesystem locking,
+and power-loss durability are not claimed as solved.
 All tests use temporary app/history paths; they do not modify the user's live
 application configuration.

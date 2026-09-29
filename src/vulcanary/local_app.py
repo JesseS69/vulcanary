@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import secrets
 import subprocess
@@ -10,6 +11,16 @@ import threading
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+from .state_store import StateConflict, state_lock
+
+
+class _LoadedConfig(dict):
+    def __init__(self, value, revision):
+        super().__init__(value)
+        self.revision = revision
+
+    def __or__(self, other):
+        return _LoadedConfig(dict(self) | other, self.revision)
 
 
 def app_directory() -> Path:
@@ -31,9 +42,10 @@ def _default_config() -> dict:
 def load_app_config() -> dict:
     path = config_path()
     if not path.exists():
-        return _default_config()
+        return _LoadedConfig(_default_config(), None)
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        raw = path.read_bytes()
+        value = json.loads(raw.decode("utf-8"))
     except (OSError, ValueError, TypeError) as error:
         raise ValueError(f"Invalid local app configuration: {error}") from error
     if not isinstance(value, dict):
@@ -56,10 +68,12 @@ def load_app_config() -> dict:
     executable = result.get("gitleaks_executable")
     if executable is not None and (not isinstance(executable, str) or not Path(executable).is_absolute()):
         raise ValueError("Invalid local app configuration: gitleaks_executable must be an absolute path")
-    return result
+    return _LoadedConfig(result, hashlib.sha256(raw).hexdigest())
 
 
 def save_app_config(config: dict) -> Path:
+    if not isinstance(config, _LoadedConfig):
+        raise ValueError("Load app configuration before updating it so concurrent changes can be detected")
     directory = app_directory()
     directory.mkdir(parents=True, exist_ok=True)
     try:
@@ -69,8 +83,14 @@ def save_app_config(config: dict) -> Path:
     path = config_path()
     temporary = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
-        temporary.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-        temporary.replace(path)
+        with state_lock(path.with_suffix(".lock")):
+            revision = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+            if revision != config.revision:
+                raise StateConflict("App configuration changed in another process; reload it and retry the update.")
+            document = json.dumps(config, indent=2) + "\n"
+            temporary.write_text(document, encoding="utf-8", newline="\n")
+            temporary.replace(path)
+            config.revision = hashlib.sha256(document.encode("utf-8")).hexdigest()
     finally:
         try:
             temporary.unlink(missing_ok=True)

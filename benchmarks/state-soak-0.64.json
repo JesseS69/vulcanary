@@ -1,0 +1,11 @@
+{
+  "workload": "600 stable synthetic offline scans; no mock call retention",
+  "python": "3.14.0",
+  "system": "Windows",
+  "scope": "Directional local measurement, not peak process RSS or monorepo evidence",
+  "windows": [
+    {"scans": 200, "seconds": 3.346, "mean_scan_ms": 16.728, "python_current_bytes": 162052, "python_peak_bytes": 34053447, "history_bytes": 32709, "history_records": 100, "pruned_history": 100},
+    {"scans": 400, "seconds": 3.310, "mean_scan_ms": 16.548, "python_current_bytes": 178405, "python_peak_bytes": 34069693, "history_bytes": 32702, "history_records": 100, "pruned_history": 300},
+    {"scans": 600, "seconds": 3.285, "mean_scan_ms": 16.423, "python_current_bytes": 183814, "python_peak_bytes": 34075349, "history_bytes": 32702, "history_records": 100, "pruned_history": 500}
+  ]
+}

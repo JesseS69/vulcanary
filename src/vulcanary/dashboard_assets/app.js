@@ -93,6 +93,13 @@ function renderDiagnostics() {
     ['Scanner health', `${health.healthy} healthy · ${health.warning} warning`], ['Startup errors', String(startup.errors?.length || 0)],
   ];
   if (diagnostic.persistence_error) values.push(['History needs attention', `${diagnostic.persistence_error.message} ${diagnostic.persistence_error.action}`]);
+  const retention = diagnostic.retention || {};
+  if (retention.state_limit_bytes) values.push(['Retained state ceiling', `${retention.state_limit_bytes / 1048576} MiB`]);
+  const pruned = Object.entries(retention.pruned || {}).filter(([, count]) => count > 0);
+  if (pruned.length) values.push(['Older records pruned', `${pruned.map(([key, count]) => `${key}: ${count}`).join(' · ')}. Export retained history for a private backup; already-pruned records are not recoverable from this export.`]);
+  for (const repo of state.repositories || []) {
+    for (const warning of repo.health?.warnings || []) values.push([`${repo.name} · ${warning.code}`, `${warning.message} Next: ${warning.action}`]);
+  }
   const target = $('#diagnostic-grid'); target.replaceChildren();
   for (const [label, value] of values) { const card=document.createElement('div'); card.className='diagnostic-card'; const key=document.createElement('span'); key.textContent=label; const result=document.createElement('strong'); result.textContent=value; card.append(key,result); target.append(card); }
 }

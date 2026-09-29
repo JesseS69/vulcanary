@@ -21,6 +21,7 @@ class MonitorLifecycleTests(unittest.TestCase):
             config = repo / ".vulcanary.json"
             config.write_text("{broken", encoding="utf-8")
             ready = threading.Event(); captured = {}
+            testcase = self
 
             class Server:
                 server_port = 8765
@@ -28,6 +29,16 @@ class MonitorLifecycleTests(unittest.TestCase):
                 def serve_forever(self):
                     if not ready.wait(5):
                         raise AssertionError("Startup never finished")
+                    state = captured["state"]
+                    testcase.assertEqual(state.pending_repositories, {str(repo)})
+                    testcase.assertEqual(state.rescan_all(), [])
+                    testcase.assertEqual(state.rescan_errors[0]["code"], "repository_scan_failed")
+                    testcase.assertEqual(load_app_config()["repositories"], [str(repo)])
+                    config.write_text("{}", encoding="utf-8")
+                    testcase.assertEqual(len(state.rescan_all()), 1)
+                    testcase.assertEqual(state.pending_repositories, set())
+                    testcase.assertEqual(state.startup_errors, [])
+                    testcase.assertIsNone(state.monitor_error)
                 def shutdown(self): pass
                 def server_close(self): pass
 
@@ -37,16 +48,6 @@ class MonitorLifecycleTests(unittest.TestCase):
 
             with patch.object(Path, "home", return_value=root), patch("vulcanary.dashboard.ThreadingHTTPServer", Server), patch.object(DashboardState, "start_monitor", started), patch("vulcanary.dashboard.scan_dependencies", return_value=([], None)), contextlib.redirect_stdout(io.StringIO()):
                 serve("127.0.0.1", 8765, [repo], open_browser=False)
-                state = captured["state"]
-                self.assertEqual(state.pending_repositories, {str(repo)})
-                self.assertEqual(state.rescan_all(), [])
-                self.assertEqual(state.rescan_errors[0]["code"], "repository_scan_failed")
-                self.assertEqual(load_app_config()["repositories"], [str(repo)])
-                config.write_text("{}", encoding="utf-8")
-                self.assertEqual(len(state.rescan_all()), 1)
-                self.assertEqual(state.pending_repositories, set())
-                self.assertEqual(state.startup_errors, [])
-                self.assertIsNone(state.monitor_error)
 
     def test_removing_pending_target_preserves_unavailable_configured_peers(self):
         with tempfile.TemporaryDirectory() as directory:

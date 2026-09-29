@@ -8,6 +8,7 @@ import webbrowser
 from pathlib import Path
 
 from .config import Config
+from .diagnostics import dependency_diagnostics
 from .reporters import baseline_identities, findings_new_since, render_console, render_github_annotations, render_markdown_summary, write_json, write_sarif
 from .scanners import inline_suppression_register, is_excluded, ruleset_manifest, scan
 from .dependencies import discover_dependency_state, scan_dependencies
@@ -285,6 +286,7 @@ def main(argv: list[str] | None = None) -> int:
     findings = findings + imported
     dependency_state = discover_dependency_state(root) if not args.offline or args.sbom or args.spdx else ([], [])
     packages, _unresolved = dependency_state
+    warning = None
     if not args.offline:
         dependency_findings, warning = scan_dependencies(root, discovery=dependency_state)
         dependency_findings = [
@@ -295,6 +297,9 @@ def main(argv: list[str] | None = None) -> int:
         findings += dependency_findings
         if warning:
             print(f"warning: {warning}", file=sys.stderr)
+    diagnostic_records = dependency_diagnostics(_unresolved, warning)
+    for diagnostic in diagnostic_records:
+        print(f"warning [{diagnostic['code']}]: {diagnostic['message']} Next: {diagnostic['action']}", file=sys.stderr)
     findings = analyze_reachability(root, findings, config)
     findings = sorted(findings + suppression_findings(config), key=lambda finding: (-int(finding.severity), finding.path, finding.line))
     print(render_console(findings))
@@ -305,6 +310,8 @@ def main(argv: list[str] | None = None) -> int:
     }
     manifest = ruleset_manifest(config)
     report_policy["ruleset"] = {"digest": manifest["digest"], "rule_count": len(manifest["rules"])}
+    if diagnostic_records:
+        report_policy["warnings"] = diagnostic_records
     if args.json_path:
         write_json(findings, args.json_path, config.suppression_register() + inline_suppression_register(root, config), report_policy)
     if args.sarif:
@@ -318,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             vex_document = openvex_document(root.name, [finding.to_dict() for finding in findings])
         except NoVexStatements as error:
-            print(f"warning: OpenVEX export skipped: {error}", file=sys.stderr)
+            print(f"warning [openvex_no_statements]: OpenVEX export skipped: {error}. Next: use normalized JSON for scans without dependency vulnerability statements; no VEX document was produced.", file=sys.stderr)
             if args.openvex.exists():
                 print("error: Existing OpenVEX output was not changed; choose a fresh output path to avoid mistaking stale output for this scan.", file=sys.stderr)
                 return 2
