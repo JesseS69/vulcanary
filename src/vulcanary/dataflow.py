@@ -1106,6 +1106,7 @@ def analyze_python_dataflow(
     truncations: list[dict] = []
     unmodeled: list[dict] = []
     parse_errors = 0
+    parse_paths = []
     analyzed_modules = 0
     module_exhausted = False
     parsed_modules: list[tuple[str, ast.Module]] = []
@@ -1130,6 +1131,7 @@ def analyze_python_dataflow(
             continue
         except (OSError, UnicodeDecodeError, SyntaxError):
             parse_errors += 1
+            parse_paths.append(relative_path(path, root))
             continue
         parsed_modules.append((relative_path(path, root), tree))
     project = {_module_name(path): (path, tree) for path, tree in parsed_modules}
@@ -1171,7 +1173,7 @@ def analyze_python_dataflow(
         "category": "source_size_limit", "limit": config.max_file_bytes, "observed": size,
         "path": relative_path(path, root),
     } for path, size in sorted(oversized_by_path.items()) if path.suffix.lower() == ".py")
-    return {
+    report = {
         "schema": "vulcanary.experimental-dataflow.v1", "experimental": True,
         "policy_effect": "none", "max_call_depth": max_depth,
         "exposures": sorted(exposures.values(), key=lambda item: (item["path"], item["line"])),
@@ -1180,6 +1182,11 @@ def analyze_python_dataflow(
         "analysis_limits": limits, "analyzed_modules": analyzed_modules, "analyzed_calls": budget.calls,
         "analysis_budget": {"max_modules": max_modules, "max_calls": max_calls, "timeout_seconds": timeout_seconds},
     }
+    from .diagnostics import dataflow_diagnostics
+    warnings = dataflow_diagnostics(report, parse_paths)
+    if warnings:
+        report["warnings"] = warnings
+    return report
 
 
 def benchmark_python_score(report: dict, expected_results: Path) -> dict:

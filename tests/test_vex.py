@@ -50,7 +50,10 @@ class VexTests(unittest.TestCase):
                 with self.assertRaises(HTTPError) as raised:
                     urlopen(request)
                 self.assertEqual(raised.exception.code, 422)
-                self.assertEqual(json.loads(raised.exception.read())["code"], "no_vex_statements")
+                response = json.loads(raised.exception.read())
+                self.assertEqual(response["code"], "no_vex_statements")
+                self.assertEqual(response["warnings"][0]["code"], "openvex_no_statements")
+                self.assertTrue(response["warnings"][0]["action"])
                 raised.exception.close()
             finally:
                 server.shutdown()

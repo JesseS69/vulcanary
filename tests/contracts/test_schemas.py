@@ -45,8 +45,12 @@ class SchemaContracts(unittest.TestCase):
                 "eval(wrapper())\neval(external())\n", encoding="utf-8")
             report = analyze_python_dataflow(root, max_depth=1)
             self.assertTrue(report["unmodeled_constructs"])
+            self.assertTrue(report["warnings"])
             self.assertTrue(report["analysis_truncations"])
             validator("experimental-dataflow").validate(report)
+            broken = copy.deepcopy(report)
+            del broken["warnings"][0]["action"]
+            self.assertFalse(validator("experimental-dataflow").is_valid(broken))
             report = analyze_python_dataflow(root, max_calls=1)
             self.assertTrue(report["analysis_limits"])
             validator("experimental-dataflow").validate(report)

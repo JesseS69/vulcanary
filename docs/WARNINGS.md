@@ -13,15 +13,40 @@ diagnostics panel show the action. No finding identity, severity or gate changes
 | `dependency_version_unresolved` | Supply exact resolved versions, never guess a version from a range. |
 | `dependency_input_unresolved` | Supply supported resolved input; fallback for unresolved input kinds. |
 | `advisory_lookup_unavailable` | Restore OSV access and retry; missing results are not safety evidence. |
-| `openvex_no_statements` (stderr) | No VEX output; use normalized JSON when there are no dependency vulnerability statements. |
+| `openvex_no_statements` | No VEX output; use normalized JSON when there are no dependency vulnerability statements. |
+| `history_scan_failed` | Check repository access and trusted absolute Gitleaks path, then retry; retained exposures are stale. |
+| `dataflow_*` | Review unsupported paths manually, fix unreadable/unparseable inputs or raise the specifically named budget. Raising depth does not resolve recursion. |
+| `dependency_coverage_incomplete` | Evaluation summary lacks per-input details; supply resolved input and retry. |
 
 State persistence and rescan failures already expose code/message/action records;
 their affected resource is the local history document or explicit `repository_path`.
 See [state recovery](STATE_RECOVERY.md) for those actions. Warning content and paths
 may identify private repositories and must not be published without review.
 
-The v1-wide warning criterion remains **Partial**: OpenVEX's skipped-export signal
-is stderr-only, and history-scanner/experimental analysis statuses still use their
-separate schemas rather than this common record. This batch standardizes dependency
-and state guidance, not every diagnostic in the product. Keep gap categories intact
-when unifying those remaining surfaces; do not hide them to make warnings quieter.
+## Locations and compatibility
+
+OpenVEX skip warnings are collected before normalized JSON and SARIF are written,
+including when an existing VEX output causes exit 2. Existing files remain untouched.
+The dashboard retains HTTP 422 and legacy `code: no_vex_statements`, adding the
+common `warnings` array; authenticated downloads show its next action.
+
+History status retains `state` and `error`, adding `warnings` with the repository
+path. Messages deliberately omit external-tool exception text, and prior exposures
+survive. The diagnostic panel displays the action and marks health Attention.
+
+Experimental reports optionally include top-level `warnings`. Original gaps,
+truncations, parse counts, budgets, exposure identities and `policy_effect: none`
+are unchanged. Parse guidance includes file paths but never offending source text.
+The dataflow CLI prints the complete JSON report; the dashboard still does not
+import or evaluate experimental dataflow. No promotion into gates is implied.
+
+Remediation evaluation results retain legacy warning strings and add structured
+guidance. The dashboard shows warnings from the last evaluation in Diagnostics.
+These explain incomplete evaluation; they do not alter evaluation status or authorize
+applying a fix. Generic fatal CLI errors and usage errors are a separate CLI-contract
+readiness item, not claims covered by this warning contract.
+
+Tests cover skipped exports including stale outputs, authenticated API errors,
+external error redaction, retained history exposures, mocked evaluations, parse
+redaction, budget guidance and unchanged analysis results. Existing raw dependency
+summary strings remain for compatibility; new stderr output uses structured guidance.

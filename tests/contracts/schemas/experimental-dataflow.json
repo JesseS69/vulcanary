@@ -18,6 +18,21 @@
     "analysis_budget"
   ],
   "properties": {
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "capability", "path", "message", "action"],
+        "properties": {
+          "code": {"type": "string", "minLength": 1},
+          "capability": {"const": "experimental_dataflow"},
+          "path": {"type": ["string", "null"]},
+          "message": {"type": "string", "minLength": 1},
+          "action": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": true
+      }
+    },
     "schema": {
       "const": "vulcanary.experimental-dataflow.v1"
     },

@@ -20,7 +20,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .config import Config
-from .diagnostics import dependency_diagnostics
+from .diagnostics import dependency_diagnostics, history_failure, skipped_vex
 from .models import Severity
 from .scanners import inline_suppression_register, is_excluded, iter_files, ruleset_manifest, scan
 from .dependencies import Package, discover_dependency_state, discover_packages, scan_dependencies
@@ -806,8 +806,9 @@ class DashboardState:
                 self._persist_history()
             return result
         except (HistoryScanError, OSError, ValueError) as error:
-            self.history_scan_status[key] = {"state": "error", "error": str(error), "scanned_at": datetime.now(timezone.utc).isoformat()}
-            raise
+            warning = history_failure(key)
+            self.history_scan_status[key] = {"state": "error", "error": warning["message"], "warnings": [warning], "scanned_at": datetime.now(timezone.utc).isoformat()}
+            raise HistoryScanError(f"{warning['message']} {warning['action']}") from None
 
     def scan_all_history_async(self, repositories: list[Path] | None = None) -> bool:
         with self._lifecycle_lock:
@@ -1032,7 +1033,8 @@ def make_handler(state: DashboardState):
                     try:
                         document = openvex_document(scan_result.name, scan_result.findings)
                     except NoVexStatements as error:
-                        self._json({"error": str(error), "code": "no_vex_statements"}, HTTPStatus.UNPROCESSABLE_ENTITY)
+                        warning = skipped_vex(repository)
+                        self._json({"error": warning["message"], "code": "no_vex_statements", "warnings": [warning]}, HTTPStatus.UNPROCESSABLE_ENTITY)
                         return
                     self._download_json(document, f"{safe_name}-vulcanary.openvex.json")
                 elif path.endswith("/spdx"):

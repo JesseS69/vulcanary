@@ -15,7 +15,7 @@ A criterion moves to **Met** only when its evidence is repeatable by another con
 
 ## Release blockers
 
-Current tally: **32 Met / 5 Partial / 6 Open** across **43 release criteria**.
+Current tally: **33 Met / 4 Partial / 6 Open** across **43 release criteria**.
 The status-vocabulary rows above are definitions, not additional criteria.
 
 ### 1. Trust boundaries and safe defaults
@@ -66,7 +66,7 @@ The status-vocabulary rows above are definitions, not additional criteria.
 | **Met** | Release artifacts are immutable and independently verifiable. | Tagged workflow publishes wheel, source archive, installer, uninstaller, and `SHA256SUMS.txt`; the manifest covers the other four assets with basename-only SHA-256 entries. |
 | **Met** | Windows installation and removal preserve user data by default. | The release workflow exercises install, upgrade, configuration export/import, backup/restore, and uninstall. Purging local data requires an explicit flag. |
 | **Met** | A package reinstall preserves local configuration. | `upgrade-preservation` compares application configuration byte-for-byte after reinstall in an isolated home directory. |
-| **Met** | Upgrade compatibility is proven across a declared support window. | `docs/UPGRADES.md` declares 0.60.0–0.63.0 endpoint coverage for the 0.64 candidate. Hash-pinned installed-wheel rehearsals check direct/sequential upgrades, configuration/token, suppression data, fingerprints, first-seen, acknowledgements and sealed receipts; mandatory CI runs them on three operating systems. Not exhaustive across all hand-edited state or intermediate versions. |
+| **Met** | Upgrade compatibility is proven across a declared support window. | `docs/UPGRADES.md` declares 0.60.0–0.64.0 endpoint coverage for the 0.65 candidate. Hash-pinned installed-wheel rehearsals check direct/sequential upgrades, configuration/token, suppression data, fingerprints, first-seen, acknowledgements and sealed receipts; mandatory CI runs them on three operating systems. Not exhaustive across all hand-edited state or intermediate versions. |
 | **Open** | Release provenance has a documented verification path. | CI emits keyless GitHub attestations for scan artifacts; document consumer verification and decide whether release distributions also require attestations before v1. |
 | **Met** | Release rollback is rehearsed. | `scripts/rehearse_upgrade.py` reinstalls actual old wheels and checks retained state/proofs after rewriting. `docs/UPGRADES.md` covers stopped-process backups, known-good packages, release withdrawal communication and immutable checksum/tag handling; no public release is withdrawn by the test. |
 
@@ -77,7 +77,7 @@ The status-vocabulary rows above are definitions, not additional criteria.
 | **Met** | A new user can install, run a scan, interpret coverage, and open the dashboard without private assistance. | README quick start, Windows installer path, CLI examples, synthetic dashboard screenshot, and inline coverage explanations. |
 | **Met** | Current limitations and authorization boundaries are public. | README documents local/CI `.env` asymmetry, namespace-only reachability, dataflow limits, passive web scope, cloud/report ingestion boundaries, and remediation command execution. |
 | **Partial** | Dataflow capabilities are quickly retrievable. | The information is accurate but dense; replace the long paragraph with a concise resolves/gaps/silent table while retaining benchmark and safety detail. |
-| **Partial** | Every warning includes a next action. | Dependency diagnostics now carry code/path/capability/message/action in CLI, normalized JSON and dashboard; oversized-input messages include MiB and raw counts. State errors already give actions. `docs/WARNINGS.md` names remaining stderr-only OpenVEX and history/experimental status-schema work. |
+| **Met** | Every warning includes a next action. | `docs/WARNINGS.md` maps dependency, state, history, evaluation, experimental gap/limit/parse and OpenVEX warnings to code, resource/capability, message and action. Diagnostic and VEX tests cover machine-readable export timing, stale-output refusal, exception/source redaction and retained identities; schema tests require guidance on experimental warnings. Fatal CLI/usage errors remain in the separate open CLI-contract criterion. |
 | **Open** | Accessibility is verified. | Keyboard-only dashboard pass, visible focus, semantic labels, contrast check, reduced-motion behavior, and screen-reader smoke test using only synthetic repository data. |
 | **Open** | CLI behavior is stable and documented. | Command/option snapshot tests, exit-code contract, machine-readable error contract, deprecation policy, and shell-completion decision. |
 
