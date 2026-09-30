@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import copy
+from contextlib import contextmanager
 import hashlib
 import os
 import platform
@@ -18,6 +20,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .config import Config
+from .diagnostics import dependency_diagnostics
 from .models import Severity
 from .scanners import inline_suppression_register, is_excluded, iter_files, ruleset_manifest, scan
 from .dependencies import Package, discover_dependency_state, discover_packages, scan_dependencies
@@ -33,6 +36,7 @@ from .vex import NoVexStatements, openvex_document
 from .webaudit import audit_web_target
 from .version import __version__
 from .history_secrets import HistoryScanError, scan_history
+from .state_store import HISTORY_LIMIT_BYTES, RETENTION_LIMITS, StateCapacity, StateConflict, state_lock
 
 
 REMEDIATION_RECEIPT_FIELDS = (
@@ -169,7 +173,11 @@ def discover_local_repositories(limit: int = 30) -> list[str]:
 
 class DashboardState:
     def __init__(self, history_path: Path | None = None) -> None:
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._lifecycle_lock = threading.Lock()
+        self._closing = threading.Event()
+        self.retention_pruned = {key: 0 for key in RETENTION_LIMITS}
+        self._expected_history_hash = None
         self.repositories: dict[str, RepositoryScan] = {}
         self.pending_repositories: set[str] = set()
         self.dependency_packages: dict[str, list[Package]] = {}
@@ -217,7 +225,12 @@ class DashboardState:
         self.shutdown_callback = None
         if history_path and history_path.exists():
             try:
-                payload = json.loads(history_path.read_text(encoding="utf-8"))
+                with history_path.open("rb") as source:
+                    raw = source.read(HISTORY_LIMIT_BYTES + 1)
+                if len(raw) > HISTORY_LIMIT_BYTES:
+                    raise ValueError("History exceeds the local state limit")
+                self._expected_history_hash = hashlib.sha256(raw).hexdigest()
+                payload = json.loads(raw.decode("utf-8"))
                 if not isinstance(payload, dict):
                     raise ValueError("History must be an object")
                 for key in ("history", "suppression_audit", "remediation_audit", "resolved_findings", "monitor_events"):
@@ -226,15 +239,18 @@ class DashboardState:
                 for key in ("inventory_snapshots", "suppression_snapshots", "verified_fixes", "web_audits", "finding_first_seen", "finding_snapshots", "history_exposures", "history_scan_heads", "history_acknowledgements", "monitor"):
                     if key in payload and not isinstance(payload[key], dict):
                         raise ValueError("Invalid history mapping")
-                self.history = list(payload.get("history", []))[-100:]
+                retained = payload.get("retention_pruned", {})
+                if isinstance(retained, dict):
+                    self.retention_pruned = {key: max(0, value) if isinstance(value := retained.get(key, 0), int) else 0 for key in RETENTION_LIMITS}
+                self.history = list(payload.get("history", []))
                 snapshots = payload.get("inventory_snapshots", {})
                 self.inventory_snapshots = snapshots if isinstance(snapshots, dict) else {}
                 suppression_snapshots = payload.get("suppression_snapshots", {})
                 self.suppression_snapshots = suppression_snapshots if isinstance(suppression_snapshots, dict) else {}
                 audit = payload.get("suppression_audit", [])
-                self.suppression_audit = list(audit)[-500:] if isinstance(audit, list) else []
+                self.suppression_audit = list(audit) if isinstance(audit, list) else []
                 remediation_audit = payload.get("remediation_audit", [])
-                self.remediation_audit = list(remediation_audit)[-200:] if isinstance(remediation_audit, list) else []
+                self.remediation_audit = list(remediation_audit) if isinstance(remediation_audit, list) else []
                 verified = payload.get("verified_fixes", {})
                 self.verified_fixes = verified if isinstance(verified, dict) else {}
                 web_audits = payload.get("web_audits", {})
@@ -244,9 +260,9 @@ class DashboardState:
                 finding_snapshots = payload.get("finding_snapshots", {})
                 self.finding_snapshots = finding_snapshots if isinstance(finding_snapshots, dict) else {}
                 resolved_findings = payload.get("resolved_findings", [])
-                self.resolved_findings = list(resolved_findings)[-500:] if isinstance(resolved_findings, list) else []
+                self.resolved_findings = list(resolved_findings) if isinstance(resolved_findings, list) else []
                 monitor_events = payload.get("monitor_events", [])
-                self.monitor_events = list(monitor_events)[-500:] if isinstance(monitor_events, list) else []
+                self.monitor_events = list(monitor_events) if isinstance(monitor_events, list) else []
                 exposures = payload.get("history_exposures", {})
                 self.history_exposures = exposures if isinstance(exposures, dict) else {}
                 heads = payload.get("history_scan_heads", {})
@@ -258,6 +274,7 @@ class DashboardState:
                     self.monitor_enabled = monitor.get("enabled", True) is True
                     interval = monitor.get("interval_seconds", 300)
                     self.monitor_interval_seconds = interval if isinstance(interval, int) and 30 <= interval <= 86_400 else 300
+                self._apply_retention()
             except (OSError, ValueError, TypeError, RecursionError):
                 self._history_write_blocked = True
                 self.persistence_error = {
@@ -279,8 +296,46 @@ class DashboardState:
                 self.history_scan_heads = {}
                 self.history_acknowledgements = {}
 
+    def _apply_retention(self) -> None:
+        for key, limit in RETENTION_LIMITS.items():
+            records = getattr(self, key)
+            removed = max(0, len(records) - limit)
+            if removed:
+                self.retention_pruned[key] += removed
+                setattr(self, key, records[-limit:])
+
+    def _history_payload(self) -> dict:
+        keys = ("history", "inventory_snapshots", "suppression_snapshots", "suppression_audit",
+                "remediation_audit", "finding_first_seen", "finding_snapshots", "resolved_findings",
+                "monitor_events", "verified_fixes", "web_audits", "history_exposures",
+                "history_scan_heads", "history_acknowledgements", "retention_pruned")
+        return {**{key: getattr(self, key) for key in keys},
+                "monitor": {"enabled": self.monitor_enabled, "interval_seconds": self.monitor_interval_seconds}}
+
+    @contextmanager
+    def _transaction(self):
+        with self._lock:
+            if self._closing.is_set():
+                raise ValueError("Dashboard is closing; state update refused")
+            keys = [*self._history_payload()]
+            keys.remove("monitor")
+            keys += ["repositories", "dependency_packages", "external_reports", "pending_repositories", "startup_errors",
+                     "monitor_enabled", "monitor_interval_seconds", "monitor_next_scan", "history_scan_status"]
+            before = {key: copy.deepcopy(getattr(self, key)) for key in keys}
+            try:
+                yield
+            except BaseException:
+                for key, value in before.items():
+                    setattr(self, key, value)
+                raise
+
     def _persist_history(self) -> None:
         """Replace the local state file atomically so an interrupted write cannot truncate it."""
+        self._apply_retention()
+        document = json.dumps(self._history_payload(), indent=2) + "\n"
+        if len(document.encode("utf-8")) > HISTORY_LIMIT_BYTES:
+            self.persistence_error = {"code": "history_capacity_reached", "message": "State update refused: retained history exceeds 32 MiB; continuity records were not pruned.", "action": "Export or back up history, then deliberately archive state or use a separate state directory before retrying."}
+            raise StateCapacity(self.persistence_error["message"])
         if not self.history_path or self._history_write_blocked:
             return
         temporary = self.history_path.with_name(
@@ -288,23 +343,21 @@ class DashboardState:
         )
         try:
             self.history_path.parent.mkdir(parents=True, exist_ok=True)
-            temporary.write_text(json.dumps({
-                "history": self.history, "inventory_snapshots": self.inventory_snapshots,
-                "suppression_snapshots": self.suppression_snapshots, "suppression_audit": self.suppression_audit,
-                "remediation_audit": self.remediation_audit,
-                "finding_first_seen": self.finding_first_seen,
-                "finding_snapshots": self.finding_snapshots,
-                "resolved_findings": self.resolved_findings,
-                "monitor_events": self.monitor_events,
-                "monitor": {"enabled": self.monitor_enabled, "interval_seconds": self.monitor_interval_seconds},
-                "verified_fixes": self.verified_fixes,
-                "web_audits": self.web_audits,
-                "history_exposures": self.history_exposures,
-                "history_scan_heads": self.history_scan_heads,
-                "history_acknowledgements": self.history_acknowledgements,
-            }, indent=2) + "\n", encoding="utf-8")
-            temporary.replace(self.history_path)
+            with state_lock(self.history_path.with_suffix(".lock")):
+                current_hash = None
+                if self.history_path.exists():
+                    with self.history_path.open("rb") as source:
+                        current = source.read(HISTORY_LIMIT_BYTES + 1)
+                    current_hash = hashlib.sha256(current).hexdigest()
+                if current_hash != self._expected_history_hash:
+                    raise StateConflict("History changed in another process; restart from its saved state before retrying.")
+                temporary.write_text(document, encoding="utf-8", newline="\n")
+                temporary.replace(self.history_path)
+                self._expected_history_hash = hashlib.sha256(document.encode("utf-8")).hexdigest()
             self.persistence_error = None
+        except StateConflict:
+            self.persistence_error = {"code": "history_write_conflict", "message": "State update refused because another writer owns or changed local history.", "action": "Stop the competing dashboard and restart from saved history; do not overwrite it with a stale session."}
+            raise
         except OSError:
             self.persistence_error = {
                 "code": "history_write_failed",
@@ -339,8 +392,6 @@ class DashboardState:
                 report_sources.append({"scanner": scanner, "path": str(resolved)})
         imported = [finding for finding in imported if not is_excluded(finding.path, config) and finding.rule_id not in config.ignored_rules and not config.is_suppressed(finding.fingerprint)]
         imported = list({finding.fingerprint: finding for finding in imported}.values())
-        if external_reports is not None:
-            self.external_reports[repository_key] = external_reports
         dependency_state = discover_dependency_state(root)
         packages, unresolved = dependency_state
         dependency_findings, dependency_warning = scan_dependencies(root, discovery=dependency_state)
@@ -355,7 +406,11 @@ class DashboardState:
         resolution_commit, resolution_branch = _git_identity(root)
         suppression_register = config.suppression_register() + inline_suppression_register(root, config)
         current_suppressions = {item["fingerprint"]: item for item in suppression_register}
-        with self._lock:
+        with self._transaction():
+            if self._closing.is_set():
+                raise ValueError("Dashboard is closing; scan result was not committed")
+            if external_reports is not None:
+                self.external_reports[repository_key] = external_reports
             previous_inventory = self.inventory_snapshots.get(str(root))
             added_refs = sorted(set(current_inventory) - set(previous_inventory or {})) if previous_inventory is not None else []
             removed_refs = sorted(set(previous_inventory or {}) - set(current_inventory)) if previous_inventory is not None else []
@@ -410,7 +465,6 @@ class DashboardState:
                         "fingerprint": record["fingerprint"], "owner": record["owner"],
                         "reason": record["reason"], "expires": record["expires"],
                     })
-            self.suppression_audit = self.suppression_audit[-500:]
             result = RepositoryScan(
                 repository=str(root),
                 name=root.name,
@@ -433,6 +487,7 @@ class DashboardState:
                 health={
                     "status": "warning" if dependency_warning else "healthy",
                     "dependency_warning": dependency_warning,
+                    "warnings": dependency_diagnostics(unresolved, dependency_warning),
                     "git_commit": resolution_commit,
                     "git_branch": resolution_branch,
                 },
@@ -524,8 +579,6 @@ class DashboardState:
                     prior_resolution["status"] = "reopened"
                     prior_resolution["reopened_at"] = scanned_at
                     _seal_resolution_record(prior_resolution)
-            self.resolved_findings = self.resolved_findings[-500:]
-            self.monitor_events = self.monitor_events[-500:]
             self.finding_snapshots[str(root)] = current_snapshot
             self.verified_fixes = {
                 fingerprint: proposal for fingerprint, proposal in self.verified_fixes.items()
@@ -542,11 +595,14 @@ class DashboardState:
                 "suppression_count": len(result.suppressions),
                 "suppression_change_count": sum(len(suppression_change[key]) for key in ("added", "changed", "removed")),
             })
-            self.history = self.history[-100:]
             self._persist_history()
         return result
 
     def snapshot(self) -> dict:
+        with self._lock:
+            return self._snapshot()
+
+    def _snapshot(self) -> dict:
         with self._lock:
             scans = [item.to_dict() for item in self.repositories.values()]
             web_audits = list(self.web_audits.values())
@@ -598,6 +654,7 @@ class DashboardState:
                 "version": __version__, "python": platform.python_version(),
                 "history": "memory-only" if self.persistence_error else "writable" if self.history_path and self.history_path.parent.is_dir() and os.access(self.history_path.parent, os.W_OK) else "memory-only",
                 "persistence_error": self.persistence_error,
+                "retention": {"limits": RETENTION_LIMITS, "pruned": dict(self.retention_pruned), "state_limit_bytes": HISTORY_LIMIT_BYTES},
                 "startup": {"total": self.startup_total, "completed": self.startup_completed, "errors": list(self.startup_errors)},
                 "scanner_health": {"healthy": sum(repo.get("health", {}).get("status") == "healthy" for repo in scans), "warning": sum(repo.get("health", {}).get("status") != "healthy" for repo in scans)},
             },
@@ -616,7 +673,7 @@ class DashboardState:
             "audited_at": datetime.now(timezone.utc).isoformat(), "mode": "passive", "request_count": 1,
             "findings": [dict(item.to_dict(), metadata=dict(item.metadata, fix_eligible=False)) for item in findings],
         }
-        with self._lock:
+        with self._transaction():
             self.web_audits[target] = audit
             self._persist_history()
         return audit
@@ -624,7 +681,7 @@ class DashboardState:
     def remove_web_audit(self, url: str) -> None:
         if not isinstance(url, str):
             raise ValueError("url must be a string")
-        with self._lock:
+        with self._transaction():
             if url not in self.web_audits:
                 raise ValueError("Web audit is not in local history")
             self.web_audits.pop(url)
@@ -651,7 +708,7 @@ class DashboardState:
             advisory = finding.get("metadata", {}).get("advisory")
             if finding["repository_path"] == repository and advisory in resolved:
                 proposals[finding["fingerprint"]] = candidate
-        with self._lock:
+        with self._transaction():
             self.verified_fixes.update(proposals)
             self._persist_history()
 
@@ -669,7 +726,7 @@ class DashboardState:
                         "candidate_version": result["candidate_version"], "parent": result["parent"],
                         "repository": repository,
                     }
-        with self._lock:
+        with self._transaction():
             self.verified_fixes.update(proposals)
             self._persist_history()
 
@@ -702,7 +759,7 @@ class DashboardState:
 
     def remove_repository(self, repository: str) -> None:
         resolved = str(Path(repository).resolve())
-        with self._lock:
+        with self._transaction():
             if resolved not in self.repositories and resolved not in self.pending_repositories:
                 raise ValueError("Repository is not currently watched")
             self.repositories.pop(resolved, None)
@@ -723,27 +780,29 @@ class DashboardState:
         self.history_scan_status[key] = {"state": "scanning", "started_at": datetime.now(timezone.utc).isoformat()}
         try:
             result = scan_history(root, self.gitleaks_executable, self.history_scan_heads.get(key))
-            current = self.history_exposures.setdefault(key, {})
-            observed = set()
-            for exposure in result["findings"]:
-                fingerprint = exposure["fingerprint"]
-                observed.add(fingerprint)
-                prior = current.get(fingerprint)
-                if prior and result["mode"] == "incremental":
-                    old_meta, new_meta = prior.get("metadata", {}), exposure.get("metadata", {})
-                    if (str(old_meta.get("first_observed_at") or "9999"), str(old_meta.get("first_commit") or "")) <= (str(new_meta.get("first_observed_at") or "9999"), str(new_meta.get("first_commit") or "")):
-                        exposure["metadata"]["first_commit"] = old_meta.get("first_commit")
-                        exposure["metadata"]["first_observed_at"] = old_meta.get("first_observed_at")
-                    exposure["metadata"]["occurrence_count"] = int(old_meta.get("occurrence_count", 0)) + int(new_meta.get("occurrence_count", 0))
-                exposure["status"] = "acknowledged_rotated" if fingerprint in self.history_acknowledgements.get(key, {}) else "rotation_required"
-                current[fingerprint] = exposure
-            if result["mode"] == "full":
-                for fingerprint, exposure in current.items():
-                    if fingerprint not in observed:
-                        exposure["status"] = "history_rewritten_after_acknowledgement" if fingerprint in self.history_acknowledgements.get(key, {}) else "history_rewritten_rotation_unverified"
-            self.history_scan_heads[key] = result["head"]
-            self.history_scan_status[key] = {"state": "complete", "mode": result["mode"], "scanned_at": result["scanned_at"], "exposures": len(current)}
-            with self._lock:
+            with self._transaction():
+                if self._closing.is_set():
+                    raise ValueError("Dashboard is closing; history result was not committed")
+                current = self.history_exposures.setdefault(key, {})
+                observed = set()
+                for exposure in result["findings"]:
+                    fingerprint = exposure["fingerprint"]
+                    observed.add(fingerprint)
+                    prior = current.get(fingerprint)
+                    if prior and result["mode"] == "incremental":
+                        old_meta, new_meta = prior.get("metadata", {}), exposure.get("metadata", {})
+                        if (str(old_meta.get("first_observed_at") or "9999"), str(old_meta.get("first_commit") or "")) <= (str(new_meta.get("first_observed_at") or "9999"), str(new_meta.get("first_commit") or "")):
+                            exposure["metadata"]["first_commit"] = old_meta.get("first_commit")
+                            exposure["metadata"]["first_observed_at"] = old_meta.get("first_observed_at")
+                        exposure["metadata"]["occurrence_count"] = int(old_meta.get("occurrence_count", 0)) + int(new_meta.get("occurrence_count", 0))
+                    exposure["status"] = "acknowledged_rotated" if fingerprint in self.history_acknowledgements.get(key, {}) else "rotation_required"
+                    current[fingerprint] = exposure
+                if result["mode"] == "full":
+                    for fingerprint, exposure in current.items():
+                        if fingerprint not in observed:
+                            exposure["status"] = "history_rewritten_after_acknowledgement" if fingerprint in self.history_acknowledgements.get(key, {}) else "history_rewritten_rotation_unverified"
+                self.history_scan_heads[key] = result["head"]
+                self.history_scan_status[key] = {"state": "complete", "mode": result["mode"], "scanned_at": result["scanned_at"], "exposures": len(current)}
                 self._persist_history()
             return result
         except (HistoryScanError, OSError, ValueError) as error:
@@ -751,6 +810,12 @@ class DashboardState:
             raise
 
     def scan_all_history_async(self, repositories: list[Path] | None = None) -> bool:
+        with self._lifecycle_lock:
+            if self._closing.is_set():
+                return False
+            return self._start_history_scan(repositories)
+
+    def _start_history_scan(self, repositories: list[Path] | None = None) -> bool:
         if not self.history_secrets_enabled or not self.gitleaks_executable or not self._history_scan_lock.acquire(blocking=False):
             return False
         targets = repositories or [Path(repository) for repository in self.repositories]
@@ -758,6 +823,8 @@ class DashboardState:
         def worker() -> None:
             try:
                 for repository in targets:
+                    if self._closing.is_set():
+                        break
                     try:
                         self.scan_repository_history(repository)
                     except (OSError, ValueError):
@@ -780,7 +847,7 @@ class DashboardState:
         repository_key = str(Path(repository).resolve())
         if fingerprint not in self.history_exposures.get(repository_key, {}):
             raise ValueError("History exposure is not known")
-        with self._lock:
+        with self._transaction():
             self.history_acknowledgements.setdefault(repository_key, {})[fingerprint] = {"owner": owner.strip(), "rotated_at": rotation_date, "acknowledged_at": datetime.now(timezone.utc).isoformat()}
             self.history_exposures[repository_key][fingerprint]["status"] = "acknowledged_rotated"
             self._persist_history()
@@ -790,7 +857,7 @@ class DashboardState:
             raise ValueError("enabled must be a boolean")
         if not isinstance(interval_seconds, int) or not 30 <= interval_seconds <= 86_400:
             raise ValueError("Monitoring interval must be between 30 and 86400 seconds")
-        with self._lock:
+        with self._transaction():
             self.monitor_enabled = enabled
             self.monitor_interval_seconds = interval_seconds
             self.monitor_next_scan = None
@@ -798,6 +865,12 @@ class DashboardState:
         self._monitor_wake.set()
 
     def start_monitor(self) -> None:
+        with self._lifecycle_lock:
+            if self._closing.is_set():
+                return
+            self._start_monitor()
+
+    def _start_monitor(self) -> None:
         if self._monitor_thread and self._monitor_thread.is_alive():
             if self._monitor_stop.is_set():
                 raise ValueError("The previous monitor is still stopping; retry after its active scan finishes")
@@ -811,6 +884,12 @@ class DashboardState:
         self._monitor_wake.set()
         if self._monitor_thread:
             self._monitor_thread.join(timeout=2)
+
+    def close(self) -> None:
+        with self._lifecycle_lock:
+            with self._lock:
+                self._closing.set()
+        self.stop_monitor()
 
     def _monitor_loop(self) -> None:
         while not self._monitor_stop.is_set():
@@ -832,9 +911,8 @@ class DashboardState:
                 self.monitor_error = str(error)
 
     def record_remediation(self, action: str, receipt: dict) -> None:
-        with self._lock:
+        with self._transaction():
             self.remediation_audit.append({"action": action, **receipt})
-            self.remediation_audit = self.remediation_audit[-200:]
             self._persist_history()
 
 
@@ -936,6 +1014,11 @@ def make_handler(state: DashboardState):
                 return
             if path == "/api/state":
                 self._json(state.snapshot())
+                return
+            if path == "/api/history/export":
+                with state._lock:
+                    document = copy.deepcopy(state._history_payload())
+                self._download_json(document, "vulcanary-retained-history.json")
                 return
             if path in {"/api/repositories/sbom", "/api/repositories/spdx", "/api/repositories/openvex"}:
                 requested = parse_qs(parsed.query).get("repository", [""])[0]
@@ -1269,6 +1352,8 @@ def serve(host: str, port: int, repositories: list[Path], open_browser: bool = T
 
     def initial_scan() -> None:
         for repository in repositories:
+            if state._closing.is_set():
+                break
             try:
                 state.scan_repository(repository)
             except (OSError, ValueError, TypeError) as error:
@@ -1278,18 +1363,16 @@ def serve(host: str, port: int, repositories: list[Path], open_browser: bool = T
                 with state._lock:
                     state.startup_completed += 1
         try:
-            if repositories:
-                from .local_app import add_watched_repositories
-                # Preserve the user's intended watch list even when a transient scanner
-                # failure prevents one repository from entering the in-memory snapshot,
-                # and do not erase other watched repositories during a one-off launch.
-                add_watched_repositories([str(repository) for repository in repositories])
+            with state._lifecycle_lock:
+                if repositories and not state._closing.is_set():
+                    from .local_app import add_watched_repositories
+                    add_watched_repositories([str(repository) for repository in repositories])
         except (OSError, ValueError) as error:
             with state._lock:
                 state.startup_errors.append({"repository": "configuration", "error": str(error)})
         finally:
             state.start_monitor()
-            if state.history_secrets_enabled:
+            if state.history_secrets_enabled and not state._closing.is_set():
                 state.scan_all_history_async(repositories)
 
     threading.Thread(target=initial_scan, name="vulcanary-initial-scan", daemon=True).start()
@@ -1306,6 +1389,6 @@ def serve(host: str, port: int, repositories: list[Path], open_browser: bool = T
     except KeyboardInterrupt:
         pass
     finally:
-        state.stop_monitor()
+        state.close()
         server.server_close()
     return 0

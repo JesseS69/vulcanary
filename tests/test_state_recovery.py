@@ -92,7 +92,7 @@ class StateRecoveryTests(unittest.TestCase):
             history = Path(directory) / "history.json"
             history.write_text('{"history": []}', encoding="utf-8")
             original = history.read_bytes()
-            with patch.object(Path, "read_text", side_effect=PermissionError("injected")):
+            with patch.object(Path, "open", side_effect=PermissionError("injected")):
                 state = DashboardState(history)
             state._persist_history()
             self.assertEqual(history.read_bytes(), original)

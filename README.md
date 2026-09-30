@@ -389,6 +389,8 @@ The evidence-based [v1.0 readiness gate](docs/V1_READINESS.md) tracks required s
 
 [Local state recovery](docs/STATE_RECOVERY.md) explains stale results after failed rescans, failed saves, and recovering unreadable history without silently overwriting it.
 
+[State retention](docs/STATE_RETENTION.md) documents visible pruning, the retained-history ceiling, authenticated private exports, and cooperating-writer protection. The [upgrade and rollback policy](docs/UPGRADES.md) declares the tested pre-v1 window; the [release checklist](docs/RELEASE_CHECKLIST.md) requires repeatable checks and independent review.
+
 Vulcanary is intentionally local-first. It has no hosted control plane, multi-user RBAC, tenant isolation, remote worker fleet, or runtime agent. Keep the dashboard on loopback; do not expose it through a public proxy. Anyone who can act as your local user may be able to read its local configuration or control its process.
 
 - **Coverage is explicit, not universal.** The dashboard matrix distinguishes analyzed, incomplete, unsupported or disabled, and not-applicable capabilities. A green finding count does not override a coverage gap.

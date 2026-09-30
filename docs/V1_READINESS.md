@@ -15,6 +15,9 @@ A criterion moves to **Met** only when its evidence is repeatable by another con
 
 ## Release blockers
 
+Current tally: **32 Met / 5 Partial / 6 Open** across **43 release criteria**.
+The status-vocabulary rows above are definitions, not additional criteria.
+
 ### 1. Trust boundaries and safe defaults
 
 | Status | Criterion | Required evidence |
@@ -52,8 +55,8 @@ A criterion moves to **Met** only when its evidence is repeatable by another con
 | **Met** | Dataflow optimization cannot disguise lost work as a speedup. | Corpus comparisons diff exposure fingerprints plus exact gap and truncation identity sets and record analyzed-call counts. |
 | **Partial** | Representative external corpora have committed, reproducible baselines. | BenchmarkPython and external Python runtime baselines exist; add pinned acquisition instructions and equivalent external corpora alongside each future Java, Go, Ruby, or PHP syntax engine. |
 | **Open** | Large-repository runtime and memory budgets are defined and measured. | Select small, medium, and monorepo-scale public corpora; publish cold/warm runtime, peak memory, files analyzed, and all limit records on supported operating systems. |
-| **Partial** | Interrupted and partially failing scans preserve configured repositories and prior durable state. | `tests/test_state_recovery.py` and `tests/test_monitor_lifecycle.py` cover partial scans, startup retry, active monitor stop/restart, failed/partial writes, subprocess exit before replacement, config/token and receipt continuity, and corrupt history recovery. `docs/STATE_RECOVERY.md` retains mid-commit, concurrency, arbitrary termination and startup/shutdown race limits. |
-| **Open** | Dashboard state remains bounded over long-running monitoring. | Define retention/compaction limits and soak-test scan history, receipts, resolved findings, and web-audit history. |
+| **Met** | Interrupted and partially failing scans preserve configured repositories and prior durable state. | State-recovery, monitor-lifecycle and state-bounds tests cover partial scans, startup retry, active monitor stop/restart, failed writes, subprocess exit, config/token and receipt continuity, corrupt history recovery, in-memory rollback, stale writers and startup/shutdown overlap. `docs/STATE_RECOVERY.md` names uncooperative writers and power-loss limits. |
+| **Met** | Dashboard state remains bounded over long-running monitoring. | `docs/STATE_RETENTION.md` defines existing collection caps and a 32 MiB retained-document ceiling without deleting continuity to fit. State-bounds tests cover retention, seals and capacity refusal; the repeatable 600-scan synthetic soak records memory, latency and retained bytes in `benchmarks/state-soak-0.64.json`. Transient scanner memory and monorepo performance are separate open work. |
 
 ### 4. Installation, upgrade, and release integrity
 
@@ -63,9 +66,9 @@ A criterion moves to **Met** only when its evidence is repeatable by another con
 | **Met** | Release artifacts are immutable and independently verifiable. | Tagged workflow publishes wheel, source archive, installer, uninstaller, and `SHA256SUMS.txt`; the manifest covers the other four assets with basename-only SHA-256 entries. |
 | **Met** | Windows installation and removal preserve user data by default. | The release workflow exercises install, upgrade, configuration export/import, backup/restore, and uninstall. Purging local data requires an explicit flag. |
 | **Met** | A package reinstall preserves local configuration. | `upgrade-preservation` compares application configuration byte-for-byte after reinstall in an isolated home directory. |
-| **Open** | Upgrade compatibility is proven across a declared support window. | Test sequential upgrades from at least the oldest supported pre-v1 release and the immediately previous release, including configuration, history, suppressions, fingerprints, and receipts. Publish the support-window policy. |
+| **Met** | Upgrade compatibility is proven across a declared support window. | `docs/UPGRADES.md` declares 0.60.0–0.63.0 endpoint coverage for the 0.64 candidate. Hash-pinned installed-wheel rehearsals check direct/sequential upgrades, configuration/token, suppression data, fingerprints, first-seen, acknowledgements and sealed receipts; mandatory CI runs them on three operating systems. Not exhaustive across all hand-edited state or intermediate versions. |
 | **Open** | Release provenance has a documented verification path. | CI emits keyless GitHub attestations for scan artifacts; document consumer verification and decide whether release distributions also require attestations before v1. |
-| **Open** | Release rollback is rehearsed. | Document and test how to withdraw a broken release, restore the prior package, preserve user data, and communicate checksum/tag status without rewriting an immutable release. |
+| **Met** | Release rollback is rehearsed. | `scripts/rehearse_upgrade.py` reinstalls actual old wheels and checks retained state/proofs after rewriting. `docs/UPGRADES.md` covers stopped-process backups, known-good packages, release withdrawal communication and immutable checksum/tag handling; no public release is withdrawn by the test. |
 
 ### 5. User experience and documentation
 
@@ -74,7 +77,7 @@ A criterion moves to **Met** only when its evidence is repeatable by another con
 | **Met** | A new user can install, run a scan, interpret coverage, and open the dashboard without private assistance. | README quick start, Windows installer path, CLI examples, synthetic dashboard screenshot, and inline coverage explanations. |
 | **Met** | Current limitations and authorization boundaries are public. | README documents local/CI `.env` asymmetry, namespace-only reachability, dataflow limits, passive web scope, cloud/report ingestion boundaries, and remediation command execution. |
 | **Partial** | Dataflow capabilities are quickly retrievable. | The information is accurate but dense; replace the long paragraph with a concise resolves/gaps/silent table while retaining benchmark and safety detail. |
-| **Open** | Every warning includes a next action. | Audit CLI, JSON, and dashboard warnings for a stable code, affected path/capability, concise reason, and remediation or documentation link. |
+| **Partial** | Every warning includes a next action. | Dependency diagnostics now carry code/path/capability/message/action in CLI, normalized JSON and dashboard; oversized-input messages include MiB and raw counts. State errors already give actions. `docs/WARNINGS.md` names remaining stderr-only OpenVEX and history/experimental status-schema work. |
 | **Open** | Accessibility is verified. | Keyboard-only dashboard pass, visible focus, semantic labels, contrast check, reduced-motion behavior, and screen-reader smoke test using only synthetic repository data. |
 | **Open** | CLI behavior is stable and documented. | Command/option snapshot tests, exit-code contract, machine-readable error contract, deprecation policy, and shell-completion decision. |
 
@@ -85,7 +88,7 @@ A criterion moves to **Met** only when its evidence is repeatable by another con
 | **Met** | Security reports have a private channel and handling guidance. | `SECURITY.md` defines supported versions, private reporting, safe reproductions, and trust boundaries. |
 | **Met** | Community and support expectations are explicit. | `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SUPPORT.md`, issue/PR templates, MIT license, and trademark policy are public. |
 | **Open** | Dependency and action update policy is documented. | Define review cadence and pinning policy for GitHub Actions, build tooling, scanner container images, and the vendored CVSS implementation. |
-| **Open** | A release checklist requires independent verification. | Require clean main, version consistency, full CI, installed-wheel smoke, checksum verification, release metadata, branch cleanup, self-scan, and a reviewer who did not author the change. |
+| **Met** | A release checklist requires independent verification. | `docs/RELEASE_CHECKLIST.md` requires clean main, version consistency, full CI, installed-wheel and upgrade smoke, checksum verification, release metadata, branch cleanup, self-scan, evidence records and a reviewer who did not author the candidate. It is a gate, not a claim the current candidate has already passed review. |
 | **Open** | A vulnerability-response rehearsal has been completed. | Run a synthetic private report through triage, patch, advisory/release preparation, notification, and postmortem without publishing a live secret. |
 
 ## Explicitly deferred from free local-first v1
