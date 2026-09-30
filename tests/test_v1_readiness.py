@@ -14,6 +14,8 @@ class V1ReadinessTests(unittest.TestCase):
         criteria = re.findall(r"^\| \*\*(?:Met|Partial|Open|Deferred)\*\* \| ([^|]+) \| ([^|]+) \|$", blockers, re.MULTILINE)
         self.assertGreaterEqual(len(criteria), 30)
         self.assertEqual(len(statuses), len(criteria))
+        tally = f"**{statuses.count('Met')} Met / {statuses.count('Partial')} Partial / {statuses.count('Open')} Open** across **{len(criteria)} release criteria**"
+        self.assertIn(tally, document)
         self.assertIn("Open", statuses)
         self.assertIn("Partial", statuses)
         self.assertIn("## Standing merge gates through v1", document)

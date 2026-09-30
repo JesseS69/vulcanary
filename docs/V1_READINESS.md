@@ -15,6 +15,9 @@ A criterion moves to **Met** only when its evidence is repeatable by another con
 
 ## Release blockers
 
+Current tally: **32 Met / 5 Partial / 6 Open** across **43 release criteria**.
+The status-vocabulary rows above are definitions, not additional criteria.
+
 ### 1. Trust boundaries and safe defaults
 
 | Status | Criterion | Required evidence |

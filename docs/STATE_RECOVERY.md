@@ -36,6 +36,13 @@ guarantee of bounded shutdown for a hung scanner.
 
 ## Failed saves
 
+A sibling `.lock` file (for example `dashboard-history.lock` or `h.lock` for
+`h.json`) may remain after normal shutdown or a crash. Its existence does not mean
+the state is locked: the operating system releases the active lock when the process
+exits. Leave the file in place; deleting it while another process is running can
+undermine coordination. A stale-writer warning requires reloading saved state, not
+deleting the lock file.
+
 History and app configuration writes use temporary files next to the destination
 and replace the old file only after serialization/write completes. Tests inject
 failures before writing, during a partial write, and at replacement. They verify
