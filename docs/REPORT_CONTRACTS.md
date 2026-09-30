@@ -16,6 +16,7 @@ Existing findings must retain their identity unless an explicit migration is sup
 | Ruleset manifest | `version: 1` | Local schema, full golden rules and digest |
 | Remediation receipt | Legacy v1, selected by the documented field set, **no embedded version** | Local schema, golden proof and seal/tampering tests |
 | Experimental dataflow | `schema: "vulcanary.experimental-dataflow.v1"` | Separate local schema and golden exposure fingerprint |
+| CLI fatal errors (opt-in) | `schema: "vulcanary.cli-error.v1"` | Local schema, code-vocabulary and secret-safe error tests; see `CLI_CONTRACT.md` |
 
 CycloneDX `version` and OpenVEX `version` are document revisions, not schema versions.
 The tool release version is provenance, not a format selector. Receipts are not

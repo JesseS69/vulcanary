@@ -43,8 +43,8 @@ import or evaluate experimental dataflow. No promotion into gates is implied.
 Remediation evaluation results retain legacy warning strings and add structured
 guidance. The dashboard shows warnings from the last evaluation in Diagnostics.
 These explain incomplete evaluation; they do not alter evaluation status or authorize
-applying a fix. Generic fatal CLI errors and usage errors are a separate CLI-contract
-readiness item, not claims covered by this warning contract.
+applying a fix. Fatal CLI errors and usage errors follow the separate
+[CLI contract](CLI_CONTRACT.md), not this warning envelope.
 
 Tests cover skipped exports including stale outputs, authenticated API errors,
 external error redaction, retained history exposures, mocked evaluations, parse

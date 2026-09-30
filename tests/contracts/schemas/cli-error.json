@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schema", "code", "message", "action", "exit_code"],
+  "properties": {
+    "schema": {"const": "vulcanary.cli-error.v1"},
+    "code": {"enum": ["invalid_arguments", "repository_unavailable", "configuration_invalid", "report_import_failed", "dataflow_failed", "config_transfer_failed", "web_audit_failed", "dependency_review_failed", "service_failed", "update_check_failed", "stale_openvex", "baseline_invalid", "summary_destination_missing", "operation_failed"]},
+    "message": {"type": "string", "minLength": 1},
+    "action": {"type": "string", "minLength": 1},
+    "exit_code": {"const": 2}
+  }
+}

@@ -8,6 +8,7 @@ import webbrowser
 from pathlib import Path
 
 from .config import Config
+from .cli_errors import ArgumentParser, JSON_ERRORS, fail
 from .diagnostics import dependency_diagnostics, skipped_vex
 from .reporters import baseline_identities, findings_new_since, render_console, render_github_annotations, render_markdown_summary, write_json, write_sarif
 from .scanners import inline_suppression_register, is_excluded, ruleset_manifest, scan
@@ -21,9 +22,9 @@ from .adapters import AdapterError, import_report
 
 
 def scan_parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(
+    result = ArgumentParser(
         prog="vulcanary", description="Scan a repository for security risks.",
-        epilog="Commands: setup | start | status | stop | dashboard | config-export | config-import | dependency-review | web-audit | dataflow-prototype | update-check",
+        epilog="Commands: setup | start | status | stop | dashboard | config-export | config-import | dependency-review | web-audit | dataflow-prototype | update-check. Global prefix: --errors-json emits source-free fatal diagnostics on stderr.",
     )
     result.add_argument("path", nargs="?", default=".", help="Repository to scan")
     result.add_argument("--config", type=Path, help="Configuration JSON path")
@@ -37,7 +38,7 @@ def scan_parser() -> argparse.ArgumentParser:
     result.add_argument("--baseline-json", type=Path, help="Gate only findings absent from a prior normalized JSON report")
     result.add_argument("--github-annotations", action="store_true", help="Emit GitHub Actions workflow annotations for gated findings")
     result.add_argument("--github-summary", action="store_true", help="Append a source-free Markdown summary to GITHUB_STEP_SUMMARY")
-    result.add_argument("--no-fail", action="store_true", help="Always exit successfully")
+    result.add_argument("--no-fail", action="store_true", help="Do not fail on findings; operational errors still exit 2")
     result.add_argument("--offline", action="store_true", help="Skip OSV dependency advisory queries")
     for scanner in ("semgrep", "gitleaks", "trivy", "checkov", "zap", "prowler", "sarif"):
         result.add_argument(f"--{scanner}-json", action="append", type=Path, default=[], help=f"Import a {scanner.title()} JSON report; repeat as needed")
@@ -46,7 +47,7 @@ def scan_parser() -> argparse.ArgumentParser:
 
 
 def dashboard_parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(prog="vulcanary dashboard", description="Launch the local Vulcanary dashboard.")
+    result = ArgumentParser(prog="vulcanary dashboard", description="Launch the local Vulcanary dashboard.")
     result.add_argument("--repository", "-r", action="append", type=Path, default=[], help="Repository to scan on startup; repeat for multiple repositories")
     result.add_argument("--host", default="127.0.0.1", help="Dashboard bind address")
     result.add_argument("--port", type=int, default=8765, help="Dashboard port")
@@ -58,7 +59,7 @@ def dashboard_parser() -> argparse.ArgumentParser:
 
 
 def setup_parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(prog="vulcanary setup", description="Configure repositories for the local Vulcanary service.")
+    result = ArgumentParser(prog="vulcanary setup", description="Configure repositories for the local Vulcanary service.")
     result.add_argument("--repository", "-r", action="append", type=Path, default=[], help="Repository to watch; repeat for multiple repositories")
     result.add_argument("--monitor-interval", type=int, default=300, help="Automatic scan interval in seconds, or 0 to start paused")
     result.add_argument("--port", type=int, default=8765, help="Loopback dashboard port")
@@ -68,20 +69,20 @@ def setup_parser() -> argparse.ArgumentParser:
 
 
 def service_parser(command: str) -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(prog=f"vulcanary {command}", description=f"{command.title()} the local Vulcanary service.")
+    result = ArgumentParser(prog=f"vulcanary {command}", description=f"{command.title()} the local Vulcanary service.")
     if command == "start":
         result.add_argument("--no-open", action="store_true", help="Do not open the dashboard after starting")
     return result
 
 
 def config_transfer_parser(command: str) -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(prog=f"vulcanary {command}", description=f"{command.replace('-', ' ').title()} without secrets or source content.")
+    result = ArgumentParser(prog=f"vulcanary {command}", description=f"{command.replace('-', ' ').title()} without secrets or source content.")
     result.add_argument("path", type=Path)
     return result
 
 
 def dependency_review_parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(prog="vulcanary dependency-review", description="Review newly introduced locked dependencies without installing or executing them.")
+    result = ArgumentParser(prog="vulcanary dependency-review", description="Review newly introduced locked dependencies without installing or executing them.")
     result.add_argument("path", nargs="?", default=".", help="Current repository checkout")
     result.add_argument("--base", required=True, type=Path, help="Trusted base checkout to compare")
     result.add_argument("--json", type=Path, dest="json_path", help="Write a normalized JSON report")
@@ -91,7 +92,7 @@ def dependency_review_parser() -> argparse.ArgumentParser:
 
 
 def web_audit_parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(prog="vulcanary web-audit", description="Run a non-exploitative HTTP security-header and cookie audit against an authorized target.")
+    result = ArgumentParser(prog="vulcanary web-audit", description="Run a non-exploitative HTTP security-header and cookie audit against an authorized target.")
     result.add_argument("url")
     result.add_argument("--authorize-target", required=True, help="Exact hostname you own or are authorized to test")
     result.add_argument("--allow-private-target", action="store_true", help="Explicitly permit an authorized private or loopback target")
@@ -101,7 +102,7 @@ def web_audit_parser() -> argparse.ArgumentParser:
 
 
 def dataflow_parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(prog="vulcanary dataflow-prototype", description="Run the experimental, non-gating Python dataflow prototype.")
+    result = ArgumentParser(prog="vulcanary dataflow-prototype", description="Run the experimental, non-gating Python dataflow prototype.")
     result.add_argument("path", nargs="?", default=".", type=Path)
     result.add_argument("--max-depth", type=int, default=3, choices=range(1, 11))
     result.add_argument("--max-modules", type=int, default=10_000)
@@ -112,14 +113,28 @@ def dataflow_parser() -> argparse.ArgumentParser:
     return result
 
 
+def update_parser() -> argparse.ArgumentParser:
+    return ArgumentParser(prog="vulcanary update-check", description="Check GitHub for a newer Vulcanary release without installing it.")
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    structured = bool(argv and argv[0] == "--errors-json")
+    token = JSON_ERRORS.set(structured)
+    try:
+        return _main(argv[1:] if structured else argv)
+    except (OSError, ValueError, TypeError, RuntimeError, EOFError):
+        return fail("operation_failed")
+    finally:
+        JSON_ERRORS.reset(token)
+
+
+def _main(argv: list[str]) -> int:
     if argv and argv[0] == "dataflow-prototype":
         args = dataflow_parser().parse_args(argv[1:])
         from .dataflow import analyze_python_dataflow, benchmark_python_score, write_dataflow_report
         if not args.path.is_dir():
-            print(f"error: repository does not exist: {args.path.resolve()}", file=sys.stderr)
-            return 2
+            return fail("repository_unavailable")
         try:
             report = analyze_python_dataflow(
                 args.path, args.max_depth, args.max_modules, args.max_calls, args.timeout_seconds,
@@ -129,8 +144,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.json_path:
                 write_dataflow_report(report, args.json_path)
         except (OSError, ValueError, json.JSONDecodeError) as error:
-            print(f"error: dataflow prototype failed: {error}", file=sys.stderr)
-            return 2
+            return fail("dataflow_failed")
         print(json.dumps(report, indent=2))
         return 0
     if argv and argv[0] in {"config-export", "config-import"}:
@@ -145,8 +159,7 @@ def main(argv: list[str] | None = None) -> int:
                 configured = import_app_config(args.path)
                 print(f"Restored {len(configured['repositories'])} repositories. Restart Vulcanary to apply the configuration.")
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
-            print(f"error: {error}", file=sys.stderr)
-            return 2
+            return fail("config_transfer_failed")
         return 0
     if argv and argv[0] == "web-audit":
         args = web_audit_parser().parse_args(argv[1:])
@@ -154,8 +167,7 @@ def main(argv: list[str] | None = None) -> int:
             from .webaudit import audit_web_target
             findings = audit_web_target(args.url, args.authorize_target, allow_private=args.allow_private_target)
         except (OSError, ValueError) as error:
-            print(f"error: web audit failed: {error}", file=sys.stderr)
-            return 2
+            return fail("web_audit_failed")
         print(render_console(findings))
         if args.json_path:
             write_json(findings, args.json_path, policy={"mode": "passive-web-audit", "authorized_host": args.authorize_target})
@@ -169,8 +181,7 @@ def main(argv: list[str] | None = None) -> int:
             from .admission import review_dependency_changes
             findings, added = review_dependency_changes(root, base)
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
-            print(f"error: invalid dependency admission policy: {error}", file=sys.stderr)
-            return 2
+            return fail("dependency_review_failed")
         print(f"Dependency delta: {len(added)} added locked package(s).")
         print(render_console(findings))
         if args.json_path:
@@ -236,17 +247,15 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"Vulcanary is stopped · {status['repositories']} repositories configured")
                     return 1
         except (OSError, ValueError, RuntimeError) as error:
-            print(f"error: {error}", file=sys.stderr)
-            return 2
+            return fail("service_failed")
         return 0
     if argv and argv[0] == "update-check":
-        argparse.ArgumentParser(prog="vulcanary update-check", description="Check GitHub for a newer Vulcanary release without installing it.").parse_args(argv[1:])
+        update_parser().parse_args(argv[1:])
         try:
             from .updates import check_for_update
             update = check_for_update()
         except (OSError, ValueError, json.JSONDecodeError) as error:
-            print(f"error: update check failed: {error}", file=sys.stderr)
-            return 2
+            return fail("update_check_failed")
         print(f"Vulcanary {update['current']} is installed. Latest: {update['latest']}.")
         if update["update_available"]:
             print(f"Update available: {update['url']}")
@@ -262,20 +271,17 @@ def main(argv: list[str] | None = None) -> int:
     args = scan_parser().parse_args(argv)
     root = Path(args.path).resolve()
     if not root.is_dir():
-        print(f"error: repository does not exist: {root}", file=sys.stderr)
-        return 2
+        return fail("repository_unavailable")
     try:
         config = Config.load(root, args.config)
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
-        print(f"error: invalid Vulcanary configuration: {error}", file=sys.stderr)
-        return 2
+        return fail("configuration_invalid")
     findings = scan(root, config)
     try:
         imported = [finding for scanner in ("semgrep", "gitleaks", "trivy", "checkov", "zap", "prowler", "sarif") for report in getattr(args, f"{scanner.replace('-', '_')}_json") for finding in import_report(scanner, report, root)]
         imported += [finding for report in args.trivy_image_json for finding in import_report("trivy-image", report, root)]
     except AdapterError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 2
+        return fail("report_import_failed")
     imported = [
         finding for finding in imported
         if not is_excluded(finding.path, config)
@@ -330,8 +336,7 @@ def main(argv: list[str] | None = None) -> int:
         write_spdx(spdx_document(root.name, packages, [finding.to_dict() for finding in findings]), args.spdx)
     openvex_artifact = None
     if stale_vex:
-        print("error: Existing OpenVEX output was not changed; choose a fresh output path to avoid mistaking stale output for this scan.", file=sys.stderr)
-        return 2
+        return fail("stale_openvex")
     if vex_document is not None:
         write_openvex(vex_document, args.openvex)
         openvex_artifact = args.openvex
@@ -345,8 +350,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             policy_findings = findings_new_since(findings, baseline_identities(args.baseline_json))
         except ValueError as error:
-            print(f"error: {error}", file=sys.stderr)
-            return 2
+            return fail("baseline_invalid")
         print(f"PR policy delta: {len(policy_findings)} new finding(s), {len(findings) - len(policy_findings)} pre-existing.")
     if args.github_annotations:
         annotations = render_github_annotations(policy_findings)
@@ -355,8 +359,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.github_summary:
         summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
         if not summary_path:
-            print("error: --github-summary requires GITHUB_STEP_SUMMARY", file=sys.stderr)
-            return 2
+            return fail("summary_destination_missing")
         with Path(summary_path).open("a", encoding="utf-8") as summary:
             summary.write(render_markdown_summary(policy_findings, root.name) + "\n")
     blocked = any(f.severity >= config.fail_on for f in policy_findings)

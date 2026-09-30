@@ -1,5 +1,7 @@
 """Required CI suite; missing jsonschema is an error, never a skipped check."""
 import copy
+import io
+from contextlib import redirect_stderr
 import hashlib
 import json
 import unittest
@@ -14,6 +16,7 @@ from referencing.exceptions import NoSuchResource
 
 from fixtures import reports
 from vulcanary.dataflow import analyze_python_dataflow
+from vulcanary.cli_errors import ERRORS, JSON_ERRORS, fail
 
 ROOT = Path(__file__).parent
 
@@ -36,6 +39,20 @@ def validator(name):
 
 
 class SchemaContracts(unittest.TestCase):
+    def test_cli_errors_validate_and_reject_breaking_changes(self):
+        token = JSON_ERRORS.set(True)
+        try:
+            for code in ERRORS:
+                output = io.StringIO()
+                with redirect_stderr(output):
+                    fail(code)
+                document = json.loads(output.getvalue())
+                validator("cli-error").validate(document)
+                for key, value in (("exit_code", "2"), ("code", "new_code"), ("action", "")):
+                    self.assertFalse(validator("cli-error").is_valid({**document, key: value}))
+        finally:
+            JSON_ERRORS.reset(token)
+
     def test_nonempty_experimental_gaps_and_limits_validate(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
