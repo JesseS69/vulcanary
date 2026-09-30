@@ -1,8 +1,8 @@
 # Upgrade support and rollback
 
-For the 0.65 candidate, the declared pre-v1 upgrade test window is **0.60.0 through
-0.64.0**. Mandatory installed-wheel fixtures cover the oldest endpoint (0.60.0),
-the immediately previous release (0.64.0), and the sequential path through both.
+For the 0.66 candidate, the declared pre-v1 upgrade test window is **0.60.0 through
+0.65.0**. Mandatory installed-wheel fixtures cover the oldest endpoint (0.60.0),
+the immediately previous release (0.65.0), and the sequential path through both.
 This is not exhaustive execution of every intermediate release or every possible
 hand-edited state. Releases before 0.60.0 are outside this tested window; back up
 and rehearse against copies before adopting a candidate. Future releases must move

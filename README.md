@@ -385,6 +385,8 @@ GitHub workflows can pass `--github-summary` to append a sanitized severity tabl
 
 The evidence-based [v1.0 readiness gate](docs/V1_READINESS.md) tracks required safety, correctness, reliability, release, documentation, and governance work separately from capabilities deliberately deferred beyond the free local-first v1 scope.
 
+The [CLI contract](docs/CLI_CONTRACT.md) defines exit codes, compatibility and deprecation rules, and the leading `--errors-json` prefix for source-free machine-readable fatal diagnostics. `--no-fail` suppresses policy failures, not operational errors; a zero exit can still carry coverage warnings.
+
 [Report compatibility contracts](docs/REPORT_CONTRACTS.md) document format versions, fingerprint stability, offline official-schema validation, and the separate experimental dataflow contract. OpenVEX exports require an observed dependency advisory; empty scans emit no VEX file, with an explicit message.
 
 [Local state recovery](docs/STATE_RECOVERY.md) explains stale results after failed rescans, failed saves, and recovering unreadable history without silently overwriting it.
