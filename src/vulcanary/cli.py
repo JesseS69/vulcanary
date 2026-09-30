@@ -8,7 +8,7 @@ import webbrowser
 from pathlib import Path
 
 from .config import Config
-from .diagnostics import dependency_diagnostics
+from .diagnostics import dependency_diagnostics, skipped_vex
 from .reporters import baseline_identities, findings_new_since, render_console, render_github_annotations, render_markdown_summary, write_json, write_sarif
 from .scanners import inline_suppression_register, is_excluded, ruleset_manifest, scan
 from .dependencies import discover_dependency_state, scan_dependencies
@@ -295,8 +295,6 @@ def main(argv: list[str] | None = None) -> int:
             and not any(config.is_suppressed(alias) for alias in finding.metadata.get("legacy_fingerprints", []))
         ]
         findings += dependency_findings
-        if warning:
-            print(f"warning: {warning}", file=sys.stderr)
     diagnostic_records = dependency_diagnostics(_unresolved, warning)
     for diagnostic in diagnostic_records:
         print(f"warning [{diagnostic['code']}]: {diagnostic['message']} Next: {diagnostic['action']}", file=sys.stderr)
@@ -310,6 +308,16 @@ def main(argv: list[str] | None = None) -> int:
     }
     manifest = ruleset_manifest(config)
     report_policy["ruleset"] = {"digest": manifest["digest"], "rule_count": len(manifest["rules"])}
+    vex_document = None
+    stale_vex = False
+    if args.openvex:
+        try:
+            vex_document = openvex_document(root.name, [finding.to_dict() for finding in findings])
+        except NoVexStatements:
+            diagnostic = skipped_vex(str(args.openvex))
+            diagnostic_records.append(diagnostic)
+            print(f"warning [{diagnostic['code']}]: {diagnostic['message']} Next: {diagnostic['action']}", file=sys.stderr)
+            stale_vex = args.openvex.exists()
     if diagnostic_records:
         report_policy["warnings"] = diagnostic_records
     if args.json_path:
@@ -321,17 +329,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.spdx:
         write_spdx(spdx_document(root.name, packages, [finding.to_dict() for finding in findings]), args.spdx)
     openvex_artifact = None
-    if args.openvex:
-        try:
-            vex_document = openvex_document(root.name, [finding.to_dict() for finding in findings])
-        except NoVexStatements as error:
-            print(f"warning [openvex_no_statements]: OpenVEX export skipped: {error}. Next: use normalized JSON for scans without dependency vulnerability statements; no VEX document was produced.", file=sys.stderr)
-            if args.openvex.exists():
-                print("error: Existing OpenVEX output was not changed; choose a fresh output path to avoid mistaking stale output for this scan.", file=sys.stderr)
-                return 2
-        else:
-            write_openvex(vex_document, args.openvex)
-            openvex_artifact = args.openvex
+    if stale_vex:
+        print("error: Existing OpenVEX output was not changed; choose a fresh output path to avoid mistaking stale output for this scan.", file=sys.stderr)
+        return 2
+    if vex_document is not None:
+        write_openvex(vex_document, args.openvex)
+        openvex_artifact = args.openvex
     if args.ruleset_manifest:
         args.ruleset_manifest.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     if args.provenance:

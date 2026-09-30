@@ -1,0 +1,14 @@
+{
+  "corpus": "Installed Python 3.14 standard library and bundled site-packages on Windows",
+  "baseline": "published v0.64.0 wheel",
+  "candidate": "0.65.0 warning guidance",
+  "budget": {"timeout_seconds": 300, "max_modules": 10000, "max_calls": 1000000, "max_depth": 3},
+  "both": {"analyzed_modules": 2222, "analyzed_calls": 693382, "exposures": 0, "gaps": 556, "truncations": 1659, "parse_errors": 5, "limits": []},
+  "fingerprints": {"added": [], "removed": [], "churn": []},
+  "gap_identities": {"added": [], "removed": []},
+  "truncation_identities": {"added": [], "removed": []},
+  "candidate_guidance_records": 2220,
+  "runtime_seconds": null,
+  "peak_memory_bytes": null,
+  "notes": "Runtime and memory were not instrumented; no speedup or BenchmarkPython score claim. Environment-dependent corpus counts are not portable baselines. Analyze the same stdlib tree with the published wheel and candidate, then run scripts/compare_corpus_metrics.py on the two JSON reports."
+}

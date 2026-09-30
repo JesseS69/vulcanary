@@ -20,6 +20,7 @@ let state = {repositories: [], findings: [], summary: {total: 0, counts: {}, cat
 const selectedFixes = new Set();
 let appliedBatch = null;
 let sourceProposalFingerprint = null;
+let evaluationWarnings = [];
 let desktopAlerts = localStorage.getItem('vulcanary-desktop-alerts') === 'on';
 let lastAlertAt = localStorage.getItem('vulcanary-last-alert-at');
 
@@ -85,7 +86,7 @@ function renderDiagnostics() {
   const diagnostic = state.diagnostics || {};
   const startup = diagnostic.startup || {total:0, completed:0, errors:[]};
   const health = diagnostic.scanner_health || {healthy:0, warning:0};
-  const ready = startup.completed >= startup.total && !startup.errors.length && !health.warning && !diagnostic.persistence_error && !state.monitor?.error;
+  const ready = startup.completed >= startup.total && !startup.errors.length && !health.warning && !diagnostic.persistence_error && !state.monitor?.error && !evaluationWarnings.length && !Object.values(state.history_secrets?.status || {}).some(item => item.state === 'error');
   $('#diagnostic-status').textContent = startup.completed < startup.total ? 'Starting' : ready ? 'Healthy' : 'Attention';
   const values = [
     ['Vulcanary', diagnostic.version || 'unknown'], ['Python', diagnostic.python || 'unknown'],
@@ -100,7 +101,11 @@ function renderDiagnostics() {
   for (const repo of state.repositories || []) {
     for (const warning of repo.health?.warnings || []) values.push([`${repo.name} · ${warning.code}`, `${warning.message} Next: ${warning.action}`]);
   }
+  for (const status of Object.values(state.history_secrets?.status || {})) {
+    for (const warning of status.warnings || []) values.push([`${warning.path} · ${warning.code}`, `${warning.message} Next: ${warning.action}`]);
+  }
   const target = $('#diagnostic-grid'); target.replaceChildren();
+  for (const warning of evaluationWarnings) values.push([`Last evaluation · ${warning.code}`, `${warning.message} Next: ${warning.action}`]);
   for (const [label, value] of values) { const card=document.createElement('div'); card.className='diagnostic-card'; const key=document.createElement('span'); key.textContent=label; const result=document.createElement('strong'); result.textContent=value; card.append(key,result); target.append(card); }
 }
 
@@ -550,6 +555,10 @@ function updateFixBar() {
 async function postJson(url, payload = {}) {
   const response = await fetch(url, {method:'POST',headers:actionHeaders(),body:JSON.stringify(payload)});
   const body = await response.json();
+  if (body.evaluation) {
+    evaluationWarnings = [body.evaluation, ...(body.evaluation.results || [])].flatMap(item => item.warnings || []);
+    renderDiagnostics();
+  }
   if (!response.ok) throw new Error(body.error || 'Request failed');
   return body;
 }
@@ -573,7 +582,7 @@ async function authenticatedDownload(url) {
   const response = await fetch(url, {headers: readHeaders()});
   if (!response.ok) {
     let message = `Download failed (${response.status})`;
-    try { message = (await response.json()).error || message; } catch (error) { /* non-JSON error */ }
+    try { const payload = await response.json(); message = payload.error || message; const actions = (payload.warnings || []).map(item => item.action).filter(Boolean); if (actions.length) message += ` Next: ${actions.join(' ')}`; } catch (error) { /* non-JSON error */ }
     throw new Error(message);
   }
   const disposition = response.headers.get('Content-Disposition') || '';

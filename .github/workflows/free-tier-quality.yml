@@ -82,11 +82,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release download v0.60.0 --repo JesseS69/vulcanary --pattern '*.whl' --dir upgrade-oldest
-          gh release download v0.63.0 --repo JesseS69/vulcanary --pattern '*.whl' --dir upgrade-previous
+          gh release download v0.64.0 --repo JesseS69/vulcanary --pattern '*.whl' --dir upgrade-previous
       - name: Rehearse supported upgrades and package rollback in isolated homes
         shell: bash
         run: |
           candidate=(dist/*.whl)
           python scripts/rehearse_upgrade.py --old upgrade-oldest/vulcanary-0.60.0-py3-none-any.whl --candidate "${candidate[0]}"
-          python scripts/rehearse_upgrade.py --old upgrade-previous/vulcanary-0.63.0-py3-none-any.whl --candidate "${candidate[0]}"
-          python scripts/rehearse_upgrade.py --old upgrade-oldest/vulcanary-0.60.0-py3-none-any.whl --intermediate upgrade-previous/vulcanary-0.63.0-py3-none-any.whl --candidate "${candidate[0]}"
+          python scripts/rehearse_upgrade.py --old upgrade-previous/vulcanary-0.64.0-py3-none-any.whl --candidate "${candidate[0]}"
+          python scripts/rehearse_upgrade.py --old upgrade-oldest/vulcanary-0.60.0-py3-none-any.whl --intermediate upgrade-previous/vulcanary-0.64.0-py3-none-any.whl --candidate "${candidate[0]}"

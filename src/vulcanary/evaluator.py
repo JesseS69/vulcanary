@@ -12,6 +12,7 @@ from typing import Callable
 
 from .config import Config
 from .dependencies import scan_dependencies
+from .diagnostics import dependency_diagnostics
 from .fixes import run_verification
 
 
@@ -138,11 +139,11 @@ def evaluate_scoped_overrides(
                 remaining = {finding.rule_id for finding in rescanned}
                 unresolved = [advisory for advisory in candidate["advisories"] if f"SCA-{advisory}" in remaining]
                 if unresolved:
-                    results.append(dict(candidate, status="still_vulnerable", remaining=unresolved, warning=warning))
+                    results.append(dict(candidate, status="still_vulnerable", remaining=unresolved, warning=warning, warnings=dependency_diagnostics([], warning)))
                     continue
                 verification = run_verification(str(project), config.verify_commands, config.verify_timeout_seconds)
                 status = "safe_candidate" if verification["passed"] and not verification.get("skipped") else "verification_skipped" if verification.get("skipped") else "verification_failed"
-                results.append(dict(candidate, status=status, verification=verification, resolved=candidate["advisories"], warning=warning))
+                results.append(dict(candidate, status=status, verification=verification, resolved=candidate["advisories"], warning=warning, warnings=dependency_diagnostics([], warning)))
             finally:
                 _run(["git", "worktree", "remove", "--force", str(worktree)], git_root, 60)
     return {"repository": str(root), "results": results}
@@ -194,7 +195,7 @@ def evaluate_parent_upgrades(
                     continue
                 verification = run_verification(str(project), config.verify_commands, config.verify_timeout_seconds)
                 status = "safe_candidate" if verification["passed"] and not verification.get("skipped") else "verification_skipped" if verification.get("skipped") else "verification_failed"
-                results.append(dict(candidate, status=status, candidate_version=target, verification=verification, warning=warning))
+                results.append(dict(candidate, status=status, candidate_version=target, verification=verification, warning=warning, warnings=dependency_diagnostics([], warning)))
             finally:
                 _run(["git", "worktree", "remove", "--force", str(worktree)], git_root, 60)
     return {"repository": str(root), "results": results}
@@ -257,7 +258,7 @@ def evaluate_expo_platform(findings: list[dict], repository: str, test_migration
                 "repository": str(root), "status": status, "candidate_version": current,
                 "migration_candidate": migration_candidate, "is_migration": is_migration, "remaining": remaining, "resolved": resolved,
                 "advisories": target_advisories, "expo_check_passed": checked.returncode == 0,
-                "verification": verification, "changed_files": sorted(changed), "package_changes": package_changes, "warning": warning,
+                "verification": verification, "changed_files": sorted(changed), "package_changes": package_changes, "warning": warning, "warnings": dependency_diagnostics([], warning),
             }
         finally:
             _run(["git", "worktree", "remove", "--force", str(worktree)], git_root, 60)
