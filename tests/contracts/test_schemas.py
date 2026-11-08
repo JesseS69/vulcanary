@@ -39,6 +39,25 @@ def validator(name):
 
 
 class SchemaContracts(unittest.TestCase):
+    def test_security_run_contract_refuses_false_pass_and_raw_evidence(self):
+        from vulcanary.security_testing import register, execute
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec = root / "spec.json"
+            spec.write_text(json.dumps({"files": ["eval(user_input)\n"], "checks": [
+                {"method": "automated", "rule": "CODE-PY-EVAL", "expected_count": 0},
+                {"method": "manual", "kind": "device-privacy"}]}))
+            register(spec, root / "target.json", authorized=True)
+            report = execute(root / "target.json")
+            validator("security-test-run").validate(report)
+            broken = copy.deepcopy(report)
+            broken["checks"][1]["state"] = "PASS"
+            self.assertFalse(validator("security-test-run").is_valid(broken))
+            broken = copy.deepcopy(report)
+            broken["evidence"][0]["source"] = "secret"
+            self.assertFalse(validator("security-test-run").is_valid(broken))
+            validator("security-test-run").validate(execute(root / "missing.json"))
+
     def test_cli_errors_validate_and_reject_breaking_changes(self):
         token = JSON_ERRORS.set(True)
         try:
