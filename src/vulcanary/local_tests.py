@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from .cli_errors import ArgumentParser
 from .security_testing import digest, read_document, write_new
-from ._test_process import run_worker
+from ._test_process import OUTPUT_LIMIT_BYTES, run_worker
 from .version import __version__
 
 HASH = re.compile(r"[a-f0-9]{64}\Z")
@@ -41,7 +41,7 @@ def execute(spec_path, python, tool_sha256, python_version, *, authorized=False,
               "tool_sha256": None, "python_version": None, "worker_sha256": None,
               "expected_tests": None, "observed": None, "cleanup": "not_needed",
               "reason": "authorization_required", "timeout_seconds": None,
-              "output_limit_bytes": 16384,
+              "output_limit_bytes": OUTPUT_LIMIT_BYTES,
               "limitations": ["Bundled synthetic SHA-256 vectors only; no application test suites.",
                               "Trusted interpreter and installation required; executable hash does not pin its libraries.",
                               "Not a filesystem or network sandbox. No endpoint or device is configured.",
@@ -81,6 +81,7 @@ def execute(spec_path, python, tool_sha256, python_version, *, authorized=False,
             report["attempted"] = True
             code, raw, reason = run_worker([str(python), "-I", "-S", str(root / "worker.py")], root, timeout)
         report["cleanup"] = "complete"
+        # A controller refusal takes precedence over any child-reported exit code.
         if reason:
             report["reason"] = reason
             return report

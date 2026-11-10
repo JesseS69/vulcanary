@@ -80,7 +80,7 @@ class LocalTests(unittest.TestCase):
 
     def test_crash_raw_output_timeout_and_cleanup_failure_never_pass(self):
         for result in ((1, b'SYNTHETIC-SECRET', None), (0, b'SYNTHETIC-SECRET', None),
-                       (-1, b'SYNTHETIC-SECRET', 'timeout'), (-1, b'', 'output_limit')):
+                       (0, b'SYNTHETIC-SECRET', 'timeout'), (0, b'', 'output_limit')):
             with patch.object(runner, 'run_worker', return_value=result):
                 report = self.execute()
                 self.assertEqual(report['state'], 'BLOCKED')
@@ -92,10 +92,13 @@ class LocalTests(unittest.TestCase):
 
     def test_actual_timeout_and_output_flood_are_bounded(self):
         started = time.monotonic()
-        self.assertEqual(self.worker('import time\ntime.sleep(30)\n', timeout=.2)[2], 'timeout')
+        code, output, reason = self.worker('import time\ntime.sleep(30)\n', timeout=.2)
+        self.assertEqual(reason, 'timeout')
+        self.assertEqual(code, 124)
         self.assertLess(time.monotonic() - started, 6)
         code, output, reason = self.worker("while True: print('x'*1024, flush=True)\n", output_limit=2048)
         self.assertEqual(reason, 'output_limit')
+        self.assertEqual(code, 125)
         self.assertLessEqual(len(output), 2048)
 
     def test_real_worker_crash_is_not_a_completed_assertion(self):
@@ -124,7 +127,7 @@ class LocalTests(unittest.TestCase):
         result = json.loads(output)
         self.assertIsNone(result['secret'])
         self.assertIsNone(result['pythonpath'])
-        self.assertEqual(Path(result['cwd']), self.root)
+        self.assertEqual(Path(result['cwd']).resolve(), self.root.resolve())
         self.assertEqual(Path(result['home']), self.root)
 
     def test_children_are_stopped_after_success_too(self):

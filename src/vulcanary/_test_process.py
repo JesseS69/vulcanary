@@ -5,6 +5,8 @@ import subprocess
 import threading
 import time
 
+OUTPUT_LIMIT_BYTES = 16384
+
 
 class WindowsJob:
     def __init__(self, process):
@@ -88,7 +90,7 @@ class WindowsJob:
             self.handle = None
 
 
-def run_worker(command, directory, timeout, output_limit=16384):
+def run_worker(command, directory, timeout, output_limit=OUTPUT_LIMIT_BYTES):
     environment = {"HOME": str(directory), "USERPROFILE": str(directory),
                    "TMP": str(directory), "TEMP": str(directory), "TMPDIR": str(directory)}
     if os.name == "nt":
@@ -147,4 +149,6 @@ def run_worker(command, directory, timeout, output_limit=16384):
         raise OSError("output_cleanup")
     if overflow.is_set():
         reason = "output_limit"
-    return process.returncode, bytes(output), reason
+    # Windows job termination can report zero. Forced stops are never clean exits.
+    code = 124 if reason == "timeout" else 125 if reason == "output_limit" else process.returncode
+    return code, bytes(output), reason
