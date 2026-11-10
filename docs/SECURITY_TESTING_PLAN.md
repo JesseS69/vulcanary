@@ -48,6 +48,12 @@ download. Production and credentialed backend testing are deliberately not prese
 in the first slice. Approval must name the environment and permitted operations;
 an operator declaration is not independent proof of authority.
 
+Phase 1 approval does not authorize the execution boundaries in phases 3 and beyond.
+Before implementing each such phase, explicitly resolve the applicable standing
+merge gate 7 decisions (external executables, credentials, active testing or work
+outside Vulcanary). Approval of a platform capability still does not authorize
+running it against any particular live environment or device.
+
 ## Cross-cutting invariants
 
 - PASS: a named assertion actually executed and matched its expectation. A check
@@ -87,7 +93,10 @@ The private `target.json` stores the source snapshot. **Do not publish it as san
 evidence or place live secrets in it.** A generated reviewer directory contains only
 `report.json`, `reviewer.md`, and `checksums.json`. Output directories/files must be
 new; existing files are never replaced. Package checksums cover the two report
-files, not themselves. An interrupted export may leave a partial directory; absence
+files, not themselves. The manifest is unsigned and unauthenticated: it detects
+accidental corruption against an unchanged manifest, not replacement of both the
+evidence and manifest, and does not establish authorship or authenticity.
+An interrupted export may leave a partial directory; absence
 of the final checksum file means export is incomplete. Use another output directory
 after reviewing any partial output. Cleanup removes only the temporary directory
 created for this execution, never the input snapshot or an application directory.

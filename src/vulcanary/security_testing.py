@@ -177,6 +177,7 @@ def export_package(report: dict, destination: Path) -> None:
     destination.mkdir()  # No overwrite or merging into an existing evidence package.
     write_new(destination / "report.json", report)
     lines = ["# Internal security test evidence", "", "Not independent certification.", "",
+             "checksums.json is unsigned and unauthenticated. It detects accidental corruption when compared with an unchanged manifest, not deliberate replacement of both files and manifest. It does not establish authorship or authenticity.", "",
              f"Run: {report['run_id']}", f"State: {report['state']}",
              f"Target SHA-256: {report['target_sha256']}", f"Plan SHA-256: {report['plan_sha256']}",
              f"Implementation SHA-256: {report['implementation_sha256']}",

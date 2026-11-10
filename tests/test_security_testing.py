@@ -75,6 +75,8 @@ class SecurityTestingTests(unittest.TestCase):
             self.assertTrue(any(item["rule"] == "SECRET-AWS-KEY" for item in report["evidence"]))
             testing.export_package(report, root / "review")
             exported = "".join(path.read_text() for path in (root / "review").iterdir())
+            self.assertIn("checksums.json is unsigned and unauthenticated", exported)
+            self.assertIn("does not establish authorship or authenticity", exported)
             for forbidden in (marker, "PRIVATE_DETAIL", directory, "key ="):
                 self.assertNotIn(forbidden, exported)
             self.assertFalse(report["independent_certification"])
