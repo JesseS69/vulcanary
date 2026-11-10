@@ -75,6 +75,11 @@ running it against any particular live environment or device.
 
 ## First slice: how to run
 
+The subsequent [offline inventory and retest slice](TEST_INVENTORY.md) adds bounded
+artifact hashing, explicitly unverified backend references and append-only source-run
+summaries. It does not implement live deployment identity verification or execute
+mobile/backend artifacts; phase 2 is not claimed complete in its general form.
+
 Use the repository fixture, which contains a deliberately unsafe expression and a
 clean control, not any private application's code:
 

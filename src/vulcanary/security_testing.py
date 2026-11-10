@@ -206,14 +206,25 @@ def main(argv: list[str] | None = None) -> int:
     run = commands.add_parser("run")
     run.add_argument("--target", type=Path, required=True)
     run.add_argument("--output", type=Path, required=True)
+    run.add_argument("--history", type=Path)
+    run.add_argument("--previous", help="Prior history record SHA-256; requires --history")
     args = parser.parse_args(argv)
     try:
         if args.command == "register":
             target = register(args.spec, args.target, authorized=args.authorize_isolated_synthetic_source)
             print(json.dumps({"state": "NOT_RUN", "target_sha256": target["target_sha256"], "plan_sha256": target["plan_sha256"]}))
             return 0
+        if args.previous and not args.history:
+            raise ValueError("history_required")
+        if args.previous:
+            from .test_inventory import load_record
+            load_record(args.history, args.previous)
         report = execute(args.target)
         export_package(report, args.output)
+        if args.history:
+            from .test_inventory import append_run
+            receipt = append_run(args.history, report, args.previous)
+            print(json.dumps(receipt))
         print(json.dumps({"state": report["state"], "counts": report["counts"]}))
         return 2 if report["counts"]["BLOCKED"] else 1 if report["counts"]["FAIL"] else 0
     except (OSError, ValueError, TypeError, KeyError, SyntaxError, RecursionError):
