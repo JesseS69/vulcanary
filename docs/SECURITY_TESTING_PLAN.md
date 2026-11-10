@@ -75,6 +75,12 @@ running it against any particular live environment or device.
 
 ## First slice: how to run
 
+The separately authorized [trusted local-test adapter](TRUSTED_LOCAL_TESTS.md)
+starts phase 3 with a bundled SHA-256 unittest suite on disposable synthetic vectors.
+It launches an explicitly trusted, hash-pinned Python, not repository code. This is
+a partial foundation: arbitrary suites, live endpoints, devices and general OS
+sandboxing remain outside its scope. Phases 1–2 retain their non-executing behavior.
+
 The subsequent [offline inventory and retest slice](TEST_INVENTORY.md) adds bounded
 artifact hashing, explicitly unverified backend references and append-only source-run
 summaries. It does not implement live deployment identity verification or execute

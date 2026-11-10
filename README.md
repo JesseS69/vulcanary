@@ -14,6 +14,11 @@ _Synthetic demonstration data only. No real repository names, paths, credentials
 
 ## Quick start
 
+Experimental security-test execution is separate from scanning: the
+[trusted local-test adapter](docs/TRUSTED_LOCAL_TESTS.md) runs only a bundled
+SHA-256 unittest suite on synthetic vectors with a hash-pinned Python executable.
+It is opt-in, not a sandbox or a general application/device test runner.
+
 Python 3.11 or newer is required.
 
 Install a tagged Windows release by downloading `install-windows.ps1` from that release, reviewing it, and running:

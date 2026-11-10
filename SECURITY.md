@@ -12,6 +12,13 @@ Do not include live credentials, proprietary source code, or unredacted scan rep
 
 ## Safety model
 
+The separate opt-in `python -m vulcanary.local_tests` command executes a bundled
+synthetic SHA-256 unittest suite using an explicitly trusted, hash-pinned local
+Python. It does not execute scanned repository code or accept arbitrary scripts.
+It is not an OS sandbox; only trusted installations and synthetic fixtures are in
+scope. See `docs/TRUSTED_LOCAL_TESTS.md` for process cleanup, output bounds and
+the remaining containment limits. Normal scans never invoke this adapter.
+
 Normal scans treat repositories as untrusted data: Vulcanary reads files without executing repository code or requiring repository credentials, and secret matches are redacted in output.
 
 The experimental `python -m vulcanary.security_testing` workflow runs source-analysis assertions on explicitly registered synthetic Python snapshots. It never executes snapshot code or contacts endpoints. Registration bundles contain private source; only its allowlisted reviewer exports are source-free. Temporary staging is file isolation, not an OS sandbox. Production, external-suite and device execution are not implemented by this slice; see `docs/SECURITY_TESTING_PLAN.md` for their separate future acceptance gates.

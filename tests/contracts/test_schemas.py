@@ -39,6 +39,25 @@ def validator(name):
 
 
 class SchemaContracts(unittest.TestCase):
+    def test_local_test_report_refuses_false_pass_and_raw_output(self):
+        import sys
+        from vulcanary.local_tests import execute
+        python = Path(sys.executable).resolve()
+        pin = hashlib.sha256(python.read_bytes()).hexdigest()
+        version = '.'.join(map(str, sys.version_info[:3]))
+        with tempfile.TemporaryDirectory() as directory:
+            spec = Path(directory) / 'vectors.json'
+            for expected in (hashlib.sha256(b'').hexdigest(), '0' * 64):
+                spec.write_text(json.dumps({'cases': [{'input_hex': '', 'expected_sha256': expected}]}))
+                report = execute(spec, python, pin, version, authorized=True)
+                self.assertIn(report['state'], ('PASS', 'FAIL'))
+                validator('local-test-run').validate(report)
+                self.assertFalse(validator('local-test-run').is_valid({**report, 'stdout': 'secret'}))
+                self.assertFalse(validator('local-test-run').is_valid({**report, 'executed': False}))
+            blocked = execute(spec, python, pin, version)
+            validator('local-test-run').validate(blocked)
+            self.assertFalse(validator('local-test-run').is_valid({**blocked, 'state': 'PASS'}))
+
     def test_security_run_contract_refuses_false_pass_and_raw_evidence(self):
         from vulcanary.security_testing import register, execute
         with tempfile.TemporaryDirectory() as directory:
