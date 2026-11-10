@@ -1,0 +1,9 @@
+{
+  "files": ["raise RuntimeError('Fixture must never execute')\neval(user_input)\n", "message = 'synthetic clean control'\n"],
+  "checks": [
+    {"method": "automated", "rule": "CODE-PY-EVAL", "expected_count": 0},
+    {"method": "automated", "rule": "CODE-PY-PICKLE", "expected_count": 0},
+    {"method": "manual", "kind": "device-privacy"},
+    {"method": "deferred", "kind": "backend-authorization"}
+  ]
+}

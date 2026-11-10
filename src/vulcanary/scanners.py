@@ -641,8 +641,9 @@ def _python_ast_matches(text: str) -> dict[str, list[tuple[int, str]]] | None:
     return matches
 
 
-def scan(root: Path, config: Config) -> list[Finding]:
+def scan(root: Path, config: Config, *, expected_files: set[str] | None = None) -> list[Finding]:
     findings: list[Finding] = []
+    observed_files: set[str] = set()
     rules = rules_for(config)
     for path in iter_files(root, config):
         try:
@@ -650,6 +651,7 @@ def scan(root: Path, config: Config) -> list[Finding]:
         except (UnicodeDecodeError, OSError):
             continue
         rel = relative_path(path, root)
+        observed_files.add(rel)
         lines = text.splitlines()
         python_ast_matches = _python_ast_matches(text) if path.suffix.lower() == ".py" else None
         javascript_syntax_matches = _javascript_syntax_matches(text) if path.suffix.lower() in {".js", ".jsx", ".ts", ".tsx"} else None
@@ -728,4 +730,6 @@ def scan(root: Path, config: Config) -> list[Finding]:
                 finding = Finding(rule.id, rule.title, f"Matched security rule {rule.id}.", rule.severity, rule.category, rel, line, evidence, rule.remediation, metadata=metadata)
                 if not config.is_suppressed(finding.fingerprint):
                     findings.append(finding)
+    if expected_files is not None and observed_files != expected_files:
+        raise ValueError("Source adapter did not read the exact expected file set")
     return sorted({item.fingerprint: item for item in findings}.values(), key=lambda f: (-int(f.severity), f.path, f.line))
