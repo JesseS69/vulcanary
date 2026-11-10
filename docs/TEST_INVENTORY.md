@@ -46,9 +46,10 @@ a multi-file transaction. Same-user edits can replace records and recompute hash
 this is append-only application behavior, not WORM storage, signatures or authentication.
 
 Comparison requires matching non-null plan hash, adapter, implementation hash,
-ruleset digest and check IDs, plus available target identities. Changed source bytes
-are allowed and explicitly flagged, because fixes produce a new target. Changed
-analyzer/plan blocks transition claims. FAIL→PASS is `passed_on_retest`, not an
+ruleset digest and check IDs, plus identical available target identities. Changed
+bytes are linked and flagged but block transition claims: application lineage is
+not verified by this inventory. Changed analyzer/plan also blocks transition claims.
+On identical targets, FAIL→PASS is `passed_on_retest`, not an
 independent security certification; FAIL→FAIL is `persistent_failure`. Unexecuted
 checks never establish resolution. Missing target identity makes comparison
 incompatible. Records do not touch the scanner resolution ledger or SLA clocks.

@@ -6,6 +6,8 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
+import os
 
 from vulcanary import test_inventory as inventory
 from vulcanary.security_testing import register, execute
@@ -13,6 +15,33 @@ from vulcanary.security_testing import main as run_main
 
 
 class InventoryTests(unittest.TestCase):
+    def test_stat_clock_skew_and_same_handle_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "app.apk"
+            path.write_bytes(b"synthetic")
+            real = os.fstat
+            fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_mode")
+            for changed in (None, "st_ctime_ns", "st_mtime_ns", "st_ino", "st_size"):
+                calls = []
+                def observed(fd):
+                    original = real(fd)
+                    result = {name: getattr(original, name) for name in fields}
+                    result["st_ctime_ns"] += 1000000
+                    if calls and changed:
+                        result[changed] += 1
+                    calls.append(True)
+                    return SimpleNamespace(**result)
+                with patch.object(inventory.os, "fstat", side_effect=observed):
+                    result = inventory.artifact_identity(path, "apk")
+                self.assertEqual(result["state"], "BLOCKED" if changed else "NOT_RUN", changed)
+
+    def test_sixty_fresh_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for index in range(60):
+                path = Path(directory) / f"app-{index}.apk"
+                path.write_bytes(b"synthetic" * 100)
+                self.assertEqual(inventory.artifact_identity(path, "apk")["state"], "NOT_RUN")
+
     def test_cli_history_and_linked_retest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -27,7 +56,9 @@ class InventoryTests(unittest.TestCase):
             with redirect_stdout(output):
                 code = run_main(["run", "--target", str(root / "after/target.json"), "--output", str(root / "review-after"), "--history", str(root / "history"), "--previous", first])
             self.assertEqual(code, 0)
-            self.assertEqual(json.loads(output.getvalue().splitlines()[0])["comparison"]["transitions"][0]["result"], "passed_on_retest")
+            comparison = json.loads(output.getvalue().splitlines()[0])["comparison"]
+            self.assertFalse(comparison["compatible"])
+            self.assertEqual(comparison["transitions"], [])
             self.assertEqual(json.loads((root / "review-before/report.json").read_text())["state"], "FAIL")
 
     def run_fixture(self, root, source):
@@ -75,7 +106,8 @@ class InventoryTests(unittest.TestCase):
             path = root / "history" / (first["record_id"] + ".json")
             original = path.read_bytes()
             second = inventory.append_run(root / "history", after, first["record_id"])
-            self.assertEqual(second["comparison"]["transitions"][0]["result"], "passed_on_retest")
+            self.assertFalse(second["comparison"]["compatible"])
+            self.assertEqual(second["comparison"]["transitions"], [])
             self.assertTrue(second["comparison"]["target_changed"])
             self.assertEqual(path.read_bytes(), original)
             self.assertEqual(inventory.append_run(root / "history", before)["record_id"], first["record_id"])

@@ -40,7 +40,9 @@ def artifact_identity(path: Path, kind: str) -> dict:
             after = os.fstat(stream.fileno())
             current = path.stat()
             signature = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
-            if signature(before) != signature(after) or signature(after) != signature(current) or total != before.st_size:
+            # Keep ctime for same-handle changes, not Windows handle/path skew.
+            path_signature = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns)
+            if signature(before) != signature(after) or path_signature(after) != path_signature(current) or total != before.st_size:
                 return result
         result.update(state="NOT_RUN", content_sha256=checksum.hexdigest(), size_bytes=total,
                       identity_verification="local-bytes-hashed")
@@ -130,6 +132,8 @@ def compare(before: dict, after: dict) -> dict:
         incompatible.append("check_ids")
     if before["target_sha256"] is None or after["target_sha256"] is None:
         incompatible.append("target_unavailable")
+    elif before["target_sha256"] != after["target_sha256"]:
+        incompatible.append("target_sha256")
     result = {"compatible": not incompatible, "incompatible_fields": incompatible,
               "target_changed": before["target_sha256"] != after["target_sha256"], "transitions": []}
     if incompatible:
