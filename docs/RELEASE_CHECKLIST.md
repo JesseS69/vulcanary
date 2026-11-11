@@ -26,6 +26,10 @@ CI, unrun installed-wheel checks or unreviewed work complete.
       artifacts with a new version. Never rewrite an already published release.
 - [ ] Download fresh artifacts; verify all four manifest-covered assets (wheel,
       sdist, installer, uninstaller). The fifth asset is the manifest, not self-hashed.
+- [ ] For releases using the provenance gate, run `scripts/verify_release.py`
+      against the downloaded five assets and independently expected tag/commit.
+      Record successful workflow identity verification; checksum-only success is
+      insufficient. See [provenance verification](RELEASE_PROVENANCE.md).
 - [ ] Fresh-environment installed-wheel smoke and installer checksum-gate check pass;
       verify packaged assets, version, representative behavior and offline self-scan.
 - [ ] Release notes name behavior changes, scope, benchmark tradeoffs, remaining

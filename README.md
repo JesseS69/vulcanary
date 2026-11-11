@@ -14,6 +14,10 @@ _Synthetic demonstration data only. No real repository names, paths, credentials
 
 ## Quick start
 
+For release identity verification, see the [release provenance guide](docs/RELEASE_PROVENANCE.md).
+Distribution attestations are not available for v0.68.0 and earlier; the guide
+distinguishes checksums from the prospective attestation gate.
+
 Experimental security-test execution is separate from scanning: the
 [trusted local-test adapter](docs/TRUSTED_LOCAL_TESTS.md) runs only a bundled
 SHA-256 unittest suite on synthetic vectors with a hash-pinned Python executable.
