@@ -14,6 +14,7 @@ import tempfile
 import venv
 
 PUBLISHED = {
+    "vulcanary-0.67.0-py3-none-any.whl": "ccae56ecdef9fa7a1a0ea1cd4bd8a42a5db3cebfe68b0480b8241b565c27b0c7",
     "vulcanary-0.66.0-py3-none-any.whl": "8092870287287aae779ccc4f3db9ef75036a3f41838d122433f330c5adad3eb0",
     "vulcanary-0.65.0-py3-none-any.whl": "390dbcb755d104cf52936cb1109f1d0c24606c3021972db3d1f7ef5c396506d6",
     "vulcanary-0.64.0-py3-none-any.whl": "4f8b763371594728fdf7e927994f0d8d94cf59bc4969472cad41b0e47435dddf",
