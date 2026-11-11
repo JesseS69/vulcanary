@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "adapter", "producer_version", "run_id", "started_at", "finished_at", "state", "attempted", "executed", "policy_effect", "independent_certification", "target_sha256", "scope", "plan_sha256", "implementation_sha256", "tool_sha256", "python_version", "worker_sha256", "expected_tests", "observed", "cleanup", "reason", "timeout_seconds", "output_limit_bytes", "limitations"],
+  "$defs": {"hash": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}},
+  "properties": {
+    "schema": {"const": "vulcanary.local-test-run.v1"},
+    "adapter": {"const": "python-sha256-unittest.v1"},
+    "producer_version": {"type": "string"},
+    "run_id": {"type": "string", "format": "uuid"},
+    "started_at": {"type": "string", "format": "date-time"},
+    "finished_at": {"type": "string", "format": "date-time"},
+    "state": {"enum": ["PASS", "FAIL", "BLOCKED"]},
+    "attempted": {"type": "boolean"},
+    "executed": {"type": "boolean"},
+    "policy_effect": {"const": "none"},
+    "independent_certification": {"const": false},
+    "scope": {"const": "trusted-local-synthetic-vectors"},
+    "target_sha256": {"$ref": "#/$defs/hash"},
+    "plan_sha256": {"$ref": "#/$defs/hash"},
+    "implementation_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "tool_sha256": {"$ref": "#/$defs/hash"},
+    "worker_sha256": {"$ref": "#/$defs/hash"},
+    "python_version": {"type": ["string", "null"], "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "expected_tests": {"type": ["integer", "null"], "minimum": 1, "maximum": 64},
+    "observed": {"oneOf": [{"type": "null"}, {"type": "object", "additionalProperties": false,
+      "required": ["run", "failures", "errors", "skipped", "failed_cases"], "properties": {
+        "failed_cases": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "integer", "minimum": 1, "maximum": 64}},
+        "run": {"type": "integer", "minimum": 1, "maximum": 64},
+        "failures": {"type": "integer", "minimum": 0, "maximum": 64},
+        "errors": {"const": 0}, "skipped": {"const": 0}}}]},
+    "cleanup": {"enum": ["not_needed", "unconfirmed", "complete"]},
+    "reason": {"enum": ["authorization_required", "invalid_timeout", "invalid_vectors", "tool_unavailable_or_untrusted", "execution_or_cleanup_failed", "timeout", "output_limit", "worker_crash", "invalid_worker_result", "tool_version_mismatch", "incomplete_tests", "assertion_mismatch", "assertions_matched"]},
+    "timeout_seconds": {"type": ["number", "null"], "minimum": 0.05, "maximum": 30},
+    "output_limit_bytes": {"const": 16384},
+    "limitations": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+  },
+  "allOf": [
+    {"if": {"properties": {"state": {"const": "BLOCKED"}}}, "then": {"properties": {"executed": {"const": false}, "observed": {"type": "null"}}},
+     "else": {"properties": {"attempted": {"const": true}, "executed": {"const": true}, "cleanup": {"const": "complete"}, "observed": {"type": "object"}, "target_sha256": {"type": "string"}, "plan_sha256": {"type": "string"}, "tool_sha256": {"type": "string"}, "worker_sha256": {"type": "string"}, "python_version": {"type": "string"}, "expected_tests": {"type": "integer"}}}},
+    {"if": {"properties": {"state": {"const": "PASS"}}}, "then": {"properties": {"reason": {"const": "assertions_matched"}, "observed": {"properties": {"failures": {"const": 0}}}}}},
+    {"if": {"properties": {"state": {"const": "FAIL"}}}, "then": {"properties": {"reason": {"const": "assertion_mismatch"}, "observed": {"properties": {"failures": {"minimum": 1}}}}}}
+  ]
+}
