@@ -58,9 +58,37 @@ jobs:
           & $python -m pip uninstall -y vulcanary
           if (-not (Test-Path "$HOME\.vulcanary\app.json")) { throw "Uninstall removed user configuration" }
 
-  publish-github-release:
+  attest-release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build, windows-lifecycle]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: vulcanary-release
+          path: release
+      - name: Attest all five release assets including the checksum manifest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: release/*
+      - name: Verify expected artifact identity before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/verify_release.py --directory release --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA"
+
+  publish-github-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, windows-lifecycle, attest-release]
     runs-on: ubuntu-latest
     permissions:
       contents: write
