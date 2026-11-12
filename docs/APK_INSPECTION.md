@@ -105,7 +105,9 @@ An additional 2,000-trial out-of-band run against the pinned basic.apk fixture
 completed without crashes. These measurements do not prove every malformed input
 is handled, nor that mutations outside the manifest must make declarations unreadable.
 
-The resource-link tests add 1,000 deterministic table mutations, same/different
+The resource-link tests add 10,000 deterministic table mutations (bit changes,
+truncation, insertion, deletion, duplication, null-byte inflation, extreme integers
+and malformed Unicode), same/different
 configuration pairs, alias/default/specification/bounds refusals, missing and
 oversize linked members, warning redaction and complete APK-to-report checks.
 These are synthetic resource tables; the two AOSP APKs above validate the manifest

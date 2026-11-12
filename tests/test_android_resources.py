@@ -153,13 +153,26 @@ class AndroidResourceTests(unittest.TestCase):
 
     def test_seeded_table_mutations_are_bounded(self):
         rng, original = random.Random(20261113), table()
-        for trial in range(1000):
+        for trial in range(10000):
             data = bytearray(original)
             at = rng.randrange(len(data))
-            if trial % 2:
+            operator = trial % 8
+            if operator == 0:
                 data[at] ^= rng.randrange(1, 256)
-            else:
+            elif operator == 1:
                 del data[at:]
+            elif operator == 2:
+                data[at:at] = rng.randbytes(rng.randrange(1, 100))
+            elif operator == 3:
+                del data[at:at + rng.randrange(1, 100)]
+            elif operator == 4:
+                data[at:at] = data[max(0, at - 30):at]
+            elif operator == 5:
+                data[at:at] = b'\0' * 50000
+            elif operator == 6:
+                data[at:at + 4] = struct.pack('<I', rng.choice([0, 0xffffffff, 65536, 0x80000000]))
+            else:
+                data[at:at + 6] = b'\xed\xa0\x80\xf4\x90\x80'
             try:
                 result = resources.resolve_xml(bytes(data), REFERENCE)
                 self.assertTrue(result.startswith('res/') and result.endswith('.xml'))
