@@ -27,7 +27,7 @@ def unpack(fmt, data, offset):
     return struct.unpack_from(fmt, data, offset)
 
 
-def strings(data, header, *, max_count=8192):
+def strings(data, header, *, max_count=8192, max_bytes=MAX_XML):
     require(header == 28)
     count, styles, flags, start, style_start = unpack('<5I', data, 8)
     require(count <= max_count and styles == 0 and style_start == 0 and flags & ~0x101 == 0)
@@ -59,7 +59,7 @@ def strings(data, header, *, max_count=8192):
             value = data[offset:offset + size].decode('utf-16-le')
         require('\0' not in value)
         decoded_bytes += len(value.encode('utf-8'))
-        require(decoded_bytes <= MAX_XML)
+        require(decoded_bytes <= max_bytes)
         values.append(value)
     return values
 

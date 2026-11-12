@@ -19,18 +19,19 @@ REFERENCE = 0x7f010000
 
 
 def pool(values):
-    payload, offsets = b'', []
+    payload, offsets = bytearray(), []
     for value in values:
         raw = value.encode('utf-8')
         offsets.append(len(payload))
         payload += bytes([len(value), len(raw)]) + raw + b'\0'
     payload += b'\0' * (-len(payload) % 4)
     return (struct.pack('<HHI5I', 1, 28, 28 + 4*len(values) + len(payload), len(values), 0, 0x100,
-                        28+4*len(values), 0) + struct.pack('<'+'I'*len(values), *offsets) + payload)
+                        28+4*len(values), 0) + struct.pack('<'+'I'*len(values), *offsets) + bytes(payload))
 
 
-def table(path='res/xml/private-backup.xml', *, other_path=None, alias=False, sparse=False, default=True):
-    values = [path] + ([other_path] if other_path is not None else [])
+def table(path='res/xml/private-backup.xml', *, other_path=None, alias=False, sparse=False, default=True,
+          extra_strings=()):
+    values = [path] + ([other_path] if other_path is not None else []) + list(extra_strings)
     global_pool = pool(values)
     types, keys = pool(['xml']), pool(['private_key_name'])
     def variant(index, qualified):
@@ -96,6 +97,43 @@ class AndroidResourceTests(unittest.TestCase):
         struct.pack_into('<I', data, 8, resources.MAX_STRINGS + 1)
         with self.assertRaises(axml.ManifestError):
             axml.strings(bytes(data), 28, max_count=resources.MAX_STRINGS)
+
+    def test_large_resource_pools_keep_manifest_decoded_budget(self):
+        for count, width in ((20000, 60), (40000, 30)):
+            with self.subTest(count=count, width=width):
+                values = ['x' * width] * count
+                with self.assertRaises(axml.ManifestError):
+                    axml.strings(pool(values), 28, max_count=resources.MAX_STRINGS)
+                self.assertEqual(resources.resolve_xml(table(extra_strings=values), REFERENCE),
+                                 'res/xml/private-backup.xml')
+
+    def test_resource_decoded_budget_exact_boundary(self):
+        path = 'res/xml/private-backup.xml'
+        count, remainder = divmod(resources.MAX_STRING_BYTES - len(path), 100)
+        values = ['x' * 100] * count + ['x' * remainder]
+        data = table(extra_strings=values)
+        self.assertLess(len(data), resources.MAX_TABLE)
+        self.assertEqual(resources.resolve_xml(data, REFERENCE), path)
+        with self.assertRaises(axml.ManifestError):
+            resources.resolve_xml(table(extra_strings=values + ['x']), REFERENCE)
+
+    def test_large_pool_apk_reports_actual_limits_and_still_blocks_policy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'candidate.apk'
+            manifest = binary_manifest({'fullBackupContent': None})
+            manifest = manifest.replace(struct.pack('<I', 0x7f000001), struct.pack('<I', REFERENCE))
+            with zipfile.ZipFile(path, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr('AndroidManifest.xml', manifest)
+                archive.writestr('resources.arsc', table(extra_strings=['x' * 60] * 20000))
+                archive.writestr('res/xml/private-backup.xml', b'not evaluated')
+            report = apk.inspect(path)
+            self.assertEqual(report['backup_resources'][0]['resolution'], 'resolved_file')
+            self.assertEqual(report['backup_resources'][0]['member_sha256'],
+                             hashlib.sha256(b'not evaluated').hexdigest())
+            self.assertEqual(report['limits']['resource_string_pool_decoded_bytes'], resources.MAX_STRING_BYTES)
+            self.assertEqual(report['limits']['manifest_string_pool_decoded_bytes'], axml.MAX_XML)
+            self.assertEqual(report['limits']['resource_string_pool_count'], resources.MAX_STRINGS)
+            self.assertEqual(report['state'], 'BLOCKED')
 
     def test_type_configuration_count_is_verified_when_declared(self):
         original = table()

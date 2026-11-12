@@ -65,9 +65,13 @@ The central directory is counted before ZipFile object allocation. In addition t
 the manifest, only a referenced resource table (8 MiB compressed/uncompressed) and
 at most two linked files (1 MiB each compressed/uncompressed) may be decompressed.
 Resource tables are limited to 32 packages, 8,192 chunks per container, 65,536 entry
-offsets per type and 65,536 strings per pool. The per-string and aggregate decoded
-byte caps remain 4 KiB and 1 MiB respectively; the manifest retains its 8,192-string
-limit. Declared configuration counts are checked against actual type chunks.
+offsets per type and 65,536 strings per pool. Each encoded string remains capped at
+4 KiB. Resource pools have a separate 4 MiB decoded UTF-8 byte budget per pool;
+the manifest retains its 8,192-string and 1 MiB decoded-byte limits. Reports publish
+`resource_string_pool_count`, `resource_string_pool_decoded_bytes` and
+`manifest_string_pool_decoded_bytes` alongside the 8 MiB table limit. All limits
+apply together: staying under the table-size limit alone does not guarantee that
+a pool is supported. Declared configuration counts are checked against actual type chunks.
 Oversize and malformed inputs require a supported,
 bounded artifact or a separate trusted inspection workflow; they are not clean.
 Encrypted or symlink members are refused; duplicate archive names block inspection.
@@ -112,6 +116,9 @@ truncation, insertion, deletion, duplication, null-byte inflation, extreme integ
 and malformed Unicode), same/different
 configuration pairs, alias/default/specification/bounds refusals, missing and
 oversize linked members, warning redaction and complete APK-to-report checks.
+Scaling regressions cover 20,000 strings of 60 bytes and 40,000 strings of 30
+bytes, plus the exact 4 MiB decoded boundary and one byte over it. These larger
+resource pools resolve without relaxing the manifest's decoded-text budget.
 The two AOSP APKs above validate the manifest path, not backup-resource links.
 A locally supplied release APK additionally exercised a real compiled table with
 18,230 global strings and nonzero declared configuration counts: both backup

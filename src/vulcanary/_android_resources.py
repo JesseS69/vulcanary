@@ -6,6 +6,7 @@ from ._android_manifest import require, strings, unpack
 
 MAX_TABLE = 8 * 1024 * 1024
 MAX_STRINGS = 65536
+MAX_STRING_BYTES = 4 * 1024 * 1024
 
 
 def chunks(data, begin, end):
@@ -28,7 +29,7 @@ def resolve_xml(data, reference):
     for _, kind, header, chunk in chunks(data, 12, len(data)):
         if kind == 1:
             require(pool is None and not package_chunks)
-            pool = strings(chunk, header, max_count=MAX_STRINGS)
+            pool = strings(chunk, header, max_count=MAX_STRINGS, max_bytes=MAX_STRING_BYTES)
         else:
             require(kind == 0x200 and pool is not None and header in (284, 288))
             package_id = unpack('<I', chunk, 8)[0]
@@ -51,7 +52,7 @@ def resolve_xml(data, reference):
     for position, kind, header, chunk in children:
         if kind == 1:
             require(position in (type_pool_offset, key_pool_offset) and position not in pools)
-            pools[position] = strings(chunk, header, max_count=MAX_STRINGS)
+            pools[position] = strings(chunk, header, max_count=MAX_STRINGS, max_bytes=MAX_STRING_BYTES)
         else:
             # Overlay, library, staged-alias and unfamiliar package chunks can alter resolution.
             require(kind in (0x201, 0x202))
