@@ -145,6 +145,22 @@ def parse(data, attribute):
     return exclusions
 
 
+def conditional_expansion(domain, path, matches):
+    """Android adds these paths only when the rule target is not a directory.
+
+    APK bytes cannot establish that device-filesystem condition. Do not apply
+    reverse expansion or generalize to device-protected domains.
+    """
+    for rule_domain, rule_path in matches:
+        if rule_domain != domain:
+            continue
+        if domain == 'sharedpref' and not rule_path.endswith('.xml') and path == rule_path + '.xml':
+            return True
+        if domain == 'database' and path in (rule_path + '-journal', rule_path + '-wal'):
+            return True
+    return False
+
+
 def evaluate(requested, parsed):
     rows = []
     for index, row in enumerate(requested):
@@ -155,8 +171,10 @@ def evaluate(requested, parsed):
             found = (row['domain'], row['path']) in matches or (row['domain'], '.') in matches
             state = 'PASS' if found else 'FAIL'
             basis = 'explicit_exclusion_present' if found else 'explicit_exclusion_not_found'
+            if not found and conditional_expansion(row['domain'], row['path'], matches):
+                state, basis = 'BLOCKED', 'conditional_expansion_requires_non_directory'
         rows.append({'id': 'backup-requirement-' + str(index + 1), 'mode': row['mode'],
                      'requirement_sha256': digest(row), 'state': state, 'basis': basis,
-                     'expected': True, 'observed': None if evidence is None else state == 'PASS',
+                     'expected': True, 'observed': None if state == 'BLOCKED' else state == 'PASS',
                      'evidence_method': 'packaged-explicit-exclusion'})
     return rows

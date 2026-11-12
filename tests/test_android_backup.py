@@ -57,6 +57,45 @@ def request(mode='legacy', path='secret-fixture.xml', domain='sharedpref'):
 
 
 class AndroidBackupTests(unittest.TestCase):
+    def test_platform_suffix_expansions_require_device_filesystem_evidence(self):
+        cases = [
+            ('sharedpref', 'vault', 'vault.xml', 'BLOCKED'),
+            ('database', 'store', 'store-journal', 'BLOCKED'),
+            ('database', 'store', 'store-wal', 'BLOCKED'),
+            ('sharedpref', 'vault.xml', 'vault', 'FAIL'),
+            ('sharedpref', 'vault.xml', 'vault.xml.xml', 'FAIL'),
+            ('database', 'store-journal', 'store', 'FAIL'),
+            ('database', 'store-wal', 'store', 'FAIL'),
+            ('database', 'store', 'store-shm', 'FAIL'),
+            ('file', 'vault', 'vault.xml', 'FAIL'),
+            ('device_sharedpref', 'vault', 'vault.xml', 'FAIL'),
+            ('device_database', 'store', 'store-wal', 'FAIL'),
+            ('sharedpref', 'Vault', 'vault.xml', 'FAIL'),
+            ('sharedpref', 'vault', 'vault/child.xml', 'FAIL'),
+            ('sharedpref', 'vault', 'vault', 'PASS'),
+            ('database', '.', 'store-wal', 'PASS'),
+        ]
+        for domain, rule, path, expected in cases:
+            for mode in ('legacy', 'cloud', 'device'):
+                with self.subTest(domain=domain, rule=rule, path=path, mode=mode):
+                    attribute = backup.MODES[mode]
+                    data = legacy(exclude(rule, domain)) if mode == 'legacy' else modern(**{mode: [exclude(rule, domain)]})
+                    parsed = backup.parse(data, attribute)
+                    row = backup.evaluate([request(mode, path, domain)], {attribute: parsed})[0]
+                    self.assertEqual(row['state'], expected)
+                    self.assertEqual(row['observed'], None if expected == 'BLOCKED' else expected == 'PASS')
+                    if expected == 'BLOCKED':
+                        self.assertEqual(row['basis'], 'conditional_expansion_requires_non_directory')
+                    self.assertEqual(apk.summarize([row])[1][expected], 1)
+
+    def test_conditional_expansion_does_not_override_exact_or_cross_domain_rules(self):
+        for extra in (exclude('vault.xml'), exclude('.')):
+            parsed = backup.parse(legacy(exclude('vault'), extra), 'fullBackupContent')
+            self.assertEqual(backup.evaluate([request(path='vault.xml')], {'fullBackupContent': parsed})[0]['state'], 'PASS')
+        for entry in (exclude('vault', 'file'), exclude('vault', name='include')):
+            parsed = backup.parse(legacy(entry), 'fullBackupContent')
+            self.assertEqual(backup.evaluate([request(path='vault.xml')], {'fullBackupContent': parsed})[0]['state'], 'FAIL')
+
     def test_single_trailing_slash_normalizes_both_inputs_without_weakening_paths(self):
         for rule_path, wanted_path in (('secrets/', 'secrets'), ('secrets', 'secrets/')):
             wanted = backup.requirements([request(path=wanted_path), request()])
@@ -168,6 +207,22 @@ class AndroidBackupTests(unittest.TestCase):
             self.assertEqual(summary['backup_assertion_counts'], {'PASS': 0, 'FAIL': 1, 'BLOCKED': 0})
             self.assertEqual(summary['counts'], {'PASS': 2, 'FAIL': 0, 'BLOCKED': 1})
             self.assertIn('"FAIL": 1', (Path(directory)/'cli-failure/reviewer.md').read_text())
+            write(legacy(exclude('secret-fixture')))
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = apk.main(['--apk', str(path), '--backup-requirements', str(requested),
+                                 '--output', str(Path(directory)/'cli-conditional')])
+            self.assertEqual(code, 2)
+            self.assertEqual(json.loads(stdout.getvalue())['backup_assertion_counts'],
+                             {'PASS': 0, 'FAIL': 0, 'BLOCKED': 1})
+            conditional = json.loads((Path(directory)/'cli-conditional/report.json').read_text())
+            self.assertIsNone(conditional['backup_assertions'][0]['observed'])
+            self.assertEqual(conditional['backup_assertions'][0]['basis'],
+                             'conditional_expansion_requires_non_directory')
+            for exported in (Path(directory)/'cli-conditional').iterdir():
+                self.assertNotIn('secret-fixture', exported.read_text())
+            self.assertIn('conditional_expansion_requires_non_directory',
+                          (Path(directory)/'cli-conditional/reviewer.md').read_text())
             write(legacy(exclude(), ('unknown', {}, [])))
             report = apk.inspect(path, backup_requirements=[request()])
             self.assertEqual(report['backup_assertions'][0]['state'], 'BLOCKED')
