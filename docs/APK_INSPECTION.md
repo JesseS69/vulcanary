@@ -79,7 +79,17 @@ domains are accepted; no host paths are opened based on these values.
 |---|---|
 | PASS | A supported compiled rule file contains an explicit exclude in the same domain with the exact requested path, or `.` for that whole domain |
 | FAIL | The supported document does not contain that explicit declaration; this does not prove the file is actually backed up |
-| BLOCKED | The referenced file is unavailable, changed, malformed or outside the supported grammar |
+| BLOCKED | The referenced file is unavailable, changed, malformed or outside the supported grammar, or a platform suffix expansion requires device filesystem evidence |
+
+Android conditionally adds `.xml` for `sharedpref` rules without that suffix,
+and `-journal` and `-wal` for `database` rules, when the rule path is not a
+directory. An APK cannot establish that filesystem condition. These forward
+matches report BLOCKED with `observed: null` and basis
+`conditional_expansion_requires_non_directory`; they never become PASS by
+assumption. Obtain device filesystem evidence and separately verify runtime
+backup behavior. Exact and whole-domain exclusions still take precedence.
+Reverse suffix matching, `-shm`, and device-protected domain expansion are not
+inferred. See the [AOSP implementation](https://android.googlesource.com/platform/frameworks/base/+/0298091d0850a6065a9333c62fb938ff71d175a3/core/java/android/app/backup/FullBackup.java).
 
 Legacy assertions use `fullBackupContent`; cloud and device assertions use their
 distinct sections in `dataExtractionRules`. Missing sections have no explicit
