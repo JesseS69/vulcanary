@@ -1,0 +1,69 @@
+{
+  "candidate": {
+    "platform": "synthetic-model",
+    "source_commit": null,
+    "artifact_sha256": null,
+    "installed_version": null,
+    "os_version": null,
+    "device_sha256": null,
+    "environment_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "account_roles": [
+      {
+        "role": "source",
+        "identity_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "role": "receiver",
+        "identity_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }
+    ],
+    "transfer_eligibility": "unknown"
+  },
+  "scope": {
+    "environment": "local-synthetic",
+    "synthetic_data": true,
+    "permitted_actions": [
+      "register",
+      "run-bundled-transfer-model"
+    ]
+  },
+  "requirements": [
+    "model-transfer-contract",
+    "transfer-refusal",
+    "transfer-upload-response-loss",
+    "transfer-completion-response-loss",
+    "transfer-account-switch",
+    "transfer-historical-keys",
+    "transfer-source-preserved",
+    "transfer-cancel-expire-replay",
+    "transfer-concurrent-receivers",
+    "transfer-durable-receipt",
+    "database-authorization",
+    "database-concurrency",
+    "native-termination-restart",
+    "native-storage-rollback",
+    "native-full-storage",
+    "privacy-device-logs",
+    "privacy-browser-logs",
+    "privacy-crash-analytics-urls",
+    "privacy-clipboard",
+    "privacy-app-switcher",
+    "privacy-temporary-files",
+    "privacy-media-cache",
+    "artifact-backup-exclusions",
+    "artifact-debug-flags",
+    "signup-email-links-cold-warm",
+    "password-controls",
+    "keyboard-text-sizing",
+    "follow-block-notifications",
+    "post-comment-reactions",
+    "chat-flare-media",
+    "account-isolation",
+    "first-use-discoverability",
+    "web-isolated-contexts",
+    "web-storage-console-network",
+    "performance-repeated-samples",
+    "media-near-limit-codecs",
+    "ios-device-coverage"
+  ]
+}
