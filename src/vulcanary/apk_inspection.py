@@ -187,6 +187,7 @@ def inspect(path, *, backup_requirements=None):
     except (OSError, ValueError, KeyError, struct.error, zipfile.BadZipFile, NotImplementedError, RuntimeError, zlib.error, UserWarning):
         pass
     report['state'], report['counts'] = summarize(checks)
+    report['backup_assertion_counts'] = summarize(report['backup_assertions'])[1]
     # Incomplete coverage remains explicit even when a declaration fails.
     return report
 
@@ -200,6 +201,7 @@ def export(report, output):
     lines += ['', 'Backup resource links (not policy verdicts):']
     lines += [f"- {row['attribute']}: {row['resolution']}; SHA-256: {row['member_sha256'] or 'unavailable'}" for row in report['backup_resources']]
     lines += ['', 'Explicit exclusion assertions (not runtime verification):']
+    lines += ['Assertion counts: ' + json.dumps(report['backup_assertion_counts'], sort_keys=True)]
     lines += [f"- {row['id']}: {row['state']}; mode={row['mode']}; basis={row['basis']}; requirement SHA-256: {row['requirement_sha256']}"
               for row in report['backup_assertions']]
     lines += ['', report['action']] + ['- ' + value for value in report['limitations']]
@@ -221,7 +223,8 @@ def main(argv=None):
         requested = backup.read_requirements(args.backup_requirements) if args.backup_requirements else None
         report = inspect(args.apk, backup_requirements=requested)
         export(report, args.output)
-        print(json.dumps({'state': report['state'], 'counts': report['counts']}))
+        print(json.dumps({'state': report['state'], 'counts': report['counts'],
+                          'backup_assertion_counts': report['backup_assertion_counts']}))
         return 0 if report['state'] == 'PASS' else 1 if report['state'] == 'FAIL' else 2
     except (OSError, ValueError, RecursionError):
         print('APK inspection blocked. Supply a supported stable APK and a new output directory.')

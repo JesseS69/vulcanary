@@ -57,6 +57,23 @@ def request(mode='legacy', path='secret-fixture.xml', domain='sharedpref'):
 
 
 class AndroidBackupTests(unittest.TestCase):
+    def test_single_trailing_slash_normalizes_both_inputs_without_weakening_paths(self):
+        for rule_path, wanted_path in (('secrets/', 'secrets'), ('secrets', 'secrets/')):
+            wanted = backup.requirements([request(path=wanted_path), request()])
+            for attribute, data, mode in (
+                    ('fullBackupContent', legacy(exclude(rule_path), exclude(), exclude('logs/', 'file')), 'legacy'),
+                    ('dataExtractionRules', modern(cloud=[exclude(rule_path), exclude(), exclude('logs/', 'file')]), 'cloud')):
+                requests = [dict(row, mode=mode) for row in wanted]
+                rows = backup.evaluate(requests, {attribute: backup.parse(data, attribute)})
+                self.assertEqual([row['state'] for row in rows], ['PASS', 'PASS'])
+        self.assertEqual(backup.digest(backup.requirements([request(path='secrets/')])),
+                         backup.digest(backup.requirements([request(path='secrets')])))
+        for path in ('/', '//', 'logs//', 'logs//nested/', '../logs/', 'logs/../', '/logs/', 'logs/./'):
+            with self.subTest(path=path), self.assertRaises(axml.ManifestError):
+                backup.path_value(path)
+        with self.assertRaises(axml.ManifestError):
+            backup.requirements([request(path='logs'), request(path='logs/')])
+
     def test_legacy_exact_domain_wide_and_include_negative(self):
         for entry, expected in ((exclude(), 'PASS'), (exclude('.'), 'PASS'),
                                 (exclude('./'), 'PASS'), (exclude('other.xml'), 'FAIL'),
@@ -111,7 +128,7 @@ class AndroidBackupTests(unittest.TestCase):
     def test_apk_evidence_is_sanitized_bound_and_never_runtime_pass(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'candidate.apk'
-            content = legacy(exclude())
+            content = legacy(exclude(), exclude('logs/', 'file'))
             manifest = binary_manifest({'debuggable': False, 'allowBackup': False, 'fullBackupContent': None})
             manifest = manifest.replace(struct.pack('<I', 0x7f000001), struct.pack('<I', REFERENCE))
             def write(data):
@@ -132,20 +149,35 @@ class AndroidBackupTests(unittest.TestCase):
                     self.assertNotIn(private, output.read_text())
             requested = Path(directory)/'requirements.json'
             requested.write_text(json.dumps([request()]))
-            with contextlib.redirect_stdout(io.StringIO()):
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
                 code = apk.main(['--apk', str(path), '--backup-requirements', str(requested),
                                  '--output', str(Path(directory)/'cli-review')])
             self.assertEqual(code, 2)
+            self.assertEqual(json.loads(stdout.getvalue())['backup_assertion_counts'],
+                             {'PASS': 1, 'FAIL': 0, 'BLOCKED': 0})
             self.assertEqual(json.loads((Path(directory)/'cli-review/report.json').read_text())
                              ['backup_assertions'][0]['state'], 'PASS')
+            write(legacy())
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = apk.main(['--apk', str(path), '--backup-requirements', str(requested),
+                                 '--output', str(Path(directory)/'cli-failure')])
+            self.assertEqual(code, 2)
+            summary = json.loads(stdout.getvalue())
+            self.assertEqual(summary['backup_assertion_counts'], {'PASS': 0, 'FAIL': 1, 'BLOCKED': 0})
+            self.assertEqual(summary['counts'], {'PASS': 2, 'FAIL': 0, 'BLOCKED': 1})
+            self.assertIn('"FAIL": 1', (Path(directory)/'cli-failure/reviewer.md').read_text())
             write(legacy(exclude(), ('unknown', {}, [])))
             report = apk.inspect(path, backup_requirements=[request()])
             self.assertEqual(report['backup_assertions'][0]['state'], 'BLOCKED')
+            self.assertEqual(report['backup_assertion_counts'], {'PASS': 0, 'FAIL': 0, 'BLOCKED': 1})
             self.assertEqual(report['backup_resources'][0]['resolution'], 'resolved_file')
             with patch.object(apk, 'read_artifact', side_effect=UserWarning('secret-fixture')):
                 report = apk.inspect(path, backup_requirements=[request()])
             self.assertIsNone(report['artifact_sha256'])
             self.assertEqual(report['backup_assertions'][0]['state'], 'BLOCKED')
+            self.assertEqual(apk.inspect(path)['backup_assertion_counts'], {'PASS': 0, 'FAIL': 0, 'BLOCKED': 0})
 
     def test_cli_invalid_requirements_are_source_free(self):
         with tempfile.TemporaryDirectory() as directory:

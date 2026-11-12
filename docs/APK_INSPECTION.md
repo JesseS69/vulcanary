@@ -67,7 +67,10 @@ The file is a JSON array, limited to 64 KiB and 128 unique entries. Unknown fiel
 duplicate JSON keys, unknown modes/domains, empty lists and unsafe or unsupported
 paths are refused. Use normalized relative paths (maximum 512 UTF-8 bytes); `.`
 and `./` mean the whole domain. Other dot components, parent components, absolute
-paths, backslashes and wildcard syntax are unsupported. The nine Android backup
+paths, backslashes and wildcard syntax are unsupported. One trailing slash is
+normalized on both rule and requirement paths (`logs/` equals `logs`); repeated
+or interior empty segments remain unsupported. Digests use the normalized
+requirement, and equivalent duplicate requirements are refused. The nine Android backup
 domains are accepted; no host paths are opened based on these values.
 
 `backup_assertions` is separate from the three primary declaration checks:
@@ -100,7 +103,9 @@ It does not emulate Android version selection, custom backup agents, physical
 storage, installed-build identity, OEM behavior or actual backup/restore. Therefore
 `backup-exclusions` and the overall report remain BLOCKED, with exit 2, even when
 every explicit assertion passes. `counts` still summarizes the three primary
-checks; assertion states are listed separately. This output never enters gates,
+checks; `backup_assertion_counts` separately counts PASS, FAIL and BLOCKED assertions
+in JSON, the CLI summary and the human report. Without requested assertions those
+three counts are zero, not a passing assertion run. This output never enters gates,
 SLA records or the dashboard automatically.
 
 Binary rule documents share the 1 MiB XML and string budgets, with at most 1,024

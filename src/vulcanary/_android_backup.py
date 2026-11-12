@@ -16,6 +16,8 @@ def path_value(value):
     require(not any(ord(c) < 32 or c in '\\:*?[]' for c in value))
     if value in ('.', './'):
         return '.'
+    if value.endswith('/'):
+        value = value[:-1]
     require(all(part not in ('', '.', '..') for part in value.split('/')))
     return value
 
