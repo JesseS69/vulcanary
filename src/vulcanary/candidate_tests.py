@@ -225,7 +225,7 @@ def main(argv=None):
         report = execute(args.manifest, authorized=args.authorize_bundled_model)
         export(report, args.output)
         print(json.dumps({'state': report['state'], 'counts': report['counts']}))
-        return 1 if report['counts']['FAIL'] else 2 if report['counts']['BLOCKED'] else 0
+        return 1 if report['counts']['FAIL'] else 0 if report['state'] == 'PASS' else 2
     except (OSError, ValueError, TypeError, KeyError, RecursionError):
         print('Candidate test blocked. Check the bounded manifest, allowed scope and new output path; no completion is claimed.')
         return 2

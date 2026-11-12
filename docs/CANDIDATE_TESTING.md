@@ -16,7 +16,9 @@ Registration is NOT_RUN. The supplied full-brief example deliberately returns
 BLOCKED (exit 2): the one reference-model contract passes while 36 application
 requirements remain blocked. The report preserves all of them rather than calling
 the candidate clean. PASS/FAIL here describe assertions, not security certification.
-Exit 1 indicates a failed requirement; blocked coverage exits 2. Run reports remain
+For execution, exit 0 requires PASS, exit 1 indicates a failed requirement, and
+BLOCKED, NOT_RUN or DEFERRED exits 2. Registration alone still exits 0 when the
+manifest was successfully created; its NOT_RUN state is not execution evidence. Run reports remain
 outside scanner policy, severity counts, SLA and remediation.
 
 The manifest freezes source commit, artifact hash, installed version, OS version,

@@ -153,6 +153,17 @@ class CandidateTests(unittest.TestCase):
         with patch.object(candidate, 'execute', side_effect=AssertionError('must not execute')):
             self.assertEqual(candidate.main(args), 2)
 
+    def test_unexecuted_android_model_requirement_exits_incomplete(self):
+        spec = example()
+        spec['candidate']['platform'] = 'android'
+        spec['requirements'] = ['model-transfer-contract']
+        self.spec.write_text(json.dumps(spec))
+        candidate.register(self.spec, self.manifest)
+        output = self.root/'android-review'
+        self.assertEqual(candidate.main(['run', '--manifest', str(self.manifest),
+                         '--output', str(output), '--authorize-bundled-model']), 2)
+        self.assertEqual(json.loads((output/'report.json').read_text())['state'], 'NOT_RUN')
+
 
 if __name__ == '__main__':
     unittest.main()
