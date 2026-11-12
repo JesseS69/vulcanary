@@ -13,6 +13,7 @@ import zlib
 
 from . import _android_manifest as axml
 from . import _android_resources as resources
+from . import _android_backup as backup
 from .cli_errors import ArgumentParser
 from .security_testing import write_new
 from .test_inventory import MAX_ARTIFACT_BYTES
@@ -66,8 +67,9 @@ def read_member(archive, name, limit):
     return data
 
 
-def backup_links(archive, declarations):
+def backup_links(archive, declarations, *, evaluate_rules=False):
     rows = []
+    parsed = {}
     table = None
     if any(isinstance(declarations.get(name), dict) and declarations[name].get('kind') == 'reference'
            for name in axml.BACKUP_ATTRIBUTES):
@@ -87,13 +89,15 @@ def backup_links(archive, declarations):
                     path = resources.resolve_xml(table, declaration['value'])
                     data = read_member(archive, path, axml.MAX_XML)
                     row.update(resolution='resolved_file', member_sha256=hashlib.sha256(data).hexdigest(), size_bytes=len(data))
+                    if evaluate_rules:
+                        parsed[name] = backup.parse(data, name)
                 except (ValueError, KeyError, struct.error, zipfile.BadZipFile, zlib.error):
                     pass
         rows.append(row)
-    return rows
+    return rows, parsed
 
 
-def read_artifact(path):
+def read_artifact(path, *, evaluate_rules=False):
     axml.require(not path.is_symlink() and path.is_file())
     with path.open('rb') as stream:
         before = os.fstat(stream.fileno())
@@ -115,7 +119,7 @@ def read_artifact(path):
             axml.require(all(entry.orig_filename == entry.filename for entry in entries))
             data = read_member(archive, 'AndroidManifest.xml', axml.MAX_XML)
             declarations = axml.parse(data, include_backup=True)
-            links = backup_links(archive, declarations)
+            links, parsed = backup_links(archive, declarations, evaluate_rules=evaluate_rules)
         after = os.fstat(stream.fileno())
         axml.require(not path.is_symlink())
         current = path.stat()
@@ -123,7 +127,7 @@ def read_artifact(path):
         path_signature = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns)
         axml.require(signature(before) == signature(after) and path_signature(after) == path_signature(current))
         axml.require(total == before.st_size)
-    return checksum.hexdigest(), total, declarations, links
+    return checksum.hexdigest(), total, declarations, links, parsed
 
 
 def summarize(checks):
@@ -135,7 +139,8 @@ def summarize(checks):
     return state, counts
 
 
-def inspect(path):
+def inspect(path, *, backup_requirements=None):
+    requested = backup.requirements(backup_requirements) if backup_requirements is not None else []
     checks = [{'id': name, 'state': 'BLOCKED', 'expected': False, 'observed': None,
                'basis': 'unavailable'} for name in ('debuggable', 'allowBackup')]
     checks.append({'id': 'backup-exclusions', 'state': 'BLOCKED', 'expected': 'verified_exclusions',
@@ -147,21 +152,26 @@ def inspect(path):
               'policy_effect': 'none', 'independent_certification': False, 'checks': checks, 'backup_resources': [],
               'reason': 'unsupported_invalid_or_changed_artifact',
               'action': 'Supply a stable APK with a supported binary manifest; unresolved backup rules require separate inspection.',
-              'implementation_sha256': hashlib.sha256(Path(__file__).read_bytes() + Path(axml.__file__).read_bytes() + Path(resources.__file__).read_bytes()).hexdigest(),
+              'implementation_sha256': hashlib.sha256(Path(__file__).read_bytes() + Path(axml.__file__).read_bytes() + Path(resources.__file__).read_bytes() + Path(backup.__file__).read_bytes()).hexdigest(),
+              'backup_requirements_sha256': backup.digest(requested) if requested else None,
+              'backup_assertions': backup.evaluate(requested, {}),
               'limits': {'artifact_bytes': MAX_ARTIFACT_BYTES, 'manifest_bytes': axml.MAX_XML,
                          'archive_entries': MAX_ENTRIES, 'central_directory_bytes': MAX_DIRECTORY,
                          'resource_table_bytes': resources.MAX_TABLE, 'backup_file_bytes': axml.MAX_XML,
                          'manifest_string_pool_decoded_bytes': axml.MAX_XML,
                          'resource_string_pool_decoded_bytes': resources.MAX_STRING_BYTES,
-                         'resource_string_pool_count': resources.MAX_STRINGS},
+                         'resource_string_pool_count': resources.MAX_STRINGS,
+                         'backup_requirement_count': backup.MAX_REQUIREMENTS,
+                         'backup_requirement_bytes': backup.MAX_REQUIREMENT_BYTES},
               'limitations': ['Only packaged declarations are inspected; no signing, installability, installed-build identity or runtime behavior is verified.',
                               'Manifest defaults are Android documented defaults; boolean resource references remain unresolved rather than guessed.',
-                              'Backup files are located and hashed only for unambiguous direct links; their contents, custom backup agents and device-specific behavior are not evaluated.',
+                              'Optional backup assertions check only explicit same-domain exact-path or whole-domain exclusions; absence fails that declaration assertion, not a runtime privacy guarantee.',
+                              'Include-only protection, ancestor paths other than the whole domain, cross-domain mappings, custom backup agents, SDK selection and device-specific behavior are not evaluated.',
                               'Aliases, sparse/compact resource entries, overlays and divergent configurations are outside resource-link coverage.',
                               'APK only: AAB/protobuf, split-set merging, ZIP64, text XML and unsupported binary chunks are blocked.',
                               'No archive contents are extracted, installed or executed. Output contains no package names, paths, raw strings or resource values.']}
     try:
-        identity, size, declarations, links = read_artifact(path)
+        identity, size, declarations, links, parsed = read_artifact(path, evaluate_rules=bool(requested))
         for check in checks[:2]:
             name = check['id']
             observed = declarations.get(name, name == 'allowBackup')
@@ -170,7 +180,10 @@ def inspect(path):
             if observed is None:
                 check['basis'] = 'unresolved_value'
         report.update(artifact_sha256=identity, size_bytes=size, identity_verification='local-bytes-hashed',
-                      reason='declarations_inspected_with_coverage_gaps', backup_resources=links)
+                      reason='declarations_inspected_with_coverage_gaps', backup_resources=links,
+                      backup_assertions=backup.evaluate(requested, parsed))
+        if requested:
+            checks[2]['basis'] = 'runtime_backup_effectiveness_not_verified'
     except (OSError, ValueError, KeyError, struct.error, zipfile.BadZipFile, NotImplementedError, RuntimeError, zlib.error, UserWarning):
         pass
     report['state'], report['counts'] = summarize(checks)
@@ -186,6 +199,9 @@ def export(report, output):
     lines += [f"- {row['id']}: {row['state']}; observed={row['observed']}; basis={row['basis']}" for row in report['checks']]
     lines += ['', 'Backup resource links (not policy verdicts):']
     lines += [f"- {row['attribute']}: {row['resolution']}; SHA-256: {row['member_sha256'] or 'unavailable'}" for row in report['backup_resources']]
+    lines += ['', 'Explicit exclusion assertions (not runtime verification):']
+    lines += [f"- {row['id']}: {row['state']}; mode={row['mode']}; basis={row['basis']}; requirement SHA-256: {row['requirement_sha256']}"
+              for row in report['backup_assertions']]
     lines += ['', report['action']] + ['- ' + value for value in report['limitations']]
     lines += ['', 'Checksums are unsigned, not authentication or independent certification.']
     with (output/'reviewer.md').open('x', encoding='utf-8') as stream:
@@ -197,15 +213,17 @@ def main(argv=None):
     parser = ArgumentParser(description=__doc__)
     parser.add_argument('--apk', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--backup-requirements', type=Path)
     try:
         args = parser.parse_args(argv)
         if args.output.exists() or args.output.is_symlink():
             raise ValueError('existing_output')
-        report = inspect(args.apk)
+        requested = backup.read_requirements(args.backup_requirements) if args.backup_requirements else None
+        report = inspect(args.apk, backup_requirements=requested)
         export(report, args.output)
         print(json.dumps({'state': report['state'], 'counts': report['counts']}))
         return 0 if report['state'] == 'PASS' else 1 if report['state'] == 'FAIL' else 2
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         print('APK inspection blocked. Supply a supported stable APK and a new output directory.')
         return 2
 
