@@ -2,7 +2,8 @@
 
 This experimental adapter reads the compiled AndroidManifest.xml inside an
 explicitly supplied APK. It hashes the same open artifact handle, checks that it
-remained stable, and reports selected boolean declarations and backup-file hashes. Nothing is
+remained stable, and reports selected boolean declarations, backup-file hashes and
+optional explicit-exclusion assertions. Nothing is
 extracted, installed, executed, uploaded or read from a device.
 
 ```text
@@ -20,7 +21,7 @@ Package names, source paths, raw strings and resource identifiers are not export
 |---|---|---|
 | debuggable | false | Typed false or the documented absent-attribute default passes this declaration check; true fails it |
 | allowBackup | false | Typed false passes this declaration check; true or the documented absent-attribute default fails it |
-| backup-exclusions | verified rules | Always BLOCKED: locating a referenced file does not evaluate its exclusion rules or custom backup behavior |
+| backup-exclusions | verified exclusions | Always BLOCKED: optional explicit declarations do not establish runtime exclusion effectiveness or custom backup behavior |
 
 The false expectation is this adapter's release/privacy assertion, not a universal
 Android policy. An app may deliberately permit backup. Resource references and
@@ -44,6 +45,73 @@ backup outcomes. Missing files/tables, aliases, divergent configurations, absent
 defaults, sparse/compact entries, overlays and unsupported layouts remain
 `unresolved`. A partial link result never clears the backup-exclusions BLOCKED row.
 Framework resource IDs, rather than raw display strings, select referenced entries.
+
+### Optional explicit-exclusion assertions
+
+Supply an independently chosen list of privacy requirements. Do not derive this
+list from the APK's own exclusions: that would only test a document against itself.
+
+```json
+[
+  {"mode": "legacy", "domain": "sharedpref", "path": "synthetic-secret.xml"},
+  {"mode": "cloud", "domain": "sharedpref", "path": "synthetic-secret.xml"},
+  {"mode": "device", "domain": "sharedpref", "path": "synthetic-secret.xml"}
+]
+```
+
+```text
+python -m vulcanary.apk_inspection --apk candidate.apk --backup-requirements requirements.json --output new-rule-review
+```
+
+The file is a JSON array, limited to 64 KiB and 128 unique entries. Unknown fields,
+duplicate JSON keys, unknown modes/domains, empty lists and unsafe or unsupported
+paths are refused. Use normalized relative paths (maximum 512 UTF-8 bytes); `.`
+and `./` mean the whole domain. Other dot components, parent components, absolute
+paths, backslashes and wildcard syntax are unsupported. One trailing slash is
+normalized on both rule and requirement paths (`logs/` equals `logs`); repeated
+or interior empty segments remain unsupported. Digests use the normalized
+requirement, and equivalent duplicate requirements are refused. The nine Android backup
+domains are accepted; no host paths are opened based on these values.
+
+`backup_assertions` is separate from the three primary declaration checks:
+
+| State | Meaning for this assertion only |
+|---|---|
+| PASS | A supported compiled rule file contains an explicit exclude in the same domain with the exact requested path, or `.` for that whole domain |
+| FAIL | The supported document does not contain that explicit declaration; this does not prove the file is actually backed up |
+| BLOCKED | The referenced file is unavailable, changed, malformed or outside the supported grammar |
+
+Legacy assertions use `fullBackupContent`; cloud and device assertions use their
+distinct sections in `dataExtractionRules`. Missing sections have no explicit
+exclusion. Includes, encryption conditions, implicit protections and literal
+`fullBackupContent=false` never substitute for a matching exclude in this check.
+Ancestor exclusions other than the whole domain and mappings across domains are
+not inferred. A document containing an unfamiliar element/attribute, a reference
+instead of a literal, duplicate sections or an unsupported path is blocked in
+full; a valid prefix cannot produce a partial PASS. The newer cross-platform
+transfer grammar is explicitly unsupported and blocks that document.
+
+Reports contain generated row numbers, modes, states, fixed reasons and digests
+of normalized requirements, never requested paths, domains or raw rule contents.
+The artifact hash, member hash, implementation hash and ordered requirements hash
+bind what was inspected. These hashes are not authentication or encryption.
+Changing requirements changes their digest; row numbers alone are not stable
+finding identities. Keep the original requirement file locally for reproduction.
+
+The parser follows the [Android backup XML format](https://developer.android.com/identity/data/autobackup).
+It does not emulate Android version selection, custom backup agents, physical
+storage, installed-build identity, OEM behavior or actual backup/restore. Therefore
+`backup-exclusions` and the overall report remain BLOCKED, with exit 2, even when
+every explicit assertion passes. `counts` still summarizes the three primary
+checks; `backup_assertion_counts` separately counts PASS, FAIL and BLOCKED assertions
+in JSON, the CLI summary and the human report. Without requested assertions those
+three counts are zero, not a passing assertion run. This output never enters gates,
+SLA records or the dashboard automatically.
+
+Binary rule documents share the 1 MiB XML and string budgets, with at most 1,024
+elements, depth four, eight attributes per element and 8,192 chunks. They are read
+from the same stable APK handle as the manifest. No text XML parser, extraction,
+tool execution or device operation is involved.
 
 The overall report is BLOCKED and execution exits 2 because backup-rule coverage
 is incomplete, even when both boolean checks pass. Individual FAIL rows remain
@@ -126,4 +194,11 @@ references resolved to hashed members (428 and 788 bytes). This is a local
 compatibility observation, not an independently reproducible public corpus; the
 artifact and its paths are not distributed. Broad external backup-resource corpus
 validation remains outstanding. Rule contents and platform behavior remain a
-separate step.
+separate concern: optional explicit assertions inspect declarations only.
+
+Rule-evidence tests cover independent cloud/device results, include-only and
+wrong-path/domain negatives, whole-domain exclusions, malformed trailing nodes,
+unsupported grammar, bounded input, sanitized exports and 3,000 seeded binary
+rule mutations. A read-only local compiled-APK check parsed one legacy exclusion
+and one exclusion in each modern section. That validates format compatibility,
+not the correctness or completeness of an application's private-file requirements.
