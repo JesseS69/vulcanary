@@ -92,7 +92,7 @@ receiver checks are not concurrency evidence. These limits appear in every repor
 | Native lifecycle/storage | Explicit blocked requirements | Android adapter with verified PID death/relaunch, controlled storage faults |
 | Web | Explicit blocked requirements | Isolated browser contexts, actual navigation/storage/console/network observations |
 | Privacy | [Exact synthetic-canary checks](PRIVACY_CANARIES.md) across explicitly supplied exports | Authorized device/browser collection and verified collection provenance |
-| Artifacts | [Offline APK debug/backup declaration checks](APK_INSPECTION.md), hashed bytes; backup rules remain blocked | Resolve packaged backup exclusions; verify installed-to-artifact identity separately |
+| Artifacts | [Offline APK declarations and direct backup-resource links](APK_INSPECTION.md), hashed artifact/member bytes; rule evaluation remains blocked | Evaluate packaged backup exclusions; verify installed-to-artifact identity separately |
 | Functional/visual | Coverage rows only | Scripted journeys plus semantic assertions and human observations |
 | Performance/media | Coverage rows only | Repeated timed samples, payload/codec fixtures, separate client/network measurements |
 | iOS | Explicit blocked coverage | Supported macOS/device runner or honestly labeled guided observations |

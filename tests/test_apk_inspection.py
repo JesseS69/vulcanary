@@ -29,7 +29,7 @@ def binary_manifest(attributes=None, *, utf8=True, wrong_id=False, duplicate=Fal
     pool = struct.pack('<HHI5I', 1, 28, 28 + 4*len(values) + len(pool_data), len(values), 0,
                        0x100 if utf8 else 0, 28 + 4*len(values), 0)
     pool += struct.pack('<' + 'I'*len(values), *offsets) + pool_data
-    ids = [axml.ATTRIBUTES.get(value, 0) for value in values]
+    ids = [{**axml.ATTRIBUTES, **axml.BACKUP_ATTRIBUTES}.get(value, 0) for value in values]
     if wrong_id:
         ids[6] += 1
     resources = struct.pack('<HHI', 0x180, 8, 8 + 4*len(ids)) + struct.pack('<' + 'I'*len(ids), *ids)

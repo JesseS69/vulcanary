@@ -7,6 +7,7 @@ import struct
 
 ANDROID = 'http://schemas.android.com/apk/res/android'
 ATTRIBUTES = {'debuggable': 0x0101000f, 'allowBackup': 0x01010280}
+BACKUP_ATTRIBUTES = {'fullBackupContent': 0x010104eb, 'dataExtractionRules': 0x0101063e}
 NONE = 0xffffffff
 MAX_XML = 1024 * 1024
 
@@ -63,7 +64,7 @@ def strings(data, header):
     return values
 
 
-def parse(data):
+def parse(data, *, include_backup=False):
     require(8 <= len(data) <= MAX_XML)
     kind, header, total = unpack('<HHI', data, 0)
     require(kind == 3 and header == 8 and total == len(data))
@@ -136,7 +137,8 @@ def parse(data):
             seen.add(key)
             raw_value = string(raw)
             resource = resource_map[attr_name] if resource_map and attr_name < len(resource_map) else 0
-            known_name = next((label for label, ident in ATTRIBUTES.items() if ident == resource), None)
+            known_attributes = {**ATTRIBUTES, **BACKUP_ATTRIBUTES}
+            known_name = next((label for label, ident in known_attributes.items() if ident == resource), None)
             if known_name is not None:
                 require(key == (ANDROID, known_name))
             if is_application and key[0] == ANDROID and key[1] in ATTRIBUTES:
@@ -145,6 +147,17 @@ def parse(data):
                 if boolean is not None and raw_value is not None:
                     require(raw_value == ('true' if boolean else 'false'))
                 application[key[1]] = boolean
+            if is_application and key[0] == ANDROID and key[1] in BACKUP_ATTRIBUTES:
+                require(resource == BACKUP_ATTRIBUTES[key[1]])
+                if include_backup:
+                    if value_type == 1 and value != 0:
+                        application[key[1]] = {'kind': 'reference', 'value': value}
+                    elif key[1] == 'fullBackupContent' and value_type == 0x12:
+                        if raw_value is not None:
+                            require(raw_value == ('true' if value else 'false'))
+                        application[key[1]] = {'kind': 'boolean', 'value': bool(value)}
+                    else:
+                        application[key[1]] = {'kind': 'unsupported'}
         stack.append(element)
     require(root_seen and not stack and not namespaces and application is not None)
     return application

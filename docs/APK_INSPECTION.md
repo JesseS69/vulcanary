@@ -2,7 +2,7 @@
 
 This experimental adapter reads the compiled AndroidManifest.xml inside an
 explicitly supplied APK. It hashes the same open artifact handle, checks that it
-remained stable, and reports only selected boolean declarations. Nothing is
+remained stable, and reports selected boolean declarations and backup-file hashes. Nothing is
 extracted, installed, executed, uploaded or read from a device.
 
 ```text
@@ -20,13 +20,30 @@ Package names, source paths, raw strings and resource identifiers are not export
 |---|---|---|
 | debuggable | false | Typed false or the documented absent-attribute default passes this declaration check; true fails it |
 | allowBackup | false | Typed false passes this declaration check; true or the documented absent-attribute default fails it |
-| backup-exclusions | verified rules | Always BLOCKED in this slice: referenced exclusion resources and custom backup behavior are not resolved |
+| backup-exclusions | verified rules | Always BLOCKED: locating a referenced file does not evaluate its exclusion rules or custom backup behavior |
 
 The false expectation is this adapter's release/privacy assertion, not a universal
 Android policy. An app may deliberately permit backup. Resource references and
 unsupported value types are unresolved, never assumed false. Names, Android
 namespaces and framework attribute IDs must agree; ambiguous encodings are blocked.
 Raw and typed boolean values must agree when both are present.
+
+### Backup resource links are evidence, not passing checks
+
+`backup_resources` records `fullBackupContent` and `dataExtractionRules` separately.
+Typed references are followed through a bounded `resources.arsc` table only when a
+default entry exists and every supplied configuration for that entry names the same
+direct XML member. The member's bytes are hashed without exporting its path or
+contents. This does not validate XML contents, exclusions, device-selected behavior,
+or the protection of any particular key. Even arbitrary non-XML member bytes can
+be hashed; that is deliberately not a policy verdict.
+
+Resolution states are `not_declared`, `literal_true`, `literal_false`,
+`resolved_file`, and `unresolved`. Literal values are declarations, not verified
+backup outcomes. Missing files/tables, aliases, divergent configurations, absent
+defaults, sparse/compact entries, overlays and unsupported layouts remain
+`unresolved`. A partial link result never clears the backup-exclusions BLOCKED row.
+Framework resource IDs, rather than raw display strings, select referenced entries.
 
 The overall report is BLOCKED and execution exits 2 because backup-rule coverage
 is incomplete, even when both boolean checks pass. Individual FAIL rows remain
@@ -44,11 +61,15 @@ AAB/protobuf, split-set merging and ZIP64 are outside this slice.
 Bounds: 512 MiB APK, 4 MiB central directory, 10,000 actual archive entries, 1 MiB
 compressed/uncompressed manifest, 8,192 strings/chunks, 4 KiB per encoded string,
 1 MiB aggregate decoded string bytes, 256 attributes per element and depth 64.
-The central directory is counted before ZipFile object allocation. No other APK
-entries are decompressed. Oversize and malformed inputs require a supported,
+The central directory is counted before ZipFile object allocation. In addition to
+the manifest, only a referenced resource table (8 MiB compressed/uncompressed) and
+at most two linked files (1 MiB each compressed/uncompressed) may be decompressed.
+Resource tables are limited to 32 packages, 8,192 chunks per container, 65,536 entry
+offsets per type, and the same bounded string pools described above.
+Oversize and malformed inputs require a supported,
 bounded artifact or a separate trusted inspection workflow; they are not clean.
-Encrypted manifests, duplicate archive names and symlink manifests are refused.
-UserWarning raised while opening or reading the manifest (including overlap
+Encrypted or symlink members are refused; duplicate archive names block inspection.
+UserWarning raised while opening or reading any inspected member (including overlap
 warnings on Python versions that warn instead of raising) also blocks inspection;
 warning text and member names are not echoed to stderr or exports.
 
@@ -83,3 +104,10 @@ changes, truncation, insertion, deletion, duplication and bounded 50 KiB inflati
 An additional 2,000-trial out-of-band run against the pinned basic.apk fixture
 completed without crashes. These measurements do not prove every malformed input
 is handled, nor that mutations outside the manifest must make declarations unreadable.
+
+The resource-link tests add 1,000 deterministic table mutations, same/different
+configuration pairs, alias/default/specification/bounds refusals, missing and
+oversize linked members, warning redaction and complete APK-to-report checks.
+These are synthetic resource tables; the two AOSP APKs above validate the manifest
+path, not production backup-resource compatibility. That broader validation remains
+outstanding. Backup-rule contents and platform behavior are still a separate step.
