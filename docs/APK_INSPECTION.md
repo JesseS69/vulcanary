@@ -48,6 +48,13 @@ The central directory is counted before ZipFile object allocation. No other APK
 entries are decompressed. Oversize and malformed inputs require a supported,
 bounded artifact or a separate trusted inspection workflow; they are not clean.
 Encrypted manifests, duplicate archive names and symlink manifests are refused.
+UserWarning raised while opening or reading the manifest (including overlap
+warnings on Python versions that warn instead of raising) also blocks inspection;
+warning text and member names are not echoed to stderr or exports.
+
+Aggregate state is derived from the check results, with incomplete coverage taking
+precedence over failure. Empty or unsupported state sets cannot pass. Since backup
+exclusions remain unresolved, all current real inspections still exit 2.
 
 ## Format references and external validation
 
