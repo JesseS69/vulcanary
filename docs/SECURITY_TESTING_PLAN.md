@@ -147,3 +147,7 @@ NOT_RUN/DEFERRED still require inspecting counts. These exits are test assertion
 not changes to scan-policy exits. This experimental module entry point is distinct
 from the stable `vulcanary` CLI. No manual attestation editor, device integration,
 live backend test, historical run database or automated fix is claimed yet.
+
+An independent [synthetic privacy-canary adapter](PRIVACY_CANARIES.md) can inspect
+explicitly supplied exports. Its results do not establish device collection or
+automatically satisfy a candidate's native privacy requirements.
