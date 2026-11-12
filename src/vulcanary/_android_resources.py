@@ -5,6 +5,7 @@ Layout reference: AOSP androidfw ResourceTypes.h. No resource values are exporte
 from ._android_manifest import require, strings, unpack
 
 MAX_TABLE = 8 * 1024 * 1024
+MAX_STRINGS = 65536
 
 
 def chunks(data, begin, end):
@@ -27,7 +28,7 @@ def resolve_xml(data, reference):
     for _, kind, header, chunk in chunks(data, 12, len(data)):
         if kind == 1:
             require(pool is None and not package_chunks)
-            pool = strings(chunk, header)
+            pool = strings(chunk, header, max_count=MAX_STRINGS)
         else:
             require(kind == 0x200 and pool is not None and header in (284, 288))
             package_id = unpack('<I', chunk, 8)[0]
@@ -50,7 +51,7 @@ def resolve_xml(data, reference):
     for position, kind, header, chunk in children:
         if kind == 1:
             require(position in (type_pool_offset, key_pool_offset) and position not in pools)
-            pools[position] = strings(chunk, header)
+            pools[position] = strings(chunk, header, max_count=MAX_STRINGS)
         else:
             # Overlay, library, staged-alias and unfamiliar package chunks can alter resolution.
             require(kind in (0x201, 0x202))
@@ -62,9 +63,12 @@ def resolve_xml(data, reference):
         if kind != 0x202:
             continue
         require(header == 16)
-        type_id, flags, reserved, count = unpack('<BBHI', chunk, 8)
-        require(0 < type_id <= len(type_names) and flags == reserved == 0 and count <= 65536)
+        type_id, reserved, types_count, count = unpack('<BBHI', chunk, 8)
+        require(0 < type_id <= len(type_names) and reserved == 0 and count <= 65536)
         require(len(chunk) == 16 + 4 * count and type_id not in specs)
+        actual_types = sum(kind == 0x201 and unpack('<B', child, 8)[0] == type_id
+                           for _, kind, _, child in children)
+        require(types_count == 0 or types_count == actual_types)
         specs[type_id] = count
     require(raw_type in specs and wanted_entry < specs[raw_type])
     values, default_seen, configurations = [], False, set()
@@ -73,10 +77,11 @@ def resolve_xml(data, reference):
             continue
         require(header >= 16)
         type_id, flags, reserved, count = unpack('<BBHI', chunk, 8)
-        require(0 < type_id <= len(type_names) and reserved == 0 and count <= 65536)
+        require(0 < type_id <= len(type_names) and count <= 65536)
         if kind == 0x202:
             require(header == 16 and flags == 0 and len(chunk) == 16 + 4 * count)
             continue
+        require(reserved == 0)
         if type_id != raw_type:
             continue
         require(count <= specs[raw_type])

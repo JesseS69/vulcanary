@@ -27,10 +27,10 @@ def unpack(fmt, data, offset):
     return struct.unpack_from(fmt, data, offset)
 
 
-def strings(data, header):
+def strings(data, header, *, max_count=8192):
     require(header == 28)
     count, styles, flags, start, style_start = unpack('<5I', data, 8)
-    require(count <= 8192 and styles == 0 and style_start == 0 and flags & ~0x101 == 0)
+    require(count <= max_count and styles == 0 and style_start == 0 and flags & ~0x101 == 0)
     require(header + 4 * count <= start <= len(data))
     values = []
     decoded_bytes = 0

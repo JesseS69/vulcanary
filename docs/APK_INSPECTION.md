@@ -65,7 +65,9 @@ The central directory is counted before ZipFile object allocation. In addition t
 the manifest, only a referenced resource table (8 MiB compressed/uncompressed) and
 at most two linked files (1 MiB each compressed/uncompressed) may be decompressed.
 Resource tables are limited to 32 packages, 8,192 chunks per container, 65,536 entry
-offsets per type, and the same bounded string pools described above.
+offsets per type and 65,536 strings per pool. The per-string and aggregate decoded
+byte caps remain 4 KiB and 1 MiB respectively; the manifest retains its 8,192-string
+limit. Declared configuration counts are checked against actual type chunks.
 Oversize and malformed inputs require a supported,
 bounded artifact or a separate trusted inspection workflow; they are not clean.
 Encrypted or symlink members are refused; duplicate archive names block inspection.
@@ -110,6 +112,11 @@ truncation, insertion, deletion, duplication, null-byte inflation, extreme integ
 and malformed Unicode), same/different
 configuration pairs, alias/default/specification/bounds refusals, missing and
 oversize linked members, warning redaction and complete APK-to-report checks.
-These are synthetic resource tables; the two AOSP APKs above validate the manifest
-path, not production backup-resource compatibility. That broader validation remains
-outstanding. Backup-rule contents and platform behavior are still a separate step.
+The two AOSP APKs above validate the manifest path, not backup-resource links.
+A locally supplied release APK additionally exercised a real compiled table with
+18,230 global strings and nonzero declared configuration counts: both backup
+references resolved to hashed members (428 and 788 bytes). This is a local
+compatibility observation, not an independently reproducible public corpus; the
+artifact and its paths are not distributed. Broad external backup-resource corpus
+validation remains outstanding. Rule contents and platform behavior remain a
+separate step.

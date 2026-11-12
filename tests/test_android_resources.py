@@ -39,7 +39,7 @@ def table(path='res/xml/private-backup.xml', *, other_path=None, alias=False, sp
             config[24] = 31
         return (struct.pack('<HHIBBHII', 0x201, 48, 68, 1, int(sparse), 0, 1, 52)
                 + config + struct.pack('<IHHIHBBI', 0, 8, 2, 0, 8, 0, 1 if alias else 3, index))
-    spec = struct.pack('<HHIBBHII', 0x202, 16, 20, 1, 0, 0, 1, 0)
+    spec = struct.pack('<HHIBBHII', 0x202, 16, 20, 1, 0, 1 if other_path is None else 2, 1, 0)
     children = types + keys + spec + variant(0, not default)
     if other_path is not None:
         children += variant(1, True)
@@ -86,6 +86,28 @@ class AndroidResourceTests(unittest.TestCase):
         with patch.object(resources, 'MAX_TABLE', len(original) - 1):
             with self.assertRaises(axml.ManifestError):
                 resources.resolve_xml(original, REFERENCE)
+
+    def test_resource_pool_allowance_does_not_relax_manifest_limit(self):
+        data = pool(['x'] * 9000)
+        with self.assertRaises(axml.ManifestError):
+            axml.strings(data, 28)
+        self.assertEqual(len(axml.strings(data, 28, max_count=resources.MAX_STRINGS)), 9000)
+        data = bytearray(data)
+        struct.pack_into('<I', data, 8, resources.MAX_STRINGS + 1)
+        with self.assertRaises(axml.ManifestError):
+            axml.strings(bytes(data), 28, max_count=resources.MAX_STRINGS)
+
+    def test_type_configuration_count_is_verified_when_declared(self):
+        original = table()
+        spec = original.index(struct.pack('<HHI', 0x202, 16, 20))
+        for count in (0, 1, 2):
+            data = bytearray(original)
+            struct.pack_into('<H', data, spec + 10, count)
+            if count == 2:
+                with self.assertRaises(axml.ManifestError):
+                    resources.resolve_xml(bytes(data), REFERENCE)
+            else:
+                self.assertEqual(resources.resolve_xml(bytes(data), REFERENCE), 'res/xml/private-backup.xml')
 
     def test_missing_or_oversize_linked_member_stays_unresolved(self):
         with tempfile.TemporaryDirectory() as directory:
