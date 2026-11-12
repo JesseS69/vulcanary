@@ -154,6 +154,31 @@ class ApkInspectionTests(unittest.TestCase):
         with patch.object(apk, 'inspect', side_effect=AssertionError('must not inspect')):
             self.assertEqual(apk.main(args), 2)
 
+    def test_seeded_archive_mutations_are_bounded_and_never_crash(self):
+        self.artifact()
+        original = self.path.read_bytes()
+        rng = random.Random(20261112)
+        for trial in range(300):
+            data = bytearray(original)
+            at = rng.randrange(len(data))
+            operation = trial % 6
+            if operation == 0:
+                data[at] ^= rng.randrange(1, 256)
+            elif operation == 1:
+                del data[at:]
+            elif operation == 2:
+                data[at:at] = b'\0' * rng.randrange(1, 128)
+            elif operation == 3:
+                del data[at:at + rng.randrange(1, 128)]
+            elif operation == 4:
+                data[at:at] = data[max(0, at-50):at]
+            else:
+                data[at:at] = b'\xff' * 50000
+            self.path.write_bytes(data)
+            result = apk.inspect(self.path)
+            self.assertEqual(result['state'], 'BLOCKED')
+            self.assertEqual(sum(result['counts'].values()), 3)
+
 
 if __name__ == '__main__':
     unittest.main()

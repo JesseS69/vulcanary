@@ -70,4 +70,9 @@ They are not bundled or automatically downloaded by Vulcanary or its test suite.
 To reproduce, retrieve the files from the pinned source tree, verify these hashes,
 and invoke the command above. Synthetic binary fixtures in the permanent suite
 cover explicit booleans, resource references, UTF encodings and negative cases;
-200 seeded mutations exercise malformed-input handling without network access.
+200 seeded binary-manifest mutations and 300 archive mutations exercise
+malformed-input handling without network access. Archive operators include bit
+changes, truncation, insertion, deletion, duplication and bounded 50 KiB inflation.
+An additional 2,000-trial out-of-band run against the pinned basic.apk fixture
+completed without crashes. These measurements do not prove every malformed input
+is handled, nor that mutations outside the manifest must make declarations unreadable.
