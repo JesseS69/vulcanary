@@ -15,7 +15,7 @@ A criterion moves to **Met** only when its evidence is repeatable by another con
 
 ## Release blockers
 
-Current tally: **34 Met / 4 Partial / 5 Open** across **43 release criteria**.
+Current tally: **35 Met / 4 Partial / 4 Open** across **43 release criteria**.
 The status-vocabulary rows above are definitions, not additional criteria.
 
 ### 1. Trust boundaries and safe defaults
@@ -67,7 +67,7 @@ The status-vocabulary rows above are definitions, not additional criteria.
 | **Met** | Windows installation and removal preserve user data by default. | The release workflow exercises install, upgrade, configuration export/import, backup/restore, and uninstall. Purging local data requires an explicit flag. |
 | **Met** | A package reinstall preserves local configuration. | `upgrade-preservation` compares application configuration byte-for-byte after reinstall in an isolated home directory. |
 | **Met** | Upgrade compatibility is proven across a declared support window. | `docs/UPGRADES.md` declares 0.60.0–0.68.0 endpoint coverage for the 0.69 candidate. Hash-pinned installed-wheel rehearsals check direct/sequential upgrades, configuration/token, suppression data, fingerprints, first-seen, acknowledgements and sealed receipts; mandatory CI runs them on three operating systems. Not exhaustive across all hand-edited state or intermediate versions. |
-| **Open** | Release provenance has a documented verification path. | `docs/RELEASE_PROVENANCE.md` and `scripts/verify_release.py` define exact repository/workflow/tag/commit verification for all five assets. The tag-only release gate attests and verifies before publication. Still Open until a reviewed tagged release and independently downloaded artifacts pass the live gate; v0.68.0 and earlier have no distribution attestations. |
+| **Met** | Release provenance has a documented verification path. | `docs/RELEASE_PROVENANCE.md` records the successful v0.69.0 tagged gate and independent verification of all five freshly downloaded assets against the tag-ref commit, plus a wrong-commit negative control (exit 2). `scripts/verify_release.py` enforces exact repository/workflow/tag/commit identity before publication. v0.68.0 and earlier remain checksum-only. |
 | **Met** | Release rollback is rehearsed. | `scripts/rehearse_upgrade.py` reinstalls actual old wheels and checks retained state/proofs after rewriting. `docs/UPGRADES.md` covers stopped-process backups, known-good packages, release withdrawal communication and immutable checksum/tag handling; no public release is withdrawn by the test. |
 
 ### 5. User experience and documentation

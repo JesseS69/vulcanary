@@ -75,6 +75,10 @@ running it against any particular live environment or device.
 
 ## First slice: how to run
 
+The [frozen candidate and transfer-model workflow](CANDIDATE_TESTING.md) maps the
+mobile/web acceptance brief into evidence-specific coverage. Its model results
+cannot satisfy installed-device, real transport or deployed-database requirements.
+
 The separately authorized [trusted local-test adapter](TRUSTED_LOCAL_TESTS.md)
 starts phase 3 with a bundled SHA-256 unittest suite on disposable synthetic vectors.
 It launches an explicitly trusted, hash-pinned Python, not repository code. This is
@@ -147,3 +151,7 @@ live backend test, historical run database or automated fix is claimed yet.
 The [bundled synthetic transport adapter](SYNTHETIC_TRANSPORT_TESTS.md) exercises
 real HTTP response loss against its own temporary loopback relay. It is harness
 validation only, separate from target backend and installed-device evidence.
+
+An independent [synthetic privacy-canary adapter](PRIVACY_CANARIES.md) can inspect
+explicitly supplied exports. Its results do not establish device collection or
+automatically satisfy a candidate's native privacy requirements.
