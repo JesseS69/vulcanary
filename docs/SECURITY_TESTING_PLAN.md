@@ -148,6 +148,10 @@ not changes to scan-policy exits. This experimental module entry point is distin
 from the stable `vulcanary` CLI. No manual attestation editor, device integration,
 live backend test, historical run database or automated fix is claimed yet.
 
+The [bundled synthetic transport adapter](SYNTHETIC_TRANSPORT_TESTS.md) exercises
+real HTTP response loss against its own temporary loopback relay. It is harness
+validation only, separate from target backend and installed-device evidence.
+
 An independent [synthetic privacy-canary adapter](PRIVACY_CANARIES.md) can inspect
 explicitly supplied exports. Its results do not establish device collection or
 automatically satisfy a candidate's native privacy requirements.
