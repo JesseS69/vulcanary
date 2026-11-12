@@ -57,9 +57,9 @@ class Fixture:
             tenant = self.tenant(db, session)
             # One conditional UPDATE, not a check-then-write in application memory.
             return db.execute('''UPDATE transfer SET claimed=?
-                WHERE id=1 AND tenant=? AND revoked=0
+                WHERE id=1 AND tenant=? AND (revoked=0 OR ?)
                 AND (approved=1 OR ?) AND (expires>? OR ?) AND (claimed IS NULL OR ?)''',
-                (session, tenant, self.defect == 'bypass-approval', NOW,
+                (session, tenant, self.defect == 'bypass-revocation', self.defect == 'bypass-approval', NOW,
                  self.defect == 'bypass-expiry', self.defect == 'unchecked-claim')).rowcount == 1
 
     def snapshot(self):

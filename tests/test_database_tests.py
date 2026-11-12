@@ -22,7 +22,8 @@ class DatabaseContractTests(unittest.TestCase):
         controls = [('bypass-tenant', 'cross-account-read'), ('bypass-tenant', 'cross-account-write'),
                     ('bypass-session', 'expired-session'), ('bypass-session', 'logged-out-session'),
                     ('bypass-approval', 'unapproved-claim'), ('bypass-expiry', 'expired-transfer'),
-                    ('unchecked-claim', 'concurrent-receivers')]
+                    ('bypass-revocation', 'revoked-transfer'), ('unchecked-claim', 'concurrent-receivers')]
+        self.assertEqual({case for _, case in controls}, set(database.CASES))
         for defect, case in controls:
             with self.subTest(defect=defect, case=case):
                 result = database.check(case, defect=defect)
@@ -30,6 +31,14 @@ class DatabaseContractTests(unittest.TestCase):
                 self.assertEqual(result['cleanup'], 'complete')
         result = database.check('concurrent-receivers', defect='unchecked-claim')
         self.assertTrue(all(value['accepted'] == 2 for value in result['observations']))
+
+    def test_revocation_control_only_breaks_revoked_transfer(self):
+        for case in database.CASES:
+            with self.subTest(case=case):
+                result = database.check(case, defect='bypass-revocation')
+                self.assertEqual(result['state'], 'FAIL' if case == 'revoked-transfer' else 'PASS')
+                if case == 'revoked-transfer':
+                    self.assertEqual(result['observations'], [{'allowed': True, 'state_unchanged': False}])
 
     def test_authorization_and_digest_checked_before_fixture_creation(self):
         with patch.object(database, 'Fixture', side_effect=AssertionError('must not create')):

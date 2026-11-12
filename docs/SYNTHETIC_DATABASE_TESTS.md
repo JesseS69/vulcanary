@@ -21,8 +21,9 @@ executes an atomic conditional UPDATE. A successful transaction is committed
 before it is counted as accepted. The stored claimant must match the sole winner.
 Five independent races run; winner identity is intentionally not fixed. The test
 suite removes the atomic claim predicate and verifies both contenders succeed,
-causing FAIL. Other negative controls bypass tenant, session, approval and expiry
-checks, and each corresponding assertion must fail.
+causing FAIL. Other negative controls bypass tenant, session, approval, expiry
+and revocation checks, and each corresponding assertion must fail. The test suite
+also requires an explicit negative control for every check in the case catalog.
 
 This is **not RLS validation**: SQLite authorization here comes from the bundled
 query predicates, not database-user privileges. Deployed PostgreSQL/Supabase
