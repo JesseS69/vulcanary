@@ -6,15 +6,32 @@ Releases through **v0.68.0 do not have distribution attestations**. Their checks
 manifests cover four payload files but are not signatures. Existing scan-report
 attestations from `vulcanary.yml` do not attest release distributions.
 
-The proposed release gate requires GitHub keyless SLSA provenance for every future
+The release gate requires GitHub keyless SLSA provenance for every future
 distribution asset before publication: wheel, source archive, installer, uninstaller
 and the checksum manifest itself. The manifest still contains only four hashes;
 it cannot hash itself. Attestations are stored by GitHub, not added as a sixth
 downloadable asset. No existing tag or artifact is rewritten.
 
-The readiness criterion remains **Open** until a reviewed tagged release completes
-attestation and verification and a freshly downloaded copy is verified independently.
-Unit tests and a workflow diff alone do not establish that the signing service works.
+The readiness criterion is **Met** following the v0.69.0 live gate and independent
+artifact verification. Unit tests and a workflow diff alone were insufficient.
+
+### Recorded live evidence
+
+- Release: [v0.69.0](https://github.com/JesseS69/vulcanary/releases/tag/v0.69.0),
+  commit `ac67e069aa2edf8bf24b46a2a1f2f677e2a5f926`.
+- [Tagged workflow 43113831512](https://github.com/JesseS69/vulcanary/actions/runs/43113831512)
+  completed build, Windows lifecycle, attestation/verification and publication.
+  Publication depended on successful provenance verification.
+- Independent review downloaded all five assets into an empty directory and ran
+  the verifier from a trusted main checkout, using the commit from the tag ref
+  rather than the downloaded artifacts. Expected identity verified with exit 0.
+- The independent negative control changed the final commit digit to `7`.
+  Verification rejected the mismatched BuildSignerDigest and returned exit 2.
+
+This records the independent review evidence supplied after release; it is not
+a new certification or a claim about earlier releases. Every subsequent release
+must still pass its own gate. No provenance check proves source-code safety,
+reproducibility, dependency integrity, or application security.
 
 ## Consumer procedure
 
