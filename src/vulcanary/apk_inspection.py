@@ -7,6 +7,7 @@ from pathlib import Path
 import stat
 import struct
 import uuid
+import warnings
 import zipfile
 import zlib
 
@@ -75,8 +76,10 @@ def read_artifact(path):
             axml.require(not info.is_dir() and not stat.S_ISLNK(info.external_attr >> 16))
             axml.require(not info.flag_bits & 1 and info.compress_type in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED))
             axml.require(0 < info.file_size <= axml.MAX_XML and 0 < info.compress_size <= axml.MAX_XML)
-            with archive.open(info) as manifest:
-                data = manifest.read(axml.MAX_XML + 1)
+            with warnings.catch_warnings():
+                warnings.simplefilter('error', UserWarning)
+                with archive.open(info) as manifest:
+                    data = manifest.read(axml.MAX_XML + 1)
             axml.require(len(data) == info.file_size and len(data) <= axml.MAX_XML)
             declarations = axml.parse(data)
         after = os.fstat(stream.fileno())
@@ -87,6 +90,15 @@ def read_artifact(path):
         axml.require(signature(before) == signature(after) and path_signature(after) == path_signature(current))
         axml.require(total == before.st_size)
     return checksum.hexdigest(), total, declarations
+
+
+def summarize(checks):
+    counts = {state: sum(row['state'] == state for row in checks) for state in ('PASS', 'FAIL', 'BLOCKED')}
+    if not checks or sum(counts.values()) != len(checks) or counts['BLOCKED']:
+        state = 'BLOCKED'
+    else:
+        state = 'FAIL' if counts['FAIL'] else 'PASS'
+    return state, counts
 
 
 def inspect(path):
@@ -120,9 +132,9 @@ def inspect(path):
                 check['basis'] = 'unresolved_value'
         report.update(artifact_sha256=identity, size_bytes=size, identity_verification='local-bytes-hashed',
                       reason='declarations_inspected_with_coverage_gaps')
-    except (OSError, ValueError, KeyError, struct.error, zipfile.BadZipFile, NotImplementedError, RuntimeError, zlib.error):
+    except (OSError, ValueError, KeyError, struct.error, zipfile.BadZipFile, NotImplementedError, RuntimeError, zlib.error, UserWarning):
         pass
-    report['counts'] = {state: sum(row['state'] == state for row in checks) for state in ('PASS', 'FAIL', 'BLOCKED')}
+    report['state'], report['counts'] = summarize(checks)
     # Incomplete coverage remains explicit even when a declaration fails.
     return report
 
@@ -151,7 +163,7 @@ def main(argv=None):
         report = inspect(args.apk)
         export(report, args.output)
         print(json.dumps({'state': report['state'], 'counts': report['counts']}))
-        return 2  # Backup-exclusion coverage is deliberately incomplete in this slice.
+        return 0 if report['state'] == 'PASS' else 1 if report['state'] == 'FAIL' else 2
     except (OSError, ValueError):
         print('APK inspection blocked. Supply a supported stable APK and a new output directory.')
         return 2

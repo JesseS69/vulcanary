@@ -1,4 +1,6 @@
 import hashlib
+import io
+from contextlib import redirect_stderr
 import json
 from pathlib import Path
 import random
@@ -153,6 +155,28 @@ class ApkInspectionTests(unittest.TestCase):
             self.assertNotIn(axml.ANDROID, file.read_text())
         with patch.object(apk, 'inspect', side_effect=AssertionError('must not inspect')):
             self.assertEqual(apk.main(args), 2)
+
+    def test_archive_user_warning_blocks_without_echoing_member_names(self):
+        self.artifact()
+        def warn_instead_of_open(*args, **kwargs):
+            warnings.warn('Overlapped entries: private-member-name', UserWarning)
+            raise AssertionError('warning must abort before continuing')
+        stderr = io.StringIO()
+        with patch.object(apk.zipfile.ZipFile, 'open', warn_instead_of_open), redirect_stderr(stderr):
+            report = apk.inspect(self.path)
+        self.assertEqual(report['counts']['BLOCKED'], 3)
+        self.assertIsNone(report['artifact_sha256'])
+        self.assertEqual(stderr.getvalue(), '')
+        self.assertNotIn('private-member-name', json.dumps(report))
+
+    def test_aggregate_state_tracks_checks_and_incomplete_defaults(self):
+        for states, expected in [(['PASS'], 'PASS'), (['PASS', 'FAIL'], 'FAIL'),
+                                 (['FAIL', 'BLOCKED'], 'BLOCKED'), ([], 'BLOCKED'),
+                                 (['NOT_RUN'], 'BLOCKED'), (['DEFERRED'], 'BLOCKED')]:
+            with self.subTest(states=states):
+                state, counts = apk.summarize([{'state': value} for value in states])
+                self.assertEqual(state, expected)
+                self.assertEqual(counts['FAIL'], states.count('FAIL'))
 
     def test_seeded_archive_mutations_are_bounded_and_never_crash(self):
         self.artifact()
