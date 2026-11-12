@@ -33,6 +33,8 @@ def load(path):
     record = read_document(path)
     if set(record) != {'schema', 'id', 'marker', 'marker_sha256'} or record['schema'] != 'vulcanary.synthetic-canary.v1':
         raise ValueError('invalid_canary')
+    if not isinstance(record['id'], str):
+        raise ValueError('invalid_canary_id')
     uuid.UUID(record['id'])
     marker = record['marker']
     if not isinstance(marker, str) or not re.fullmatch(r'VULCANARY_TEST/[A-Za-z0-9_-]{32}\+=', marker):
