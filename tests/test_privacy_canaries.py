@@ -44,6 +44,31 @@ class PrivacyCanaryTests(unittest.TestCase):
         self.assertEqual(result['state'], 'PASS')
         self.assertEqual(result['files'][0]['matches'], [])
 
+    def test_base64_payload_boundaries_all_alignments_and_suffixes(self):
+        raw = self.marker.encode()
+        for prefix in (b'', b'x', b'xy', b'{"value":"'):
+            for suffix in (b'', b'1', b'12', b'12345', b'"}'):
+                with self.subTest(prefix=prefix, suffix=suffix):
+                    self.log.write_bytes(base64.b64encode(prefix + raw + suffix))
+                    result = self.scan()
+                    self.assertEqual(result['state'], 'FAIL')
+                    self.assertEqual(len(result['files'][0]['matches']), 1)
+                    self.assertEqual(result['files'][0]['matches'][0]['decoded_offset_in_group'], len(prefix) % 3)
+
+    def test_base64_core_match_is_not_enough_without_exact_boundary_bytes(self):
+        raw = self.marker.encode()
+        for altered in (b'X' + raw[1:], raw[:-1] + b'X'):
+            for prefix in (b'', b'x', b'xy'):
+                self.log.write_bytes(base64.b64encode(prefix + altered + b'tail'))
+                self.assertEqual(self.scan()['state'], 'PASS')
+
+    def test_base64_matches_respect_output_cap(self):
+        self.log.write_bytes(b' '.join(base64.b64encode(b'x' + self.marker.encode() + b'tail') for _ in range(101)))
+        result = self.scan()
+        self.assertEqual(result['state'], 'FAIL')
+        self.assertEqual(len(result['files'][0]['matches']), 100)
+        self.assertFalse(result['coverage_complete'])
+
     def test_missing_oversize_and_mixed_inputs_keep_incomplete_coverage(self):
         self.log.write_text('clean')
         result = self.scan([self.log, self.root/'missing'])

@@ -1,5 +1,6 @@
 """Exact synthetic-canary searches of explicitly supplied files; no device access."""
 import base64
+import binascii
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -44,6 +45,32 @@ def load(path):
     return record
 
 
+def base64_matches(data, raw):
+    """Verify exact decoded bytes, including boundary groups, at each alignment."""
+    for alignment in range(3):
+        encoded = base64.b64encode(b'\x00' * alignment + raw)
+        leading = 4 if alignment else 0
+        trailing = 4 if (alignment + len(raw)) % 3 else 0
+        core = encoded[leading:len(encoded) - trailing if trailing else len(encoded)]
+        offset = 0
+        while True:
+            found = data.find(core, offset)
+            if found < 0:
+                break
+            offset = found + 1
+            start = found - leading
+            if start < 0:
+                continue
+            window = data[start:start + len(encoded)]
+            try:
+                decoded = base64.b64decode(window, validate=True)
+            except (ValueError, binascii.Error):
+                continue
+            if decoded[alignment:alignment + len(raw)] == raw:
+                yield {'encoding': 'base64', 'byte_offset': start,
+                       'decoded_offset_in_group': alignment}
+
+
 def inspect_file(path, marker, index, category):
     result = {'file_id': index, 'category': category, 'state': 'BLOCKED',
               'sha256': None, 'size_bytes': None, 'coverage_complete': False,
@@ -67,7 +94,7 @@ def inspect_file(path, marker, index, category):
             return result
         raw = marker.encode()
         patterns = {'literal': raw, 'hex': raw.hex().encode(),
-                    'base64': base64.b64encode(raw), 'url-encoded': quote(marker, safe='').encode()}
+                    'url-encoded': quote(marker, safe='').encode()}
         matches = []
         capped = False
         for encoding, pattern in patterns.items():
@@ -83,6 +110,12 @@ def inspect_file(path, marker, index, category):
                 offset += len(pattern)
             if capped:
                 break
+        if not capped:
+            for match in base64_matches(data, raw):
+                if len(matches) == MAX_MATCHES:
+                    capped = True
+                    break
+                matches.append(match)
         result.update(state='FAIL' if matches else 'PASS', sha256=hashlib.sha256(data).hexdigest(),
                       size_bytes=len(data), coverage_complete=not capped, matches=matches,
                       reason='match_limit' if capped else 'exact_marker_detected' if matches else 'marker_not_observed')
@@ -113,7 +146,7 @@ def scan(canary, paths, category, manifest_sha256, *, authorized=False):
             'limitations': ['Only explicitly supplied synthetic exports were read; no device or clipboard was accessed.',
                             'No match is not proof of absence in unsupplied, truncated, transformed or untested surfaces.',
                             'Category and candidate binding are operator declarations, not verified collection provenance.',
-                            'Literal, lowercase hex, standard base64 and uppercase percent-encoding are checked; other transformations may be missed.',
+                            'Literal, lowercase hex, contiguous standard base64 payloads at all byte alignments and uppercase percent-encoding are checked; wrapped base64 and other transformations may be missed.',
                             'Offsets identify positions in the hashed supplied files, without snippets or marker values.']}
 
 

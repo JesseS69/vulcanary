@@ -26,8 +26,12 @@ which installed application produced the file. This report cannot automatically
 close a device requirement in a candidate report.
 
 PASS means no exact match in the supplied stable bytes, for the four supported
-representations: literal, lowercase hexadecimal, standard base64, and uppercase
-percent encoding. It does not cover missing exports, screenshots, transformed or
+representations: literal, lowercase hexadecimal, contiguous standard base64 payloads
+(including a marker within a larger payload at any of the three byte alignments),
+and uppercase percent encoding. Base64 matches verify the full decoded marker,
+not only its interior encoding. The byte offset identifies the first encoded
+four-character group; decoded_offset_in_group locates the marker within that group.
+It does not cover line-wrapped base64, missing exports, screenshots, transformed or
 truncated values, alternate encodings, app-switcher previews, or unsampled events.
 FAIL means a marker was found. BLOCKED means the file was unavailable, changed,
 oversize, or unsupported. A FAIL remains visible when another file is BLOCKED;
