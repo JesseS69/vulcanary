@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.example.fixture">
+  <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="36" />
+  <application android:debuggable="false" android:allowBackup="true"
+    android:fullBackupContent="@xml/backup" android:dataExtractionRules="@xml/extraction" />
+</manifest>

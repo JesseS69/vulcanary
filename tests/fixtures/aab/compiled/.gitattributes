@@ -1,0 +1,3 @@
+# Protobuf XML is binary even when its payload happens to contain no NUL bytes.
+*.xml binary
+*.pb binary
