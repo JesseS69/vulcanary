@@ -26,7 +26,7 @@ class TransportTests(unittest.TestCase):
         for name in ('lost-upload-response', 'lost-completion-response', 'stalled-after-upload-commit'):
             with self.subTest(name=name):
                 result = transport.scenario(name, broken_duplicates=True)
-                self.assertEqual(result['state'], 'FAIL')
+                self.assertEqual(result['state'], 'FAIL', json.dumps(result))
                 self.assertEqual(result['events'][1]['committed_writes'], 2)
                 self.assertEqual(result['cleanup'], 'complete')
 
