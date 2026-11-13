@@ -11,6 +11,13 @@ It does not run bundletool, Java, Gradle, app code or a device, convert the bund
 extract archive members to disk, or contact an endpoint. It remains outside
 normal scans, gates, SLA tracking and dashboard history.
 
+An AAB is not the APK installed on a phone. Google Play or bundletool generates
+device-specific APKs from the bundle, with signing handled by the distribution
+process. These results describe the input to that generation process, not its
+generated APKs or an installed device. Even passing bundle declarations need
+separate generated-APK identity and device evidence before making shipped-app
+or runtime claims.
+
 Requirements, exact/whole-domain matching, conditional suffix handling and
 sanitized exports follow [APK inspection](APK_INSPECTION.md). `debuggable` and
 `allowBackup` use compiled booleans or documented Android defaults when absent;
