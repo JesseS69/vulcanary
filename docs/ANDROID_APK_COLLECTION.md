@@ -67,6 +67,10 @@ and runtime security remain unverified. New hashes copied into an expected recor
 are not independent candidate verification. Build-number agreement is limited metadata
 evidence, not build provenance.
 
+The separately authorized [offline signature adapter](APK_SIGNATURES.md) can check
+copied APK signatures using a pinned trusted SDK tool. It does not turn collected
+hashes into independent release expectations or prove AAB lineage.
+
 The adapter stays outside normal scanning, gates, SLA and dashboard history.
 Fake-server tests demonstrate transport/refusal behavior, not application security.
 

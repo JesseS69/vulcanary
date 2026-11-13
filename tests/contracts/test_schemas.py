@@ -39,6 +39,25 @@ def validator(name):
 
 
 class SchemaContracts(unittest.TestCase):
+    def test_apk_signature_report_requires_completed_checks_before_pass(self):
+        from vulcanary import apk_signatures as signatures
+        blocked = signatures.verify(Path('/unavailable'), '', Path('/unavailable'), '', Path('/unavailable'), '', android_api=36)
+        contract = validator('apk-signatures')
+        contract.validate(blocked)
+        self.assertFalse(contract.is_valid({**blocked, 'state': 'PASS'}))
+        self.assertFalse(contract.is_valid({**blocked, 'stdout': 'private'}))
+        passed = {**blocked, 'state': 'PASS', 'attempted': True, 'cleanup': 'complete',
+                  'android_api': 36, 'size_bytes': 5000, 'tool_version': '0.9', 'timeout_seconds': 30,
+                  'artifact_sha256': 'a'*64, 'java_sha256': 'b'*64, 'verifier_sha256': 'c'*64,
+                  'expected_cert_sha256': 'd'*64, 'signer_cert_sha256': 'd'*64, 'warning_count': 0,
+                  'schemes': {'v1': False, 'v2': False, 'v3': True, 'v3.1': False, 'v4': False},
+                  'checks': [{**r, 'state': 'PASS'} for r in blocked['checks']],
+                  'counts': {'PASS': 3, 'FAIL': 0, 'BLOCKED': 0}}
+        contract.validate(passed)
+        for changes in ({'cleanup': 'unconfirmed'}, {'warning_count': 1}, {'expected_cert_sha256': None},
+                        {'application_executed': True}):
+            self.assertFalse(contract.is_valid({**passed, **changes}))
+
     def test_apk_collection_contract_forbids_false_pass_and_partial_artifact_claims(self):
         from vulcanary import android_apk_collection as collector
         report = collector.collect('synthetic', 'org.example.app', {}, Path('unused'))
