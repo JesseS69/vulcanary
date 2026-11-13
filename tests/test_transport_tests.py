@@ -113,9 +113,10 @@ class TransportTests(unittest.TestCase):
                 server.drop_before_commit = False
                 yield server
         with patch.object(transport, '_relay', broken):
-            result = transport.scenario('stalled-before-upload-commit')
-        self.assertEqual(result['state'], 'FAIL')
-        self.assertEqual(result['events'][0]['committed_writes'], 1)
+            for name in ('before-upload-commit', 'stalled-before-upload-commit'):
+                result = transport.scenario(name)
+                self.assertEqual(result['state'], 'FAIL')
+                self.assertEqual(result['events'][0]['committed_writes'], 1)
 
     def test_stall_cleanup_releases_handler_even_after_client_exception(self):
         captured = []
@@ -144,6 +145,50 @@ class TransportTests(unittest.TestCase):
             result = transport.scenario('stalled-after-upload-commit')
         self.assertEqual(result['state'], 'BLOCKED')
         self.assertEqual(result['reason'], 'execution_incomplete')
+
+    def test_drop_scenario_host_timeout_and_retry_disconnect_are_blocked(self):
+        with patch.object(transport, '_request', return_value='timed_out'):
+            for name in transport.SCENARIOS[:3]:
+                self.assertEqual(transport.scenario(name)['state'], 'BLOCKED')
+        original = transport._request
+        def lost_retry(server, operation, **kwargs):
+            result = original(server, operation, **kwargs)
+            return 'uncertain' if result == 'acknowledged' else result
+        with patch.object(transport, '_request', side_effect=lost_retry):
+            self.assertEqual(transport.scenario('lost-upload-response')['state'], 'BLOCKED')
+
+    def test_early_release_and_relay_error_are_blocked(self):
+        original = transport._relay
+        for malfunction in ('early_release', 'handler_error'):
+            @contextmanager
+            def broken(*args):
+                with original(*args) as server:
+                    if malfunction == 'early_release':
+                        server.release_stall.set()
+                    else:
+                        server.failed = True
+                    yield server
+            with patch.object(transport, '_relay', broken):
+                result = transport.scenario('stalled-after-upload-commit')
+            self.assertEqual(result['state'], 'BLOCKED')
+            self.assertEqual(result['reason'], 'execution_incomplete')
+
+    def test_unreleased_stall_and_late_handler_error_are_blocked(self):
+        original = transport._relay
+        @contextmanager
+        def unreleased(*args):
+            with original(*args) as server:
+                with patch.object(server.release_stall, 'set', return_value=None):
+                    yield server
+        with patch.object(transport, '_relay', unreleased), patch.object(transport, 'STALL_RELEASE_TIMEOUT', 0.4):
+            self.assertEqual(transport.scenario('stalled-after-upload-commit')['state'], 'BLOCKED')
+        @contextmanager
+        def late_error(*args):
+            with original(*args) as server:
+                yield server
+                server.failed = True
+        with patch.object(transport, '_relay', late_error):
+            self.assertEqual(transport.scenario('lost-upload-response')['state'], 'BLOCKED')
 
 
 if __name__ == '__main__':

@@ -119,6 +119,8 @@ def _relay(directory, scenario, broken_duplicates=False):
         thread.join(timeout=2)
         if thread.is_alive():
             raise RuntimeError('cleanup_incomplete')
+        if server.failed:
+            raise RuntimeError('relay_failed')
 
 
 def _request(server, operation, *, await_stall=False):
@@ -151,6 +153,12 @@ def _require(condition):
         raise AssertionError('synthetic_contract_failed')
 
 
+def _available(condition):
+    # Harness health and fault activation are prerequisites, not test verdicts.
+    if not condition:
+        raise RuntimeError('execution_incomplete')
+
+
 def scenario(name, *, broken_duplicates=False):
     if name not in SCENARIOS:
         raise ValueError('unsupported_scenario')
@@ -168,23 +176,30 @@ def scenario(name, *, broken_duplicates=False):
             with _relay(Path(temporary), name, broken_duplicates) as server:
                 operation = server.drop_operation
                 if operation == 'complete':
-                    _require(_request(server, 'upload') == 'acknowledged')
+                    setup = _request(server, 'upload')
+                    _available(not server.failed and setup not in ('timed_out', 'uncertain'))
+                    _require(setup == 'acknowledged')
                 first = (_request(server, operation, await_stall=True) if stalled
                          else _request(server, operation))
                 first_count = _counts(server).get(operation, 0)
                 events.append({'attempt': 1, 'operation': operation, 'client_outcome': first,
                                'committed_writes': first_count})
+                _available(not server.failed)
+                if stalled:
+                    _available(server.stall_started.is_set() and not server.release_stall.is_set())
+                    _available(first != 'uncertain')
+                else:
+                    _available(first != 'timed_out')
                 _require(first == result['expected']['first_client_outcome'])
                 _require(first_count == result['expected']['first_committed_writes'])
                 if stalled:
-                    _require(server.stall_started.is_set() and not server.failed)
                     server.release_stall.set()
                 second = _request(server, operation)
                 count = _counts(server).get(operation, 0)
                 events.append({'attempt': 2, 'operation': operation, 'client_outcome': second,
                                'committed_writes': count})
+                _available(not server.failed and second not in ('timed_out', 'uncertain'))
                 _require(second == 'acknowledged' and count == 1)
-                _require(not server.failed)
                 events.extend(server.events)
         result.update(state='PASS', reason='assertions_matched', cleanup='complete')
     except AssertionError:

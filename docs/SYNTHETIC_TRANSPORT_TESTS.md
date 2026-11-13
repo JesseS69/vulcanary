@@ -56,6 +56,12 @@ commits when no write is expected, and misreports timeouts as success. Each rele
 control must fail. Expected counts come from the scenario contract, not relay
 configuration. Assertions still execute with Python optimization enabled.
 Missing loopback access, database errors and incomplete cleanup cannot yield PASS.
+Unexpected timeouts in drop scenarios, uncertain setup/retry responses, premature
+stall release, and relay-handler errors are BLOCKED as incomplete execution.
+These conditions do not establish a violated transport contract. Confirmed
+incorrect writes or a false success acknowledgment still produce FAIL when the
+harness is healthy. Handler health is checked again during shutdown so a late
+handler failure cannot leave a PASS behind.
 
 Exports contain JSON, a short reviewer document and unsigned checksums. They omit
 run tokens, source paths, request headers, database contents and raw exceptions.
@@ -72,5 +78,8 @@ an application is exercised. Those require their own authorized target adapters.
 
 This increment emits `vulcanary.synthetic-transport-run.v2`, with two additional
 scenario IDs, `timed_out` client outcomes and explicit stall limits. It does not
-silently extend the v1 enum contract. Consumers must explicitly accept v2; no
+silently extend the v1 report shape. Consumers must explicitly accept v2; no
 existing candidate evidence importer or policy gate is connected to either form.
+V1 had a schema identifier but no checked-in JSON Schema; the v2 schema is the
+first published structural validator for this adapter. It is not retrospective
+validation of v1 exports or proof that a supplied report's events really occurred.
