@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "producer_version",
+    "state",
+    "executed",
+    "policy_effect",
+    "independent_certification",
+    "identity_verification",
+    "manifest_sha256",
+    "candidate_sha256",
+    "platform",
+    "missing_identity_fields",
+    "implementation_sha256",
+    "checklist_sha256",
+    "checks",
+    "evidence",
+    "unsupported_requirements",
+    "counts",
+    "limitations"
+  ],
+  "properties": {
+    "schema": {
+      "const": "vulcanary.guided-device-checklist.v1"
+    },
+    "producer_version": {
+      "type": "string"
+    },
+    "state": {
+      "const": "NOT_RUN"
+    },
+    "executed": {
+      "const": false
+    },
+    "policy_effect": {
+      "const": "none"
+    },
+    "independent_certification": {
+      "const": false
+    },
+    "identity_verification": {
+      "const": "operator-declared"
+    },
+    "manifest_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "candidate_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "platform": {
+      "enum": [
+        "android",
+        "ios"
+      ]
+    },
+    "missing_identity_fields": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "implementation_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "checklist_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "checks": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "requirement",
+          "state",
+          "executed",
+          "observed",
+          "expected",
+          "planned_method",
+          "steps"
+        ],
+        "properties": {
+          "id": {
+            "enum": [
+              "app-switcher",
+              "password-visibility",
+              "password-mismatch",
+              "keyboard-open",
+              "text-sizing",
+              "first-use"
+            ]
+          },
+          "requirement": {
+            "enum": [
+              "privacy-app-switcher",
+              "password-controls",
+              "keyboard-text-sizing",
+              "first-use-discoverability"
+            ]
+          },
+          "state": {
+            "const": "NOT_RUN"
+          },
+          "executed": {
+            "const": false
+          },
+          "observed": {
+            "const": null
+          },
+          "expected": {
+            "type": "string"
+          },
+          "planned_method": {
+            "const": "human_observation"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          }
+        }
+      }
+    },
+    "evidence": {
+      "const": []
+    },
+    "unsupported_requirements": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "PASS",
+        "FAIL",
+        "BLOCKED",
+        "NOT_RUN",
+        "DEFERRED"
+      ],
+      "properties": {
+        "PASS": {
+          "const": 0
+        },
+        "FAIL": {
+          "const": 0
+        },
+        "BLOCKED": {
+          "const": 0
+        },
+        "NOT_RUN": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
+        },
+        "DEFERRED": {
+          "const": 0
+        }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

@@ -39,6 +39,24 @@ def validator(name):
 
 
 class SchemaContracts(unittest.TestCase):
+    def test_guided_checklist_cannot_declare_execution_or_success(self):
+        from vulcanary import candidate_tests, guided_device_checks as guided
+        spec = json.loads((ROOT.parent.parent / 'examples/security-testing/candidate-model.json').read_text())
+        spec['candidate']['platform'] = 'android'
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'manifest.json'
+            path.write_text(json.dumps({'schema': 'vulcanary.candidate-manifest.v1',
+                                       'manifest_sha256': candidate_tests.digest(spec), 'spec': spec}))
+            report = guided.prepare(path)
+        contract = validator('guided-device-checklist')
+        contract.validate(report)
+        for changes in ({'state': 'PASS'}, {'executed': True}, {'raw_notes': 'private'},
+                        {'evidence': [{'state': 'PASS'}]}):
+            self.assertFalse(contract.is_valid({**report, **changes}))
+        modified = copy.deepcopy(report)
+        modified['checks'][0]['observed'] = True
+        self.assertFalse(contract.is_valid(modified))
+
     def test_hybrid_signature_roles_have_a_separate_closed_contract(self):
         from vulcanary import apk_hybrid_signatures as hybrid
         contract = validator('apk-hybrid-signatures')

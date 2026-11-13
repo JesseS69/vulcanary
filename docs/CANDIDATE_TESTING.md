@@ -1,5 +1,9 @@
 # Frozen candidate testing and transfer-model acceptance
 
+An offline [guided device checklist](GUIDED_DEVICE_CHECKS.md) can prepare selected
+manual journeys for a registered mobile candidate. Preparation leaves all checks
+NOT_RUN and supplies no candidate evidence or permission to operate a device.
+
 This work translates the encrypted mobile/web testing brief into a reusable
 platform contract. It is not an implementation of a particular application's
 bug backlog. The current milestone is **synthetic reference-model evidence**,
