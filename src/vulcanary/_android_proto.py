@@ -111,7 +111,7 @@ class Decoder:
         require(raw in (None, '', 'true' if value else 'false'))
         return value
 
-    def manifest(self, data):
+    def manifest(self, data, *, include_identity=False):
         tree = self.xml(data)
         require(tree and tree[0][:3] == ('', 'manifest', None))
         application = None
@@ -146,6 +146,29 @@ class Decoder:
                         value = {'kind': 'boolean', 'value': self.boolean(compiled, raw)}
                 application[label] = value
         require(application is not None)
+        if include_identity:
+            from ._android_identity_fields import IDS, identity
+            attributes = {}
+            for key, (raw, ident, compiled) in tree[0][3].items():
+                if key != ('', 'package') and not (key[0] == ANDROID and key[1] in IDS) and ident not in IDS.values():
+                    continue
+                decoded = raw if key == ('', 'package') or key == (ANDROID, 'versionName') else None
+                if compiled is not None:
+                    kind, payload = self.item(compiled)
+                    decoded = None
+                    if kind in (2, 3):
+                        string = self.message(payload, {1: 2})
+                        decoded = self.text(string.get(1, b''))
+                        require(raw in (None, '', decoded))
+                    elif kind == 7:
+                        prim = self.message(payload, {6: 0, 7: 0})
+                        require(len(prim) == 1)
+                        decoded = next(iter(prim.values()))
+                        require(raw in (None, '', str(decoded), hex(decoded)))
+                elif decoded is not None and decoded.startswith(('@', '?')):
+                    decoded = None
+                attributes[key] = (ident, decoded)
+            application['_identity'] = identity(attributes)
         return application
 
     def backup_rules(self, data, attribute):

@@ -97,7 +97,7 @@ def backup_links(archive, declarations, *, evaluate_rules=False):
     return rows, parsed
 
 
-def read_artifact(path, *, evaluate_rules=False, artifact_format='apk'):
+def read_artifact(path, *, evaluate_rules=False, artifact_format='apk', include_identity=False):
     axml.require(not path.is_symlink() and path.is_file())
     with path.open('rb') as stream:
         before = os.fstat(stream.fileno())
@@ -119,11 +119,11 @@ def read_artifact(path, *, evaluate_rules=False, artifact_format='apk'):
             axml.require(all(entry.orig_filename == entry.filename for entry in entries))
             if artifact_format == 'aab':
                 from .aab_inspection import declarations_and_links
-                declarations, links, parsed = declarations_and_links(archive, names, evaluate_rules)
+                declarations, links, parsed = declarations_and_links(archive, names, evaluate_rules, include_identity=include_identity)
             else:
                 axml.require(artifact_format == 'apk')
                 data = read_member(archive, 'AndroidManifest.xml', axml.MAX_XML)
-                declarations = axml.parse(data, include_backup=True)
+                declarations = axml.parse(data, include_backup=True, include_identity=include_identity)
                 links, parsed = backup_links(archive, declarations, evaluate_rules=evaluate_rules)
         after = os.fstat(stream.fileno())
         axml.require(not path.is_symlink())

@@ -21,7 +21,7 @@ LIMITATIONS = [
 ]
 
 
-def declarations_and_links(archive, names, evaluate_rules):
+def declarations_and_links(archive, names, evaluate_rules, *, include_identity=False):
     axml.require('BundleConfig.pb' in names and 'AndroidManifest.xml' not in names)
     manifests = [name for name in names if name.endswith('/manifest/AndroidManifest.xml')]
     axml.require(manifests == ['base/manifest/AndroidManifest.xml'])
@@ -29,7 +29,7 @@ def declarations_and_links(archive, names, evaluate_rules):
     # reporting an incomplete base-only view as the bundle's declarations.
     axml.require(all(name.split('/')[0] in ('base', 'META-INF', 'BUNDLE-METADATA', 'BundleConfig.pb') for name in names))
     decoder = proto.Decoder()
-    declarations = decoder.manifest(apk.read_member(archive, manifests[0], axml.MAX_XML))
+    declarations = decoder.manifest(apk.read_member(archive, manifests[0], axml.MAX_XML), include_identity=include_identity)
     table = None
     if any(isinstance(v, dict) and v.get('kind') == 'reference' for v in declarations.values()):
         try:
