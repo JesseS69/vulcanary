@@ -1,0 +1,38 @@
+{
+  "upstream_commit": "083507e4e70f21f3805889e7753874345a43e6fc",
+  "source": "AOSP apksig public synthetic test resources",
+  "license": "Apache-2.0; accompanying LICENSE",
+  "private_key_included": false,
+  "artifacts": [
+    {
+      "file": "v32-mldsa-rsa-2048_2-v3-rsa-2048-min-max-strip-attr-valid.apk",
+      "url": "https://android.googlesource.com/platform/tools/apksig/+/083507e4e70f21f3805889e7753874345a43e6fc/src/test/resources/com/android/apksig/v32-mldsa-rsa-2048_2-v3-rsa-2048-min-max-strip-attr-valid.apk?format=TEXT",
+      "sha256": "ad20713b679feed98e3c6a04f268ad3b302ee061afea085bdcc0fe81f4b29483",
+      "size": 33183,
+      "synthetic_certificates": {
+        "classical": "681b0e56a796350c08647352a4db800cc44b2adc8f4c72fa350bd05d4d50264d",
+        "pqc": "6db4c701ac75b9a29b264dbae2027ad4d34792bee5b4f2c5d5834d960d2f4c81",
+        "fallback": "fb5dbd3c669af9fc236c6991e6387b7f11ff0590997f22d0f5c74ff40e04fca8"
+      },
+      "expected_warning_count": 1,
+      "hybrid_signature_mutation_offsets": [
+        12637,
+        28363
+      ]
+    },
+    {
+      "file": "v32-two-classical-sigs-v3-rsa-2048.apk",
+      "url": "https://android.googlesource.com/platform/tools/apksig/+/083507e4e70f21f3805889e7753874345a43e6fc/src/test/resources/com/android/apksig/v32-two-classical-sigs-v3-rsa-2048.apk?format=TEXT",
+      "sha256": "3cd610520ccdb0ccdda882d651cf4015eac1f0f981e9edd3202efdf7b2d99176",
+      "size": 20895
+    },
+    {
+      "file": "v32-two-pqc-sigs-v3-rsa-2048.apk",
+      "url": "https://android.googlesource.com/platform/tools/apksig/+/083507e4e70f21f3805889e7753874345a43e6fc/src/test/resources/com/android/apksig/v32-two-pqc-sigs-v3-rsa-2048.apk?format=TEXT",
+      "sha256": "7ab4ca6018d3c4876f0cb3fba8ee03f625fc07b3462f21628c6a2b72b44e07a4",
+      "size": 49567
+    }
+  ],
+  "fixture_expectations_note": "Public synthetic test certificate hashes pinned from the known AOSP fixture, not independent release identity evidence.",
+  "integration_verifier_sha256": "2defad215d7ff52968a409cde528cdaef7918b115e276b8e3378ca7a178e4180"
+}

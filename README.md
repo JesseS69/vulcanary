@@ -35,6 +35,8 @@ Copying installed code files is a separately authorized [APK collection](docs/AN
 operation, with byte/time bounds and no application-data or lifecycle access.
 An opt-in [offline signature verifier](docs/APK_SIGNATURES.md) runs pinned trusted
 SDK tooling and keeps signature validity, signer expectations and warnings separate.
+A separate [API 37 hybrid profile](docs/APK_HYBRID_SIGNATURES.md) verifies the newer
+signing path with distinct classical/PQC expectations; warnings still block.
 
 Python 3.11 or newer is required.
 
