@@ -75,6 +75,11 @@ running it against any particular live environment or device.
 
 ## First slice: how to run
 
+The [isolated reference lab](ISOLATED_TEST_LAB.md) combines bundled loopback,
+database and storage fault checks. Its candidate status is always NOT_RUN; it is
+infrastructure for a separately scoped application adapter, not a deployed test
+environment or evidence of candidate key-store behavior.
+
 The [frozen candidate and transfer-model workflow](CANDIDATE_TESTING.md) maps the
 mobile/web acceptance brief into evidence-specific coverage. Its model results
 cannot satisfy installed-device, real transport or deployed-database requirements.

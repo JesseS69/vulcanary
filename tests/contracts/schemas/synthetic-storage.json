@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema","producer_version","implementation_sha256","run_id","finished_at","state","counts","checks","policy_effect","independent_certification","manifest_sha256","candidate_binding","evidence_method","runtime","limits","limitations"],
+  "properties": {
+    "schema": {"const":"vulcanary.synthetic-storage-run.v1"},
+    "producer_version": {"type":"string"},
+    "implementation_sha256": {"type":"string","pattern":"^[a-f0-9]{64}$"},
+    "manifest_sha256": {"type":"string","pattern":"^[a-f0-9]{64}$"},
+    "run_id": {"type":"string","format":"uuid"},
+    "finished_at": {"type":"string","format":"date-time"},
+    "state": {"enum":["PASS","FAIL","BLOCKED"]},
+    "policy_effect": {"const":"none"},
+    "independent_certification": {"const":false},
+    "candidate_binding": {"const":"operator-declared-reference"},
+    "evidence_method": {"const":"bundled-sqlite-storage-contract"},
+    "runtime": {"type":"object","additionalProperties":false,"required":["python","sqlite"],"properties":{"python":{"type":"string"},"sqlite":{"type":"string"}}},
+    "limits": {"const":{"capacity_probe_bytes":131072,"sqlite_lock_timeout_seconds":0.2,"cases":7}},
+    "limitations": {"type":"array","minItems":7,"items":{"type":"string"}},
+    "counts": {"type":"object","additionalProperties":false,"required":["PASS","FAIL","BLOCKED"],"properties":{"PASS":{"type":"integer","minimum":0,"maximum":7},"FAIL":{"type":"integer","minimum":0,"maximum":7},"BLOCKED":{"type":"integer","minimum":0,"maximum":7}}},
+    "checks": {"type":"array","minItems":7,"maxItems":7,"items":{
+      "type":"object","additionalProperties":false,
+      "required":["id","state","reason","cleanup","expected","observed"],
+      "properties": {
+        "id":{"enum":["write-refusal","partial-install","readback-mismatch","receipt-refusal","lost-ack-retry","stale-session","sqlite-capacity"]},
+        "state":{"enum":["PASS","FAIL","BLOCKED"]},
+        "reason":{"enum":["execution_incomplete","assertions_matched","assertion_failed"]},
+        "cleanup":{"enum":["complete","unconfirmed"]},
+        "expected":{"$ref":"#/$defs/observation"},
+        "observed":{"$ref":"#/$defs/observation"}
+      },
+      "allOf":[{"if":{"properties":{"state":{"const":"PASS"}}},"then":{"properties":{"cleanup":{"const":"complete"},"reason":{"const":"assertions_matched"},"expected":{"type":"object"},"observed":{"type":"object"}}}}]
+    }}
+  },
+  "$defs": {"observation":{"type":["object","null"],"additionalProperties":false,"properties":{
+    "fault_reached":{"type":"boolean"},"acknowledged":{"type":"boolean"},"prior_state_preserved":{"type":"boolean"},"retry_acknowledged":{"type":"boolean"},"retry_state_verified":{"type":"boolean"},"capacity_error":{"type":"boolean"},"first_acknowledged":{"type":"boolean"},"committed_before_retry":{"type":"boolean"},"retry_unchanged":{"type":"boolean"},"install_count":{"type":"integer","minimum":0}
+  }}},
+  "allOf":[{"if":{"properties":{"state":{"const":"PASS"}}},"then":{"properties":{"counts":{"const":{"PASS":7,"FAIL":0,"BLOCKED":0}},"checks":{"items":{"properties":{"state":{"const":"PASS"}}}}}}}]
+}
