@@ -1,0 +1,449 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schema",
+    "producer_version",
+    "state",
+    "reason",
+    "checks",
+    "artifact_sha256",
+    "size_bytes",
+    "android_api",
+    "java_sha256",
+    "verifier_sha256",
+    "tool_version",
+    "expected_cert_sha256",
+    "signer_cert_sha256",
+    "schemes",
+    "warning_count",
+    "attempted",
+    "application_executed",
+    "policy_effect",
+    "independent_certification",
+    "cleanup",
+    "implementation_sha256",
+    "limitations",
+    "timeout_seconds",
+    "output_limit_bytes",
+    "limits",
+    "finished_at",
+    "elapsed_seconds",
+    "action",
+    "counts"
+  ],
+  "properties": {
+    "schema": {
+      "const": "vulcanary.apk-signature-verification.v1"
+    },
+    "producer_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "state": {
+      "enum": [
+        "PASS",
+        "FAIL",
+        "BLOCKED"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "state",
+            "basis"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "const": "signature"
+            },
+            "state": {
+              "enum": [
+                "PASS",
+                "FAIL",
+                "BLOCKED"
+              ]
+            },
+            "basis": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "state",
+            "basis"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "const": "expected_signer"
+            },
+            "state": {
+              "enum": [
+                "PASS",
+                "FAIL",
+                "BLOCKED"
+              ]
+            },
+            "basis": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "state",
+            "basis"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "const": "warnings"
+            },
+            "state": {
+              "enum": [
+                "PASS",
+                "FAIL",
+                "BLOCKED"
+              ]
+            },
+            "basis": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "artifact_sha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "size_bytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "maximum": 268435456
+    },
+    "android_api": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 24,
+      "maximum": 36
+    },
+    "java_sha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "verifier_sha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "tool_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "expected_cert_sha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "signer_cert_sha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "schemes": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "v1",
+            "v2",
+            "v3",
+            "v3.1",
+            "v4"
+          ],
+          "properties": {
+            "v1": {
+              "type": "boolean"
+            },
+            "v2": {
+              "type": "boolean"
+            },
+            "v3": {
+              "type": "boolean"
+            },
+            "v3.1": {
+              "type": "boolean"
+            },
+            "v4": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "warning_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "attempted": {
+      "type": "boolean"
+    },
+    "application_executed": {
+      "const": false
+    },
+    "policy_effect": {
+      "const": "none"
+    },
+    "independent_certification": {
+      "const": false
+    },
+    "cleanup": {
+      "enum": [
+        "not_needed",
+        "unconfirmed",
+        "complete"
+      ]
+    },
+    "implementation_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "timeout_seconds": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "exclusiveMinimum": 0,
+      "maximum": 120
+    },
+    "output_limit_bytes": {
+      "const": 16384
+    },
+    "limits": {
+      "const": {
+        "artifact_bytes": 268435456,
+        "tool_bytes": 33554432,
+        "java_heap_mib": 64
+      }
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "elapsed_seconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1
+    },
+    "counts": {
+      "type": "object",
+      "required": [
+        "PASS",
+        "FAIL",
+        "BLOCKED"
+      ],
+      "properties": {
+        "PASS": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "FAIL": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "BLOCKED": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "PASS"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "attempted": {
+            "const": true
+          },
+          "cleanup": {
+            "const": "complete"
+          },
+          "artifact_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "java_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "verifier_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "expected_cert_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "signer_cert_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "warning_count": {
+            "const": 0
+          },
+          "schemes": {
+            "type": "object"
+          },
+          "checks": {
+            "items": {
+              "properties": {
+                "state": {
+                  "const": "PASS"
+                }
+              }
+            }
+          },
+          "counts": {
+            "const": {
+              "PASS": 3,
+              "FAIL": 0,
+              "BLOCKED": 0
+            }
+          },
+          "android_api": {
+            "type": "integer"
+          },
+          "size_bytes": {
+            "type": "integer"
+          },
+          "tool_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "timeout_seconds": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "signer_cert_sha256": {
+            "type": "string"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "cleanup": {
+            "const": "complete"
+          },
+          "attempted": {
+            "const": true
+          },
+          "checks": {
+            "prefixItems": [
+              {
+                "properties": {
+                  "state": {
+                    "const": "PASS"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

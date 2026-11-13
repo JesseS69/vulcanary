@@ -1,0 +1,11 @@
+{
+  "artifact_sha256": "ecd9939b058ff0b3ef25f25411ee1d071dbc6c5f3c0fd1a28478669eb7e35f1e",
+  "signer_cert_sha256": "b61feff7d2be842d003c97b7a1b88fc568ed406cf7047d79bea715020c70d185",
+  "manifest_sha256": "dc7dd7d0c553e1d2c42741cfa21a53fd5962b5cef9ddf7b0d0fe45df41ddeb4a",
+  "verifier_jar_sha256": "3716d9311e55d2b0918a2fd9d54ba9e406c5f6abeea700b287f11259bc163dec",
+  "build_tools": "36.0.0",
+  "android_api": 36,
+  "synthetic_only": true,
+  "private_key_retained": false,
+  "generation": "Existing independently compiled public AAPT2 manifest plus synthetic asset, signed with a disposable RSA-2048 key using Android SDK apksigner. Temporary key and password discarded."
+}

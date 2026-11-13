@@ -33,6 +33,8 @@ device/package through an existing trusted local debugging server. Inventory is
 not a security-test pass and never launches the app or copies its files.
 Copying installed code files is a separately authorized [APK collection](docs/ANDROID_APK_COLLECTION.md)
 operation, with byte/time bounds and no application-data or lifecycle access.
+An opt-in [offline signature verifier](docs/APK_SIGNATURES.md) runs pinned trusted
+SDK tooling and keeps signature validity, signer expectations and warnings separate.
 
 Python 3.11 or newer is required.
 
