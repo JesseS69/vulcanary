@@ -71,7 +71,9 @@ mean an incomplete export.
 Version name, APK bytes, signing, AAB-to-APK lineage, installed split completeness,
 runtime behavior and security remain unverified. Matching the build number to an
 independent record is useful context, not proof of artifact identity. Copying code
-files or running lifecycle tests requires a separate authorized scope.
+files or running lifecycle tests requires a separate authorized scope. The
+[APK collector](ANDROID_APK_COLLECTION.md) is a distinct opt-in command and does
+not inherit inventory authorization.
 
 ## Validation
 
