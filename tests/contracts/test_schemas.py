@@ -39,6 +39,25 @@ def validator(name):
 
 
 class SchemaContracts(unittest.TestCase):
+    def test_apk_collection_contract_forbids_false_pass_and_partial_artifact_claims(self):
+        from vulcanary import android_apk_collection as collector
+        report = collector.collect('synthetic', 'org.example.app', {}, Path('unused'))
+        contract = validator('android-apk-collection')
+        contract.validate(report)
+        for changes in ({'state': 'PASS'}, {'raw_path': '/data/private'}, {'application_executed': True},
+                        {'collection_state': 'COMPLETE'}):
+            self.assertFalse(contract.is_valid({**report, **changes}))
+        complete = {**report, 'state': 'NOT_RUN', 'collection_state': 'COMPLETE',
+                    'reason': 'apk_bytes_collected_security_not_run',
+                    'expected_inventory_sha256': 'a'*64, 'device_selector_sha256': 'b'*64, 'application_id_sha256': 'c'*64,
+                    'artifacts': [{'id': 'artifact-000', 'role': 'base', 'device_path_sha256': 'd'*64, 'sha256': 'e'*64, 'size_bytes': 40}],
+                    'observations': {'android_release': '15', 'android_api': 35, 'model_sha256': 'f'*64,
+                                     'version_code': 31, 'apk_path_count': 1, 'apk_path_sha256': ['d'*64], 'matching_package_snapshots': True}}
+        contract.validate(complete)
+        for changes in ({'cleanup_complete': False}, {'artifacts': []}, {'observations': None}, {'state': 'PASS'}):
+            self.assertFalse(contract.is_valid({**complete, **changes}))
+        self.assertFalse(contract.is_valid({**report, 'artifacts': complete['artifacts']}))
+
     def test_android_inventory_never_claims_security_pass_or_raw_evidence(self):
         from vulcanary import android_inventory as inventory
         blocked = inventory.inspect('synthetic-device', 'org.example.app')

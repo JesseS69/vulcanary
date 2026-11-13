@@ -1,0 +1,320 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schema",
+    "producer_version",
+    "state",
+    "collection_state",
+    "reason",
+    "policy_effect",
+    "application_executed",
+    "independent_certification",
+    "artifacts",
+    "observations",
+    "expected_inventory_sha256",
+    "device_selector_sha256",
+    "application_id_sha256",
+    "implementation_sha256",
+    "finished_at",
+    "elapsed_seconds",
+    "cleanup_complete",
+    "limits",
+    "limitations",
+    "action"
+  ],
+  "properties": {
+    "schema": {
+      "const": "vulcanary.android-apk-collection.v1"
+    },
+    "producer_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "state": {
+      "enum": [
+        "NOT_RUN",
+        "BLOCKED"
+      ]
+    },
+    "collection_state": {
+      "enum": [
+        "COMPLETE",
+        "BLOCKED"
+      ]
+    },
+    "reason": {
+      "enum": [
+        "authorization_required",
+        "apk_bytes_collected_security_not_run",
+        "deadline_reached",
+        "connection_or_storage_unavailable",
+        "scope_or_response_refused"
+      ]
+    },
+    "policy_effect": {
+      "const": "none"
+    },
+    "application_executed": {
+      "const": false
+    },
+    "independent_certification": {
+      "const": false
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "role",
+          "device_path_sha256",
+          "sha256",
+          "size_bytes"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^artifact-[0-9]{3}$"
+          },
+          "role": {
+            "enum": [
+              "base",
+              "split"
+            ]
+          },
+          "device_path_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 268435456
+          }
+        }
+      },
+      "maxItems": 32
+    },
+    "observations": {
+      "anyOf": [
+        {
+          "type": "object",
+          "required": [
+            "android_release",
+            "android_api",
+            "model_sha256",
+            "version_code",
+            "apk_path_count",
+            "apk_path_sha256",
+            "matching_package_snapshots"
+          ],
+          "properties": {
+            "android_release": {
+              "type": "string",
+              "pattern": "^[0-9A-Za-z._-]{1,64}$"
+            },
+            "android_api": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 999
+            },
+            "model_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "version_code": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "apk_path_count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 128
+            },
+            "apk_path_sha256": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 128,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "matching_package_snapshots": {
+              "const": true
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "expected_inventory_sha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "device_selector_sha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "application_id_sha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "implementation_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "elapsed_seconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "cleanup_complete": {
+      "type": "boolean"
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "file_bytes",
+        "total_bytes",
+        "files",
+        "data_frame_bytes",
+        "frames_per_file",
+        "timeout_seconds"
+      ],
+      "properties": {
+        "file_bytes": {
+          "const": 268435456
+        },
+        "total_bytes": {
+          "const": 536870912
+        },
+        "files": {
+          "const": 32
+        },
+        "data_frame_bytes": {
+          "const": 65536
+        },
+        "frames_per_file": {
+          "const": 131072
+        },
+        "timeout_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0,
+          "maximum": 300
+        }
+      },
+      "additionalProperties": false
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "collection_state": {
+            "const": "COMPLETE"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "state": {
+            "const": "NOT_RUN"
+          },
+          "reason": {
+            "const": "apk_bytes_collected_security_not_run"
+          },
+          "artifacts": {
+            "minItems": 1
+          },
+          "observations": {
+            "type": "object"
+          },
+          "cleanup_complete": {
+            "const": true
+          },
+          "expected_inventory_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "device_selector_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "application_id_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "state": {
+            "const": "BLOCKED"
+          },
+          "artifacts": {
+            "maxItems": 0
+          },
+          "observations": {
+            "type": "null"
+          },
+          "reason": {
+            "not": {
+              "const": "apk_bytes_collected_security_not_run"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

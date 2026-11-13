@@ -31,6 +31,8 @@ artifact bytes and packaged versions with an independently supplied candidate re
 The opt-in [Android metadata inventory](docs/ANDROID_INVENTORY.md) reads one selected
 device/package through an existing trusted local debugging server. Inventory is
 not a security-test pass and never launches the app or copies its files.
+Copying installed code files is a separately authorized [APK collection](docs/ANDROID_APK_COLLECTION.md)
+operation, with byte/time bounds and no application-data or lifecycle access.
 
 Python 3.11 or newer is required.
 
