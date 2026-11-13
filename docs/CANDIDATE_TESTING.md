@@ -85,7 +85,7 @@ receiver checks are not concurrency evidence. These limits appear in every repor
 
 | Area | Current support | Required next evidence |
 |---|---|---|
-| Frozen candidate/scope | Bounded declarations and digest binding; [offline APK/AAB identity assertions](ANDROID_IDENTITY.md) against independent expectations | Verify generated-APK lineage, signing, installed build/device and endpoint identity separately |
+| Frozen candidate/scope | Bounded declarations and digest binding; [offline APK/AAB identity assertions](ANDROID_IDENTITY.md) against independent expectations; separately authorized [read-only Android metadata inventory](ANDROID_INVENTORY.md) | Verify generated-APK bytes/lineage, signing and endpoint identity separately; inventory completion alone remains NOT_RUN for security tests |
 | Transfer/recovery | 16 reference-model scenarios and six negative controls | Authorized application adapter; text/photo history and real keys in disposable fixtures |
 | Transport failures | [Owned-loopback HTTP response-loss checks](SYNTHETIC_TRANSPORT_TESTS.md) against a bundled relay | Separately authorized application/staging transport |
 | Database authorization/concurrency | [Bundled SQLite permission and claim-race contracts](SYNTHETIC_DATABASE_TESTS.md), separate from application evidence | Disposable application-schema/RLS database and concurrent transactions |
