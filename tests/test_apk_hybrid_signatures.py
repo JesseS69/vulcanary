@@ -63,6 +63,7 @@ class HybridTests(unittest.TestCase):
         with patch.object(sig.process,'run_worker',side_effect=AssertionError('no launch')):
             r=sig.verify(*self.args,android_api=37,expected_classical_sha256=C,expected_pqc_sha256=C,authorized=True)
         self.assertFalse(r['attempted'])
+        self.assertEqual(r['reason'],'scope_refused')
 
     def test_warnings_remain_blocked_and_private(self):
         report,_=self.run_check(verified(2))
@@ -105,6 +106,7 @@ class HybridTests(unittest.TestCase):
             for api,authorized in ((37,False),(36,True),(38,True)):
                 report=sig.verify(*self.args,android_api=api,authorized=authorized)
                 self.assertFalse(report['attempted'])
+                self.assertEqual(report['reason'],'scope_refused' if authorized else 'authorization_required')
 
     def test_bad_pin_and_mutated_snapshot_refuse(self):
         args=list(self.args);args[1]='0'*64
