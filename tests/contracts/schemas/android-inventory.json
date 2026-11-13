@@ -1,0 +1,320 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schema",
+    "producer_version",
+    "state",
+    "collection_state",
+    "reason",
+    "finished_at",
+    "elapsed_seconds",
+    "observations",
+    "device_selector_sha256",
+    "application_id_sha256",
+    "android_user",
+    "implementation_sha256",
+    "evidence_method",
+    "policy_effect",
+    "application_executed",
+    "independent_certification",
+    "limits",
+    "limitations",
+    "unverified",
+    "action"
+  ],
+  "properties": {
+    "schema": {
+      "const": "vulcanary.android-readonly-inventory.v1"
+    },
+    "producer_version": {
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "NOT_RUN",
+        "BLOCKED"
+      ]
+    },
+    "collection_state": {
+      "enum": [
+        "COMPLETE",
+        "BLOCKED"
+      ]
+    },
+    "reason": {
+      "enum": [
+        "authorization_required",
+        "metadata_collected_security_not_run",
+        "deadline_reached",
+        "connection_unavailable_or_interrupted",
+        "invalid_request_or_unsupported_response"
+      ]
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "elapsed_seconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "observations": {
+      "anyOf": [
+        {
+          "type": "object",
+          "required": [
+            "android_release",
+            "android_api",
+            "model_sha256",
+            "version_code",
+            "apk_path_count",
+            "apk_path_sha256",
+            "matching_package_snapshots"
+          ],
+          "properties": {
+            "android_release": {
+              "type": "string",
+              "pattern": "^[0-9A-Za-z._-]{1,64}$"
+            },
+            "android_api": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 999
+            },
+            "model_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "version_code": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "apk_path_count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 128
+            },
+            "apk_path_sha256": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 128,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "matching_package_snapshots": {
+              "const": true
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "device_selector_sha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "application_id_sha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "android_user": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    "implementation_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "evidence_method": {
+      "const": "existing-loopback-adb-shell-v2-metadata"
+    },
+    "policy_effect": {
+      "const": "none"
+    },
+    "application_executed": {
+      "const": false
+    },
+    "independent_certification": {
+      "const": false
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "output_bytes",
+        "frames",
+        "frame_bytes",
+        "apk_paths",
+        "timeout_seconds"
+      ],
+      "properties": {
+        "output_bytes": {
+          "const": 262144
+        },
+        "frames": {
+          "const": 1024
+        },
+        "frame_bytes": {
+          "const": 65536
+        },
+        "apk_paths": {
+          "const": 128
+        },
+        "timeout_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0,
+          "maximum": 30
+        }
+      },
+      "additionalProperties": false
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "unverified": {
+      "const": [
+        "apk_bytes",
+        "signing",
+        "aab_lineage",
+        "version_name",
+        "runtime_behavior",
+        "security"
+      ]
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "collection_state": {
+            "const": "COMPLETE"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "state": {
+            "const": "NOT_RUN"
+          },
+          "reason": {
+            "const": "metadata_collected_security_not_run"
+          },
+          "observations": {
+            "type": "object",
+            "required": [
+              "android_release",
+              "android_api",
+              "model_sha256",
+              "version_code",
+              "apk_path_count",
+              "apk_path_sha256",
+              "matching_package_snapshots"
+            ],
+            "properties": {
+              "android_release": {
+                "type": "string",
+                "pattern": "^[0-9A-Za-z._-]{1,64}$"
+              },
+              "android_api": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 999
+              },
+              "model_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "version_code": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9223372036854775807
+              },
+              "apk_path_count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 128
+              },
+              "apk_path_sha256": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 128,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "matching_package_snapshots": {
+                "const": true
+              }
+            },
+            "additionalProperties": false
+          },
+          "device_selector_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "application_id_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "android_user": {
+            "type": "integer"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "state": {
+            "const": "BLOCKED"
+          },
+          "observations": {
+            "type": "null"
+          },
+          "reason": {
+            "not": {
+              "const": "metadata_collected_security_not_run"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

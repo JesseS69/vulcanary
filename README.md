@@ -28,6 +28,9 @@ inspection checks packaged Android declarations without installing or running
 the app. Backup/restore effectiveness remains a separate device check.
 The [Android identity adapter](docs/ANDROID_IDENTITY.md) separately compares local
 artifact bytes and packaged versions with an independently supplied candidate record.
+The opt-in [Android metadata inventory](docs/ANDROID_INVENTORY.md) reads one selected
+device/package through an existing trusted local debugging server. Inventory is
+not a security-test pass and never launches the app or copies its files.
 
 Python 3.11 or newer is required.
 

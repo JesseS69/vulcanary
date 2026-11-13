@@ -39,6 +39,22 @@ def validator(name):
 
 
 class SchemaContracts(unittest.TestCase):
+    def test_android_inventory_never_claims_security_pass_or_raw_evidence(self):
+        from vulcanary import android_inventory as inventory
+        blocked = inventory.inspect('synthetic-device', 'org.example.app')
+        contract = validator('android-inventory')
+        contract.validate(blocked)
+        observed = {'android_release': '15', 'android_api': 35, 'model_sha256': 'a' * 64,
+                    'version_code': 31, 'apk_path_count': 1, 'apk_path_sha256': ['b' * 64],
+                    'matching_package_snapshots': True}
+        with patch.object(inventory, 'collect', return_value=b''), patch.object(inventory, 'parse', return_value=observed):
+            completed = inventory.inspect('synthetic-device', 'org.example.app', authorized=True, trust_existing_server=True)
+        contract.validate(completed)
+        for changes in ({'state': 'PASS'}, {'stdout': 'private'}, {'application_executed': True},
+                        {'observations': None}, {'device_selector_sha256': None}):
+            self.assertFalse(contract.is_valid({**completed, **changes}))
+        self.assertFalse(contract.is_valid({**blocked, 'observations': observed}))
+
     def test_local_test_report_refuses_false_pass_and_raw_output(self):
         import sys
         from vulcanary.local_tests import execute
