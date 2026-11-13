@@ -23,6 +23,10 @@ Experimental security-test execution is separate from scanning: the
 SHA-256 unittest suite on synthetic vectors with a hash-pinned Python executable.
 It is opt-in, not a sandbox or a general application/device test runner.
 
+Offline [APK](docs/APK_INSPECTION.md) and [single-base AAB](docs/AAB_INSPECTION.md)
+inspection checks packaged Android declarations without installing or running
+the app. Backup/restore effectiveness remains a separate device check.
+
 Python 3.11 or newer is required.
 
 Install a tagged Windows release by downloading `install-windows.ps1` from that release, reviewing it, and running:

@@ -97,7 +97,7 @@ def backup_links(archive, declarations, *, evaluate_rules=False):
     return rows, parsed
 
 
-def read_artifact(path, *, evaluate_rules=False):
+def read_artifact(path, *, evaluate_rules=False, artifact_format='apk'):
     axml.require(not path.is_symlink() and path.is_file())
     with path.open('rb') as stream:
         before = os.fstat(stream.fileno())
@@ -117,9 +117,14 @@ def read_artifact(path, *, evaluate_rules=False):
             names = [entry.filename for entry in entries]
             axml.require(len(set(names)) == len(names))
             axml.require(all(entry.orig_filename == entry.filename for entry in entries))
-            data = read_member(archive, 'AndroidManifest.xml', axml.MAX_XML)
-            declarations = axml.parse(data, include_backup=True)
-            links, parsed = backup_links(archive, declarations, evaluate_rules=evaluate_rules)
+            if artifact_format == 'aab':
+                from .aab_inspection import declarations_and_links
+                declarations, links, parsed = declarations_and_links(archive, names, evaluate_rules)
+            else:
+                axml.require(artifact_format == 'apk')
+                data = read_member(archive, 'AndroidManifest.xml', axml.MAX_XML)
+                declarations = axml.parse(data, include_backup=True)
+                links, parsed = backup_links(archive, declarations, evaluate_rules=evaluate_rules)
         after = os.fstat(stream.fileno())
         axml.require(not path.is_symlink())
         current = path.stat()
@@ -139,7 +144,8 @@ def summarize(checks):
     return state, counts
 
 
-def inspect(path, *, backup_requirements=None):
+def inspect(path, *, backup_requirements=None, artifact_format='apk'):
+    axml.require(artifact_format in ('apk', 'aab'))
     requested = backup.requirements(backup_requirements) if backup_requirements is not None else []
     checks = [{'id': name, 'state': 'BLOCKED', 'expected': False, 'observed': None,
                'basis': 'unavailable'} for name in ('debuggable', 'allowBackup')]
@@ -170,8 +176,23 @@ def inspect(path, *, backup_requirements=None):
                               'Aliases, sparse/compact resource entries, overlays and divergent configurations are outside resource-link coverage.',
                               'APK only: AAB/protobuf, split-set merging, ZIP64, text XML and unsupported binary chunks are blocked.',
                               'No archive contents are extracted, installed or executed. Output contains no package names, paths, raw strings or resource values.']}
+    if artifact_format == 'aab':
+        from . import _android_proto, aab_inspection
+        report.update(schema='vulcanary.aab-manifest-inspection.v1',
+                      evidence_method='packaged-base-protobuf-manifest',
+                      implementation_sha256=hashlib.sha256(Path(__file__).read_bytes() +
+                          Path(axml.__file__).read_bytes() + Path(resources.__file__).read_bytes() +
+                          Path(backup.__file__).read_bytes() + Path(_android_proto.__file__).read_bytes() +
+                          Path(aab_inspection.__file__).read_bytes()).hexdigest(),
+                      action='Supply a stable supported single-base AAB; device backup/restore remains a separate check.')
+        report['limitations'] = aab_inspection.LIMITATIONS
+        report['limits'].update(protobuf_fields=_android_proto.MAX_FIELDS,
+                                protobuf_nodes=_android_proto.MAX_NODES,
+                                protobuf_depth=_android_proto.MAX_DEPTH,
+                                protobuf_decoded_text_bytes=_android_proto.MAX_TEXT)
     try:
-        identity, size, declarations, links, parsed = read_artifact(path, evaluate_rules=bool(requested))
+        options = {'artifact_format': 'aab'} if artifact_format == 'aab' else {}
+        identity, size, declarations, links, parsed = read_artifact(path, evaluate_rules=bool(requested), **options)
         for check in checks[:2]:
             name = check['id']
             observed = declarations.get(name, name == 'allowBackup')
@@ -195,7 +216,8 @@ def inspect(path, *, backup_requirements=None):
 def export(report, output):
     output.mkdir(exist_ok=False)
     write_new(output/'report.json', report)
-    lines = ['# APK manifest declaration inspection', '', 'State: ' + report['state'], '',
+    label = 'AAB' if report['schema'] == 'vulcanary.aab-manifest-inspection.v1' else 'APK'
+    lines = ['# ' + label + ' manifest declaration inspection', '', 'State: ' + report['state'], '',
              'Artifact SHA-256: ' + (report['artifact_sha256'] or 'unavailable'), '']
     lines += [f"- {row['id']}: {row['state']}; observed={row['observed']}; basis={row['basis']}" for row in report['checks']]
     lines += ['', 'Backup resource links (not policy verdicts):']

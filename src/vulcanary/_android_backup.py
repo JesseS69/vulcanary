@@ -111,7 +111,10 @@ def nodes(data):
 
 
 def parse(data, attribute):
-    tree = nodes(data)
+    return parse_tree(nodes(data), attribute)
+
+
+def parse_tree(tree, attribute):
     expected = 'full-backup-content' if attribute == 'fullBackupContent' else 'data-extraction-rules'
     require(attribute in MODES.values() and tree[0] == (expected, None, {}))
     exclusions = {'legacy': set(), 'cloud': set(), 'device': set()}
