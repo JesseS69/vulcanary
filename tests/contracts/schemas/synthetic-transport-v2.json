@@ -1,0 +1,374 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "producer_version",
+    "implementation_sha256",
+    "run_id",
+    "finished_at",
+    "state",
+    "counts",
+    "policy_effect",
+    "independent_certification",
+    "manifest_sha256",
+    "candidate_binding",
+    "evidence_method",
+    "scenarios",
+    "runtime",
+    "reproduce",
+    "limits",
+    "limitations"
+  ],
+  "properties": {
+    "schema": {
+      "const": "vulcanary.synthetic-transport-run.v2"
+    },
+    "producer_version": {
+      "type": "string"
+    },
+    "implementation_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "state": {
+      "enum": [
+        "PASS",
+        "FAIL",
+        "BLOCKED"
+      ]
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "PASS",
+        "FAIL",
+        "BLOCKED"
+      ],
+      "properties": {
+        "PASS": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "FAIL": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "BLOCKED": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        }
+      }
+    },
+    "policy_effect": {
+      "const": "none"
+    },
+    "independent_certification": {
+      "const": false
+    },
+    "manifest_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "candidate_binding": {
+      "const": "operator-declared-reference"
+    },
+    "evidence_method": {
+      "const": "bundled-relay-owned-loopback-http"
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "state",
+          "reason",
+          "cleanup",
+          "events",
+          "expected",
+          "elapsed_seconds"
+        ],
+        "properties": {
+          "id": {
+            "enum": [
+              "before-upload-commit",
+              "lost-upload-response",
+              "lost-completion-response",
+              "stalled-before-upload-commit",
+              "stalled-after-upload-commit"
+            ]
+          },
+          "state": {
+            "enum": [
+              "PASS",
+              "FAIL",
+              "BLOCKED"
+            ]
+          },
+          "reason": {
+            "enum": [
+              "execution_incomplete",
+              "assertions_matched",
+              "assertion_failed"
+            ]
+          },
+          "cleanup": {
+            "enum": [
+              "complete",
+              "unconfirmed"
+            ]
+          },
+          "events": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "attempt",
+                    "operation",
+                    "client_outcome",
+                    "committed_writes"
+                  ],
+                  "properties": {
+                    "attempt": {
+                      "enum": [
+                        1,
+                        2
+                      ]
+                    },
+                    "operation": {
+                      "enum": [
+                        "upload",
+                        "complete"
+                      ]
+                    },
+                    "client_outcome": {
+                      "enum": [
+                        "acknowledged",
+                        "rejected",
+                        "uncertain",
+                        "timed_out"
+                      ]
+                    },
+                    "committed_writes": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "operation",
+                    "server_outcome"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "enum": [
+                        "upload",
+                        "complete"
+                      ]
+                    },
+                    "server_outcome": {
+                      "enum": [
+                        "committed",
+                        "not_committed"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "operation",
+                    "transport_outcome"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "enum": [
+                        "upload",
+                        "complete"
+                      ]
+                    },
+                    "transport_outcome": {
+                      "enum": [
+                        "response_dropped",
+                        "response_stalled"
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "expected": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "first_client_outcome",
+              "first_committed_writes",
+              "retry_client_outcome",
+              "final_committed_writes"
+            ],
+            "properties": {
+              "first_client_outcome": {
+                "enum": [
+                  "uncertain",
+                  "timed_out"
+                ]
+              },
+              "first_committed_writes": {
+                "enum": [
+                  0,
+                  1
+                ]
+              },
+              "retry_client_outcome": {
+                "const": "acknowledged"
+              },
+              "final_committed_writes": {
+                "const": 1
+              }
+            }
+          },
+          "elapsed_seconds": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "state": {
+                  "enum": [
+                    "PASS",
+                    "FAIL"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "cleanup": {
+                  "const": "complete"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "python",
+        "sqlite"
+      ],
+      "properties": {
+        "python": {
+          "type": "string"
+        },
+        "sqlite": {
+          "type": "string"
+        }
+      }
+    },
+    "reproduce": {
+      "type": "string"
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "socket_timeout_seconds",
+        "requests_per_scenario_max",
+        "stall_client_timeout_seconds",
+        "stall_release_timeout_seconds"
+      ],
+      "properties": {
+        "socket_timeout_seconds": {
+          "const": 1.0
+        },
+        "requests_per_scenario_max": {
+          "const": 3
+        },
+        "stall_client_timeout_seconds": {
+          "const": 0.25
+        },
+        "stall_release_timeout_seconds": {
+          "const": 3.0
+        }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "PASS"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "counts": {
+            "properties": {
+              "PASS": {
+                "const": 5
+              },
+              "FAIL": {
+                "const": 0
+              },
+              "BLOCKED": {
+                "const": 0
+              }
+            }
+          },
+          "scenarios": {
+            "items": {
+              "properties": {
+                "state": {
+                  "const": "PASS"
+                },
+                "reason": {
+                  "const": "assertions_matched"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

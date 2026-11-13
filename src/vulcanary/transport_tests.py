@@ -21,8 +21,11 @@ from .cli_errors import ArgumentParser
 from .security_testing import write_new
 from .version import __version__
 
-SCENARIOS = ('before-upload-commit', 'lost-upload-response', 'lost-completion-response')
+SCENARIOS = ('before-upload-commit', 'lost-upload-response', 'lost-completion-response',
+             'stalled-before-upload-commit', 'stalled-after-upload-commit')
 SOCKET_TIMEOUT = 1.0
+STALL_CLIENT_TIMEOUT = 0.25
+STALL_RELEASE_TIMEOUT = 3.0
 
 
 class _Server(HTTPServer):
@@ -67,6 +70,12 @@ class _Handler(BaseHTTPRequestHandler):
         else:
             server.events.append({'operation': operation, 'server_outcome': 'not_committed'})
         if lose_response:
+            if server.stall_response:
+                # Synchronize fault activation; do not use a sleep as proof of timeout.
+                server.events.append({'operation': operation, 'transport_outcome': 'response_stalled'})
+                server.stall_started.set()
+                if not server.release_stall.wait(STALL_RELEASE_TIMEOUT):
+                    server.failed = True
             # The transaction above is closed/committed BEFORE the socket is dropped.
             server.events.append({'operation': operation, 'transport_outcome': 'response_dropped'})
             self.close_connection = True
@@ -94,28 +103,39 @@ def _relay(directory, scenario, broken_duplicates=False):
     server.failed = False
     server.dropped = False
     server.drop_operation = 'complete' if scenario == 'lost-completion-response' else 'upload'
-    server.drop_before_commit = scenario == 'before-upload-commit'
+    server.drop_before_commit = scenario in ('before-upload-commit', 'stalled-before-upload-commit')
+    server.stall_response = scenario.startswith('stalled-')
+    server.stall_started = threading.Event()
+    server.release_stall = threading.Event()
     server.broken_duplicates = broken_duplicates
     thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True)
     thread.start()
     try:
         yield server
     finally:
+        server.release_stall.set()
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
         if thread.is_alive():
             raise RuntimeError('cleanup_incomplete')
+        if server.failed:
+            raise RuntimeError('relay_failed')
 
 
-def _request(server, operation):
+def _request(server, operation, *, await_stall=False):
     # No URL argument, DNS, redirect handling, proxy inheritance or remote adapter.
-    client = HTTPConnection('127.0.0.1', server.server_port, timeout=SOCKET_TIMEOUT)
+    client = HTTPConnection('127.0.0.1', server.server_port,
+                            timeout=STALL_CLIENT_TIMEOUT if await_stall else SOCKET_TIMEOUT)
     try:
         client.request('POST', '/' + operation, body=b'', headers={'X-Synthetic-Run': server.token})
+        if await_stall and not server.stall_started.wait(SOCKET_TIMEOUT):
+            raise RuntimeError('stall_not_reached')
         response = client.getresponse()
         body = response.read(3)
         return 'acknowledged' if response.status == 200 and body == b'OK' else 'rejected'
+    except TimeoutError:
+        return 'timed_out'
     except (OSError, HTTPException):
         return 'uncertain'
     finally:
@@ -133,34 +153,53 @@ def _require(condition):
         raise AssertionError('synthetic_contract_failed')
 
 
+def _available(condition):
+    # Harness health and fault activation are prerequisites, not test verdicts.
+    if not condition:
+        raise RuntimeError('execution_incomplete')
+
+
 def scenario(name, *, broken_duplicates=False):
     if name not in SCENARIOS:
         raise ValueError('unsupported_scenario')
     started = time.monotonic()
+    stalled = name.startswith('stalled-')
+    before_commit = name in ('before-upload-commit', 'stalled-before-upload-commit')
     events = []
     result = {'id': name, 'state': 'BLOCKED', 'reason': 'execution_incomplete',
               'cleanup': 'unconfirmed', 'events': events,
-              'expected': {'first_client_outcome': 'uncertain',
-                           'first_committed_writes': 0 if name == 'before-upload-commit' else 1,
+              'expected': {'first_client_outcome': 'timed_out' if stalled else 'uncertain',
+                           'first_committed_writes': 0 if before_commit else 1,
                            'retry_client_outcome': 'acknowledged', 'final_committed_writes': 1}}
     try:
         with tempfile.TemporaryDirectory(prefix='vulcanary-synthetic-http-') as temporary:
             with _relay(Path(temporary), name, broken_duplicates) as server:
                 operation = server.drop_operation
                 if operation == 'complete':
-                    _require(_request(server, 'upload') == 'acknowledged')
-                first = _request(server, operation)
+                    setup = _request(server, 'upload')
+                    _available(not server.failed and setup not in ('timed_out', 'uncertain'))
+                    _require(setup == 'acknowledged')
+                first = (_request(server, operation, await_stall=True) if stalled
+                         else _request(server, operation))
                 first_count = _counts(server).get(operation, 0)
                 events.append({'attempt': 1, 'operation': operation, 'client_outcome': first,
                                'committed_writes': first_count})
-                _require(first == 'uncertain')
-                _require(first_count == (0 if server.drop_before_commit else 1))
+                _available(not server.failed)
+                if stalled:
+                    _available(server.stall_started.is_set() and not server.release_stall.is_set())
+                    _available(first != 'uncertain')
+                else:
+                    _available(first != 'timed_out')
+                _require(first == result['expected']['first_client_outcome'])
+                _require(first_count == result['expected']['first_committed_writes'])
+                if stalled:
+                    server.release_stall.set()
                 second = _request(server, operation)
                 count = _counts(server).get(operation, 0)
                 events.append({'attempt': 2, 'operation': operation, 'client_outcome': second,
                                'committed_writes': count})
+                _available(not server.failed and second not in ('timed_out', 'uncertain'))
                 _require(second == 'acknowledged' and count == 1)
-                _require(not server.failed)
                 events.extend(server.events)
         result.update(state='PASS', reason='assertions_matched', cleanup='complete')
     except AssertionError:
@@ -177,7 +216,7 @@ def run(manifest_sha256, *, authorized=False):
     rows = [scenario(name) for name in SCENARIOS]
     counts = {state: sum(row['state'] == state for row in rows) for state in ('PASS', 'FAIL', 'BLOCKED')}
     state = 'BLOCKED' if counts['BLOCKED'] else 'FAIL' if counts['FAIL'] else 'PASS'
-    return {'schema': 'vulcanary.synthetic-transport-run.v1', 'producer_version': __version__,
+    return {'schema': 'vulcanary.synthetic-transport-run.v2', 'producer_version': __version__,
             'implementation_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             'run_id': str(uuid.uuid4()), 'finished_at': datetime.now(timezone.utc).isoformat(),
             'state': state, 'counts': counts, 'policy_effect': 'none', 'independent_certification': False,
@@ -185,10 +224,14 @@ def run(manifest_sha256, *, authorized=False):
             'evidence_method': 'bundled-relay-owned-loopback-http', 'scenarios': rows,
             'runtime': {'python': sys.version.split()[0], 'sqlite': sqlite3.sqlite_version},
             'reproduce': 'python -m vulcanary.transport_tests --authorize-owned-loopback --manifest-sha256 ' + manifest_sha256 + ' --output NEW_DIRECTORY',
-            'limits': {'socket_timeout_seconds': SOCKET_TIMEOUT, 'requests_per_scenario_max': 3},
+            'limits': {'socket_timeout_seconds': SOCKET_TIMEOUT, 'requests_per_scenario_max': 3,
+                       'stall_client_timeout_seconds': STALL_CLIENT_TIMEOUT,
+                       'stall_release_timeout_seconds': STALL_RELEASE_TIMEOUT},
             'limitations': ['Only the bundled synthetic relay was tested; no application or deployed backend was contacted.',
                             'Real loopback sockets and disposable SQLite commits are used; this is not deployed RLS, TLS, native process death or device-storage evidence.',
                             'The before-commit failure reaches the local server, which drops it without a write; it does not simulate an offline device.',
+                            'Stalls hold the owned response until a real client read timeout; before-commit stalls discard that attempt rather than later committing it.',
+                            'Timeout does not prove rollback: the separate server ledger is inspected before retry. This is not device latency or performance evidence.',
                             'Completion retries test idempotent relay writes, not actual key installation or cryptographic correctness.',
                             'A manifest reference does not prove the candidate implements this model; these results do not close application requirements.']}
 

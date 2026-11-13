@@ -39,6 +39,23 @@ def validator(name):
 
 
 class SchemaContracts(unittest.TestCase):
+    def test_transport_v2_bounds_stalls_and_refuses_incomplete_pass(self):
+        from vulcanary import transport_tests as transport
+        with patch.object(transport, '_Server', side_effect=OSError('private')):
+            report = transport.run('a'*64, authorized=True)
+        contract = validator('synthetic-transport-v2')
+        contract.validate(report)
+        self.assertFalse(contract.is_valid({**report, 'state': 'PASS'}))
+        self.assertFalse(contract.is_valid({**report, 'schema': 'vulcanary.synthetic-transport-run.v1'}))
+        self.assertFalse(contract.is_valid({**report, 'raw_response': 'private'}))
+        passed = copy.deepcopy(report)
+        passed.update(state='PASS', counts={'PASS': 5, 'FAIL': 0, 'BLOCKED': 0})
+        for row in passed['scenarios']:
+            row.update(state='PASS', reason='assertions_matched', cleanup='complete')
+        contract.validate(passed)
+        passed['scenarios'][0]['cleanup'] = 'unconfirmed'
+        self.assertFalse(contract.is_valid(passed))
+
     def test_guided_checklist_cannot_declare_execution_or_success(self):
         from vulcanary import candidate_tests, guided_device_checks as guided
         spec = json.loads((ROOT.parent.parent / 'examples/security-testing/candidate-model.json').read_text())
