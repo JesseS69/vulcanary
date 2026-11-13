@@ -1,5 +1,8 @@
 # Offline APK signature verification
 
+For API 37 hybrid signatures, use the separately scoped
+[SDK 37 hybrid profile](APK_HYBRID_SIGNATURES.md). This classical profile is unchanged.
+
 This opt-in adapter runs an installed Android SDK `apksigner.jar` through an
 explicit, hash-pinned Java executable. It never installs an app, contacts a device,
 downloads a tool or accesses signing keys. The APK is input data to a trusted tool;

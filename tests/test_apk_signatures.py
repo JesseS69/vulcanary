@@ -125,6 +125,12 @@ class SignatureTests(unittest.TestCase):
             self.assertTrue(all(not name.lower().endswith(('.p12','.jks','.key','.pem')) for name in z.namelist()))
 
     def test_tool_version_refusal_and_input_limits(self):
+        with patch.object(sig.process,'run_worker',side_effect=AssertionError('no launch')):
+            for api,expected,timeout in ((37,CERT,30),(23,CERT,30),(36,'invalid',30),(36,CERT,0)):
+                report=sig.verify(self.apk,self.pins[0],self.java,self.pins[1],self.jar,self.pins[2],
+                                  android_api=api,expected_cert_sha256=expected,timeout=timeout,authorized=True)
+                self.assertEqual(report['reason'],'scope_refused')
+                self.assertFalse(report['attempted'])
         with patch.object(sig.process,'run_worker',return_value=(0,b'other-version\n',None)) as worker:
             report=sig.verify(self.apk,self.pins[0],self.java,self.pins[1],self.jar,self.pins[2],android_api=36,authorized=True)
         self.assertEqual(report['state'],'BLOCKED');self.assertEqual(worker.call_count,1)

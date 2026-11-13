@@ -39,6 +39,29 @@ def validator(name):
 
 
 class SchemaContracts(unittest.TestCase):
+    def test_hybrid_signature_roles_have_a_separate_closed_contract(self):
+        from vulcanary import apk_hybrid_signatures as hybrid
+        contract = validator('apk-hybrid-signatures')
+        blocked = hybrid.verify(Path('/unavailable'), '', Path('/unavailable'), '', Path('/unavailable'), '', android_api=37)
+        contract.validate(blocked)
+        self.assertFalse(contract.is_valid({**blocked, 'state': 'PASS'}))
+        passed = {**blocked, 'state': 'PASS', 'attempted': True, 'cleanup': 'complete',
+                  'android_api': 37, 'size_bytes': 5000, 'tool_version': '0.9', 'timeout_seconds': 30,
+                  'artifact_sha256': 'a'*64, 'java_sha256': 'b'*64, 'verifier_sha256': 'c'*64,
+                  'expected_signers': {'classical': 'd'*64, 'pqc': 'e'*64},
+                  'signers': {'classical': 'd'*64, 'pqc': 'e'*64, 'fallback': 'f'*64},
+                  'signer_ranges': {'classical': [37,2147483647], 'pqc': [37,2147483647]},
+                  'signer_dev_releases': {'classical': False, 'pqc': False},
+                  'warning_count': 0,
+                  'schemes': {'v1': False, 'v2': False, 'v3': True, 'v3.1': False, 'v3.2': True, 'v4': False},
+                  'checks': [{**row, 'state': 'PASS'} for row in blocked['checks']],
+                  'counts': {'PASS': 3, 'FAIL': 0, 'BLOCKED': 0}}
+        contract.validate(passed)
+        for changes in ({'android_api': 36}, {'warning_count': 1}, {'cleanup': 'unconfirmed'},
+                        {'expected_signers': {'classical': 'd'*64, 'pqc': None}}, {'signer_ranges': None},
+                        {'stdout': 'private'}, {'application_executed': True}):
+            self.assertFalse(contract.is_valid({**passed, **changes}))
+
     def test_apk_signature_report_requires_completed_checks_before_pass(self):
         from vulcanary import apk_signatures as signatures
         blocked = signatures.verify(Path('/unavailable'), '', Path('/unavailable'), '', Path('/unavailable'), '', android_api=36)

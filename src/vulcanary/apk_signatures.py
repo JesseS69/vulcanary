@@ -122,6 +122,7 @@ def verify(artifact, artifact_sha256, java, java_sha256, jar, jar_sha256, *, and
     try:
         if authorized is not True:
             return report
+        report['reason'] = 'scope_refused'
         require(type(android_api) is int and 24 <= android_api <= 36)
         require(type(timeout) in (int, float) and math.isfinite(timeout) and 0 < timeout <= 120)
         require(isinstance(tool_version, str) and re.fullmatch(r'[0-9]+(?:\.[0-9]+){1,2}', tool_version))
