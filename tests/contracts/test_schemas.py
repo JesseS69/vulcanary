@@ -39,6 +39,19 @@ def validator(name):
 
 
 class SchemaContracts(unittest.TestCase):
+    def test_storage_contract_refuses_raw_fields_and_incomplete_pass(self):
+        from vulcanary import storage_tests as storage
+        contract = validator('synthetic-storage')
+        report = storage.run('a'*64, authorized=True)
+        contract.validate(report)
+        self.assertFalse(contract.is_valid({**report, 'raw_rows': ['private']}))
+        report['checks'][0]['cleanup'] = 'unconfirmed'
+        self.assertFalse(contract.is_valid(report))
+        with patch.object(storage.Store, 'connect', side_effect=OSError('private')):
+            blocked = storage.run('a'*64, authorized=True)
+        contract.validate(blocked)
+        self.assertFalse(contract.is_valid({**blocked, 'state':'PASS'}))
+
     def test_transport_v2_bounds_stalls_and_refuses_incomplete_pass(self):
         from vulcanary import transport_tests as transport
         with patch.object(transport, '_Server', side_effect=OSError('private')):
