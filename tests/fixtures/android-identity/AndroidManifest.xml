@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  package="org.example.identityfixture" android:versionCode="42"
+  android:versionCodeMajor="1" android:versionName="2.3-fixture">
+  <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="36" />
+  <application android:debuggable="false" android:allowBackup="false" />
+</manifest>

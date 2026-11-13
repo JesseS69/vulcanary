@@ -85,14 +85,14 @@ receiver checks are not concurrency evidence. These limits appear in every repor
 
 | Area | Current support | Required next evidence |
 |---|---|---|
-| Frozen candidate/scope | Bounded declarations and digest binding | Independently inspect installed build/device and endpoint identity |
+| Frozen candidate/scope | Bounded declarations and digest binding; [offline APK/AAB identity assertions](ANDROID_IDENTITY.md) against independent expectations | Verify generated-APK lineage, signing, installed build/device and endpoint identity separately |
 | Transfer/recovery | 16 reference-model scenarios and six negative controls | Authorized application adapter; text/photo history and real keys in disposable fixtures |
 | Transport failures | [Owned-loopback HTTP response-loss checks](SYNTHETIC_TRANSPORT_TESTS.md) against a bundled relay | Separately authorized application/staging transport |
 | Database authorization/concurrency | [Bundled SQLite permission and claim-race contracts](SYNTHETIC_DATABASE_TESTS.md), separate from application evidence | Disposable application-schema/RLS database and concurrent transactions |
 | Native lifecycle/storage | Explicit blocked requirements | Android adapter with verified PID death/relaunch, controlled storage faults |
 | Web | Explicit blocked requirements | Isolated browser contexts, actual navigation/storage/console/network observations |
 | Privacy | [Exact synthetic-canary checks](PRIVACY_CANARIES.md) across explicitly supplied exports | Authorized device/browser collection and verified collection provenance |
-| Artifacts | [Offline APK declarations, resource links and optional explicit-exclusion assertions](APK_INSPECTION.md), bound to artifact/member and requirements digests | Supply independently chosen private-file requirements; verify installed identity and actual backup/restore separately |
+| Artifacts | [Offline APK](APK_INSPECTION.md) and [single-base AAB](AAB_INSPECTION.md) declarations, resource links and explicit-exclusion assertions, bound to artifact/member and requirements digests | Supply independently chosen private-file requirements; verify installed identity and actual backup/restore separately |
 | Functional/visual | Coverage rows only | Scripted journeys plus semantic assertions and human observations |
 | Performance/media | Coverage rows only | Repeated timed samples, payload/codec fixtures, separate client/network measurements |
 | iOS | Explicit blocked coverage | Supported macOS/device runner or honestly labeled guided observations |

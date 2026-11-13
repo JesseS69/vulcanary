@@ -64,7 +64,7 @@ def strings(data, header, *, max_count=8192, max_bytes=MAX_XML):
     return values
 
 
-def parse(data, *, include_backup=False):
+def parse(data, *, include_backup=False, include_identity=False):
     require(8 <= len(data) <= MAX_XML)
     kind, header, total = unpack('<HHI', data, 0)
     require(kind == 3 and header == 8 and total == len(data))
@@ -72,6 +72,7 @@ def parse(data, *, include_backup=False):
     stack, namespaces = [], []
     root_seen = False
     application = None
+    identity_attributes = {}
     position, chunks = 8, 0
 
     def string(index):
@@ -137,6 +138,18 @@ def parse(data, *, include_backup=False):
             seen.add(key)
             raw_value = string(raw)
             resource = resource_map[attr_name] if resource_map and attr_name < len(resource_map) else 0
+            if include_identity and not stack:
+                from ._android_identity_fields import IDS
+                if key == (None, 'package') or key[0] == ANDROID and key[1] in IDS or resource in IDS.values():
+                    decoded = None
+                    if value_type == 3:
+                        decoded = string(value)
+                        require(raw_value is None or raw_value == decoded)
+                    elif value_type in (0x10, 0x11):
+                        decoded = value
+                        if raw_value is not None:
+                            require(raw_value == str(value) or raw_value.lower() == hex(value))
+                    identity_attributes[(key[0] or '', key[1])] = (resource, decoded)
             known_attributes = {**ATTRIBUTES, **BACKUP_ATTRIBUTES}
             known_name = next((label for label, ident in known_attributes.items() if ident == resource), None)
             if known_name is not None:
@@ -160,4 +173,7 @@ def parse(data, *, include_backup=False):
                         application[key[1]] = {'kind': 'unsupported'}
         stack.append(element)
     require(root_seen and not stack and not namespaces and application is not None)
+    if include_identity:
+        from ._android_identity_fields import identity
+        application['_identity'] = identity(identity_attributes)
     return application
